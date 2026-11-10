@@ -383,6 +383,35 @@ fn run(args: &[String]) -> Result<(), String> {
         format!("Account settings: {} bytes.", account_settings.len()),
     );
 
+    // Where a client that asks for a map is sent: the first world in the list that is not marked
+    // offline, at the address the row gives for clients. The row's id is the `map_token` the client
+    // carries back on its gameplay connection, and its port is the world program's own listener -
+    // which is why the line below names the address the client will be told to dial, and why
+    // whether it dials it is the open question `docs/port/02-wire.md` records.
+    let game_server = worlds
+        .worlds()
+        .values()
+        .find(|world| !world.is_offline())
+        .map(|world| crate::server::GameServer {
+            token: world.id,
+            address: world.endpoint(),
+        });
+    match game_server {
+        Some(server) => log.out(
+            LogLevel::Info,
+            "server.authserver",
+            format!(
+                "Travel: a client asking for a map is told to dial {} as world {}.",
+                server.address, server.token
+            ),
+        ),
+        None => log.out(
+            LogLevel::Warn,
+            "server.authserver",
+            "Travel: every world in the list is offline, so a client asking for a map will be refused.",
+        ),
+    }
+
     let factory: SessionFactory = {
         let log = log.clone();
         let file_check = file_check.clone();
@@ -392,6 +421,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 log.clone(),
                 file_check.clone(),
                 account_settings.clone(),
+                game_server,
             )) as Box<dyn Session>
         })
     };

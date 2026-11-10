@@ -104,6 +104,78 @@ A refusal sends only `0x0003`, with status `11`.
   - with the bytes the reference printed. Every one matches.
 - What the trace does not show, and a client alone can judge: the fields inside a message past its
   first 24 bytes, and the `eula_accepted` byte of `0x0011`.
+
+## Splitting the stream: the table is the protocol
+
+No message carries its length, so the only thing that can say where one ends is a table of sizes -
+which is exactly what the reference's own reader uses. This server keeps one, which is why a single
+read can hold four messages and still be answered correctly.
+
+| header | size | what it is |
+|---|---|---|
+| `0x8001` | counted | computer info: two UTF-16 strings, each with a `u16` count |
+| `0x8002` | 22 | computer hash, and the build number in its first dword |
+| `0x8000` | 6 | heartbeat |
+| `0x8023` | 6 | unnamed; the reference logs it and ignores it |
+| `0x8038` | counted | portal login: request id, two 16-byte ids, then two counted strings |
+| `0x8026` | 3 | accept EULA, one version byte |
+| `0x8035` | 6 | ask server response |
+| `0x800E` | 6 | set player status |
+| `0x8029` | 26 | request game instance, six dwords |
+
+- Source: `ASURA/recordings/gwps/world/load-stream.log`, the same trace, one line per message either
+  direction, with its size. The two counted messages are walked rather than measured because their
+  length is on the wire: a `u16` count of UTF-16 units, not a count of bytes and not padded out to the
+  field the reference's struct reserves.
+- In this tree: `authserver/src/Server/stream.rs`, which answers one whole message, "not yet", or the
+  header it cannot size.
+- Why it is a rule rather than an optimisation: a run against this server before the table existed
+  logged a single `0x8026` with nine bytes. The client had sent the EULA (three) and its ask-response
+  (six) in one write; both were read as one body, the ask-response was never answered, and the client
+  waited and then reset the connection.
+- A header with no known size **stops the reading** and is reported with the bytes behind it. A length
+  invented for it would desynchronise every message after it, and the log would blame the wrong one.
+
+## The request for a map, and the address it is given
+
+| # | direction | header | size |
+|---|---|---|---|
+| 1 | client -> server | `0x8026` accept EULA | 3 |
+| 2 | server | nothing - the reference sends nothing for it | - |
+| 3 | client -> server | `0x8035` ask server response | 6 |
+| 4 | server -> client | `0x0003` request response, status 0 | 10 |
+| 5 | client -> server | `0x800E` set player status | 6 |
+| 6 | server | nothing - the reference only logs it | - |
+| 7 | client -> server | `0x8029` request game instance | 26 |
+| 8 | server -> client | `0x0009` game server info | 42 |
+| 9 | server -> client | `0x0003` request response, status 0 | 10 |
+
+The `0x0009` carries `req_id`, `map_token` (the world's own id), `map_id`, a 24-byte host field and a
+player token drawn per travel. The host field is Winsock's shape rather than a string: two bytes of
+address family little-endian (`2` for IPv4, `23` for IPv6 - Windows' values, not Linux's), then the
+**port big-endian**, then the address bytes, then zero padding. The trace shows
+`02 00 | 17 E0 | 7F 00 00 01`: family 2, port 6112, 127.0.0.1.
+
+A request this server cannot place is answered with the response alone and status `2`, and with no
+address: the client then shows an error it can describe, where an address nothing listens on is a
+connect timeout with no message.
+
+- Source: `ASURA/recordings/gwps/world/load-stream.log` for the order and the bytes, and
+  `ASURA/docs/reference/client-protocol.md` section 5a for the two layouts and the refusal rule.
+- In this tree: `authserver/src/Server/login_reply.rs` (`game_server_info`, `host_blob`,
+  `GM_ERROR_NETWORK_ERROR`) and `authserver/src/Server/session.rs`, which answers six dwords with an
+  address taken from the realm list's own row.
+- **Open, and this is why the answer is written before it is proved: which address the client dials
+  for its gameplay connection.** The reference names its own auth address (6112 in that trace) and
+  hands the connection to a game server over its control channel, so it never had to know. The only
+  measurement of this client - build 39112, in ASURA - says it dials the address it was *launched*
+  with, whatever `0x0009` named. This server names the world program's own port instead, and both
+  ports are instrumented, so the next client run answers it:
+
+| what the log shows | what it means |
+|---|---|
+| a `00 05 0C 00` connection on the **auth** port, logged as a gameplay connection with nothing to answer it | the client dials the launch address: gameplay connections arrive at the front door, and this program must hand them on |
+| nothing on the auth port, and a refused connection where the world program would listen | the client honoured the address: the world program's own listener is where they belong, and no front door is needed |
 ## The first four bytes of a connection
 
 The client's very first bytes are a bare little-endian `u32`, not a framed message. Decoding them as
@@ -167,17 +239,18 @@ instance per direction, both from offset zero.
   master changes the digest; and that a message encrypted with the derived key is read back through
   it as its own id.
 
-**The client is the proof, and the log now says what it thinks.** The first thing the client sends
-after the exchange is its login message, `0x8038`. This server decrypts the first bytes of it and
-reports one of two things:
+**The client is the proof, and the log now says what it says.** Every message the client sends after
+the exchange is decrypted, named by its header, and answered for itself:
 
 | the log line | what it means |
 |---|---|
-| `first encrypted message is 0x8038 ... the key derivation matches what this client expects` | the derivation is right, and the conversation can be built on it |
-| `first encrypted message reads as 0xXXXX ... Either the key derivation does not match this client, or the message is not the one expected first` | the derivation, or the framing after it, is wrong - and the trace has the bytes to say which |
+| `login request N, user <uuid> session <uuid> character '<name>' type '<type>'` | the derivation is right and the framing is right, because a wrong key reads the login message as noise and a wrong frame reads it as the wrong size |
+| `message N is 0xXXXX with ... bytes, which this server does not answer` | a message this server has no behaviour for; its header and size are in the line |
+| `a message with header 0xXXXX has no size this server knows` | the stream cannot be split any further; every byte received is printed beside it |
+| `auth.trace ... 0xXXXX body: ...` | at `auth.trace` = 6: the decrypted body of each message, which the raw byte trace cannot show |
 
-That is the whole reason the byte trace exists: a wrong digest is not a silent failure any more, it
-is a log line with the bytes beside it.
+That is the whole reason both traces exist: a wrong digest, an unknown length and a message that
+never arrived are three different failures, and each one now names itself.
 
 ## Where a fact goes when it is learned
 

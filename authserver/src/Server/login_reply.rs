@@ -28,6 +28,29 @@ pub const GM_ERROR_NONE: u32 = 0;
 /// The status field of a `0x0003` that refuses it: the identity pair did not resolve.
 pub const GM_ERROR_AUTH_ERROR: u32 = 11;
 
+/// The status field of a `0x0003` that refuses a request this server cannot place - a map nobody is
+/// serving.
+///
+/// Evidence: `ASURA/docs/reference/client-protocol.md` section 5a, which records that a travel the
+/// auth service cannot place is refused with the ordinary request response and status 2 **and no
+/// info message**, because the client then shows an error it can describe. An info message naming a
+/// port nothing listens on is worse than either: the client leaves the character list and dies on a
+/// connect timeout.
+pub const GM_ERROR_NETWORK_ERROR: u32 = 2;
+
+/// The `host` field of `0x0009`, in bytes: room for either address family, which is why the
+/// reference's struct reserves more than an IPv4 address needs.
+pub const GAME_SERVER_HOST_LEN: usize = 24;
+
+/// Winsock's `AF_INET`, which is what this client reads.
+///
+/// The value is written down rather than taken from the host platform: `AF_INET6` is 23 on Windows
+/// and 10 on Linux, and the reader of this field is a Windows client.
+pub const ADDRESS_FAMILY_INET: u16 = 2;
+
+/// Winsock's `AF_INET6`, for the same reason.
+pub const ADDRESS_FAMILY_INET6: u16 = 23;
+
 /// One character, as far as this reply is concerned.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplyCharacter {
@@ -135,11 +158,56 @@ fn account_info(
 }
 
 /// `AUTH_SMSG_REQUEST_RESPONSE` (`0x0003`): the request id and how it went.
-fn request_response(request: u32, status: u32) -> Vec<u8> {
+pub fn request_response(request: u32, status: u32) -> Vec<u8> {
     let mut body = Vec::with_capacity(8);
     body.extend_from_slice(&request.to_le_bytes());
     body.extend_from_slice(&status.to_le_bytes());
     frame(0x0003, body)
+}
+
+/// `AUTH_SMSG_GAME_SERVER_INFO` (`0x0009`): where the client should play, and what it presents there.
+///
+/// Layout (`AuthSrv_GameServerInfo`): `req_id`, `map_token`, `map_id`, `host[24]`, `player_token` -
+/// 42 bytes, fixed. The reference fills `map_token` with the world's own id and `player_token` with a
+/// number drawn per travel; the message names a *server*, never a map file, because the world owns
+/// that decision.
+///
+/// It is always sent with an `0x0003` behind it, and never alone.
+pub fn game_server_info(
+    request: u32,
+    map_token: u32,
+    map_id: u32,
+    host: &[u8; GAME_SERVER_HOST_LEN],
+    player_token: u32,
+) -> Vec<u8> {
+    let mut body = Vec::with_capacity(40);
+    body.extend_from_slice(&request.to_le_bytes());
+    body.extend_from_slice(&map_token.to_le_bytes());
+    body.extend_from_slice(&map_id.to_le_bytes());
+    body.extend_from_slice(host);
+    body.extend_from_slice(&player_token.to_le_bytes());
+    frame(0x0009, body)
+}
+
+/// The `host` field for an address: the family, the port **big-endian**, then the address bytes.
+///
+/// The asymmetry is the reference's own (`AuthSrv_SendGameServerInfo` writes the family with the
+/// host's byte order and the port with the network's), and the trace shows it for IPv4:
+/// `02 00 | 17 E0 | 7F 00 00 01` - family 2 little-endian, port 6112 big-endian, 127.0.0.1.
+pub fn host_blob(address: std::net::SocketAddr) -> [u8; GAME_SERVER_HOST_LEN] {
+    let mut host = [0u8; GAME_SERVER_HOST_LEN];
+    match address.ip() {
+        std::net::IpAddr::V4(ipv4) => {
+            host[0..2].copy_from_slice(&ADDRESS_FAMILY_INET.to_le_bytes());
+            host[4..8].copy_from_slice(&ipv4.octets());
+        }
+        std::net::IpAddr::V6(ipv6) => {
+            host[0..2].copy_from_slice(&ADDRESS_FAMILY_INET6.to_le_bytes());
+            host[4..20].copy_from_slice(&ipv6.octets());
+        }
+    }
+    host[2..4].copy_from_slice(&address.port().to_be_bytes());
+    host
 }
 
 /// A frame: the `u16` header, then the body. No length field - that is the whole protocol's rule.
@@ -375,5 +443,44 @@ mod tests {
                 hex(&greeting),
                 "01 00 84 2D 4B E9 00 00 00 00 00 00 10 00 00 00"
             );
-        }    }
+        }
+
+        #[test]
+        fn the_game_server_info_is_the_traced_forty_two_bytes() {
+            // 09 00 | 03 00 00 00 | 37 59 9E 7D | 92 00 00 00 | 02 00 | 17 E0 | 7F 00 00 01 ...
+            //
+            // The trace prints the first twenty-four bytes; the host's ten bytes here carry the
+            // family, the port and the address, and the rest of the field is zero padding.
+            let host = host_blob("127.0.0.1:6112".parse().unwrap());
+            let frame = game_server_info(3, 0x7D9E_5937, 146, &host, 0x1122_3344);
+            assert_eq!(frame.len(), 42, "the table's 42 and the trace's 42 agree");
+
+            assert_eq!(
+                hex(&frame[..24]),
+                "09 00 03 00 00 00 37 59 9E 7D 92 00 00 00 02 00 17 E0 7F 00 00 01 00 00"
+            );
+            assert_eq!(&frame[24..38], &[0u8; 14], "the host field is zero-padded");
+            assert_eq!(
+                &frame[38..],
+                &0x1122_3344u32.to_le_bytes(),
+                "the player token is the last field"
+            );
+        }
+
+        #[test]
+        fn the_host_field_is_the_family_the_big_endian_port_and_the_address() {
+            // The reference's asymmetry, spelled out: family little-endian, port big-endian.
+            assert_eq!(
+                hex(&host_blob("127.0.0.1:6112".parse().unwrap())),
+                "02 00 17 E0 7F 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+            );
+            // An address family this client reads, whatever platform wrote it: 23, not 10.
+            assert_eq!(&host_blob("[::1]:6113".parse().unwrap())[..2], &[0x17, 0x00]);
+            assert_eq!(&host_blob("[::1]:6113".parse().unwrap())[4..20], &{
+                let mut v6 = [0u8; 16];
+                v6[15] = 1;
+                v6
+            });
+        }
+    }
 }

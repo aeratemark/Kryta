@@ -7,11 +7,14 @@
 pub mod account_settings;
 #[path = "file_check.rs"]
 pub mod file_check;
-#[path = "handshake.rs"]pub mod handshake;
+#[path = "handshake.rs"]
+pub mod handshake;
 #[path = "login_reply.rs"]
 pub mod login_reply;
 #[path = "session.rs"]
 pub mod session;
+#[path = "stream.rs"]
+pub mod stream;
 
 pub use file_check::FileCheck;
-pub use session::AuthSession;
+pub use session::{AuthSession, GameServer};

@@ -1,9 +1,9 @@
-//! What a connection does: the file check, then the part of the exchange that is not scrambled.
+//! What a connection does: the file check, the exchange, and then everything the client asks for.
 //!
 //! Reference for the shape: `src/server/apps/authserver/Server/AuthSocket.cpp`, whose
-//! `HandleAuthChallenge` reads the client's version, reads its seed, and answers with the server's.
-//! The **bytes** are this client's, from the evidence in [`super::handshake`] and
-//! [`super::file_check`].
+//! `HandleAuthChallenge` reads the client's version, reads its seed, and answers with the server's,
+//! and whose handler table then answers one message at a time. The **bytes** are this client's, from
+//! the evidence in [`super::handshake`], [`super::stream`] and [`super::login_reply`].
 //!
 //! What this does today, in order:
 //!
@@ -14,11 +14,14 @@
 //! 3. Read the rest of the client's 16-byte version message.
 //! 4. Read the client's 66-byte seed, check its `0x4200` header, and answer with the 22-byte server
 //!    seed.
+//! 5. Send the session info and a heartbeat, then unscramble everything in both directions and
+//!    answer, one message at a time, what the client asks: its login, its EULA, its ask-response,
+//!    its player status, and its request for a map.
 //!
-//! Then it stops and closes. Everything after this point is scrambled with a key both sides derive
-//! from the master, and that derivation is not written - see the note in `handshake.rs`. A client
-//! that gets this far has completed the plaintext half of the handshake and would fail on the first
-//! encrypted message; saying so plainly is better than pretending the conversation works.
+//! The last of those is where the reference's auth service ends: the client asks for a map
+//! (`0x8029`) and is answered with an address (`0x0009`). What it does with that address is not this
+//! program's business - and is the open question `docs/port/02-wire.md` records, because the only
+//! measurement of it says the client dials the address it was launched with instead.
 
 use common::logging::{Log, LogLevel};
 use shared::network::socket::{Session, SessionFuture, SessionIo};
@@ -30,6 +33,30 @@ use crate::server::file_check::FileCheck;
 use crate::server::handshake::{
     self, CLIENT_SEED_HEADER, CLIENT_SEED_LEN, MASTER_SECRET_LEN, SERVER_SEED_LEN,
 };
+use crate::server::stream::{self, Take};
+
+/// The client's EULA acceptance (`0x8026`): three bytes, one of them the version it accepted.
+const ACCEPT_EULA: u16 = 0x8026;
+/// The client's ask-server-response (`0x8035`): it wants an ordinary request response and nothing
+/// else.
+const ASK_SERVER_RESPONSE: u16 = 0x8035;
+/// The client's set-player-status (`0x800E`): one dword, 1 for online, 0 for offline.
+const SET_PLAYER_STATUS: u16 = 0x800E;
+/// The client's request-game-instance (`0x8029`): the map it wants to load.
+const REQUEST_GAME_INSTANCE: u16 = 0x8029;
+
+/// Where a client that asks for a map is sent: a world's address and the id it is known by.
+///
+/// Reference: what the reference keeps in its realm list and hands to
+/// `AuthSrv_SendGameServerInfo` - the world's `server_id` becomes the message's `map_token`. A
+/// program with no world to name answers a travel with a refusal instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GameServer {
+    /// The world's id, which the client carries back as `map_token` on its game connection.
+    pub token: u32,
+    /// The address the client is told to dial.
+    pub address: std::net::SocketAddr,
+}
 
 /// One client's conversation.
 pub struct AuthSession {
@@ -38,23 +65,27 @@ pub struct AuthSession {
     file_check: FileCheck,
     /// The 591-byte block every login is answered with, from `data/account_settings.conf`.
     account_settings: Vec<u8>,
+    /// The world a travel request is sent to, when one is configured.
+    game_server: Option<GameServer>,
 }
 
 impl AuthSession {
     /// A session that will answer the file check with these bytes and the exchange with this master.
     ///
-    /// Both are passed in rather than read or drawn here so a test can supply what it knows.
+    /// All of it is passed in rather than read or drawn here so a test can supply what it knows.
     pub fn new(
         log: Log,
         master: [u8; MASTER_SECRET_LEN],
         file_check: FileCheck,
         account_settings: Vec<u8>,
+        game_server: Option<GameServer>,
     ) -> Self {
         Self {
             log,
             master,
             file_check,
             account_settings,
+            game_server,
         }
     }
 
@@ -63,6 +94,7 @@ impl AuthSession {
         log: Log,
         file_check: FileCheck,
         account_settings: Vec<u8>,
+        game_server: Option<GameServer>,
     ) -> Self {
         let mut master = [0u8; MASTER_SECRET_LEN];
         if getrandom::getrandom(&mut master).is_err() {
@@ -74,7 +106,7 @@ impl AuthSession {
                 "no entropy available for the master secret; the exchange will use zeros",
             );
         }
-        Self::new(log, master, file_check, account_settings)
+        Self::new(log, master, file_check, account_settings, game_server)
     }
 
     fn say(&self, level: LogLevel, text: impl Into<String>) {
@@ -125,11 +157,22 @@ impl AuthSession {
                     return;
                 }
                 Some(other) => {
+                    // This branch is evidence, not a refusal of a wrong client. The client is supposed
+                    // to open its gameplay connection to the world's address; the only measurement of
+                    // this client says it dials the address it was *launched* with instead, which is
+                    // this one. So which port the connection arrived on answers which of those is
+                    // true, and the line says what it means rather than assuming.
                     self.say(
                         LogLevel::Warn,
                         format!(
-                            "Connection from {peer}: {} connection on the auth port. This port answers auth connections only.",
-                            other.as_str()
+                            "Connection from {peer}: a {} connection arrived on the auth port (its first four bytes are {}). {}",
+                            other.as_str(),
+                            shared::network::socket::hex(&first_four),
+                            if other == ConnectionKind::Game {
+                                "That means the client dials the address it was launched with, not the one it was handed: this program is its front door for gameplay connections too, and this port has nothing that can answer one."
+                            } else {
+                                "The control channel is not ported yet; the reference serves it from a game server, not from here."
+                            }
                         ),
                     );
                     let _ = io.close().await;
@@ -308,10 +351,59 @@ impl AuthSession {
                 format!("Connection from {peer} could not be greeted: {error}"),
             ),
         }
-        let mut buffer = [0u8; 1024];
+        let mut buffer = [0u8; 4096];
+        let mut pending: Vec<u8> = Vec::new();
         let mut messages = 0usize;
 
         loop {
+            // Everything already unscrambled and not yet answered, before any more is read: one
+            // read can hold several messages, and the table is what says where each one ends.
+            loop {
+                match stream::take(&pending) {
+                    Take::Incomplete => break,
+                    Take::Unknown { header } => {
+                        self.say(
+                            LogLevel::Warn,
+                            format!(
+                                "Connection from {peer}: a message with header 0x{header:04X} has no size this server knows, so the stream cannot be split any further. The bytes so far are {}.",
+                                shared::network::socket::hex(&pending)
+                            ),
+                        );
+                        return;
+                    }
+                    Take::Message(message) => {
+                        let header = message.header;
+                        let frame_len = message.frame.len();
+                        let body = message.body().to_vec();
+                        pending.drain(..frame_len);
+                        messages += 1;
+
+                        // The bytes as the client sent them once unscrambled. The raw trace cannot
+                        // help here: it shows the ciphertext, and the key is per connection, so
+                        // without this line nothing in the log says what a client asked for.
+                        {
+                            let shown = body.len().min(64);
+                            self.log.out(
+                                LogLevel::Debug,
+                                "auth.trace",
+                                format!(
+                                    "auth.trace {peer} message {messages} 0x{header:04X} body: {}{}",
+                                    shared::network::socket::hex(&body[..shown]),
+                                    if body.len() > shown { " ..." } else { "" }
+                                ),
+                            );
+                        }
+
+                        if !self
+                            .answer(io, peer, header, body.as_slice(), messages, &mut encrypt)
+                            .await
+                        {
+                            return;
+                        }
+                    }
+                }
+            }
+
             let count = match io.read(&mut buffer).await {
                 Ok(0) => {
                     self.say(
@@ -332,105 +424,295 @@ impl AuthSession {
                 }
             };
 
-            messages += 1;
             let mut plain = buffer[..count].to_vec();
             decrypt.apply(&mut plain);
+            pending.extend_from_slice(&plain);
+        }
+    }
 
-            let id = if plain.len() >= 2 {
-                u16::from_le_bytes([plain[0], plain[1]])
-            } else {
-                0
-            };
+    /// Answer one message. Answers whether the connection stays open.
+    async fn answer(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        header: u16,
+        body: &[u8],
+        number: usize,
+        encrypt: &mut Arc4,
+    ) -> bool {
+        match header {
+            PORTAL_ACCOUNT_LOGIN => self.answer_login(io, peer, body, encrypt).await,
 
-            // The ids worth naming, because each one is a different answer to "how far did the
-            // client get": its 64-byte preamble arrives first, then the login message.
-            let meaning = match id {
-                0x8001 => " - the client's preamble, which this server does not answer",
-                PORTAL_ACCOUNT_LOGIN => {
-                    " - the login message: the key derivation matches what this client expects"
-                }
-                _ => "",
-            };
-            if id == PORTAL_ACCOUNT_LOGIN {
-                let Some(login) = decode_portal_login(&plain[2..]) else {
-                    self.say(
-                        LogLevel::Warn,
-                        format!(
-                            "Connection from {peer}: the login message is {} bytes, which is too few for its fields.",
-                            plain.len()
-                        ),
-                    );
-                    continue;
-                };
-
+            ACCEPT_EULA => {
+                // Reference: the EULA handler records the version and sends nothing at all
+                // (`AuthSrv.c:1270-1275`); the client proceeds on its own.
+                let version = body.first().copied().unwrap_or(0);
                 self.say(
                     LogLevel::Info,
                     format!(
-                        "Connection from {peer}: login request {}, user {} session {} character '{}' type '{}'.",
-                        login.request,
-                        uuid_le_text(&login.user_id),
-                        uuid_le_text(&login.session_id),
-                        login.character,
-                        login.account_type
+                        "Connection from {peer}: the EULA was accepted, version {version}; the reference answers this with nothing."
                     ),
                 );
-
-                // The answer: the five messages a client needs before it shows a character, in the
-                // order and at the sizes the records give. No characters yet, so the client is owed
-                // an empty list rather than a refusal.
-                let frames = crate::server::login_reply::reply_frames(
-                    login.request,
-                    login.user_id,
-                    &[],
-                    0,
-                    &self.account_settings,
-                );
-                let mut answer = Vec::new();
-                for frame in &frames {
-                    answer.extend_from_slice(frame);
-                }
-                encrypt.apply(&mut answer);
-
-                match io.write_all(&answer).await {
-                    Ok(()) => self.say(
-                        LogLevel::Info,
-                        format!(
-                            "Connection from {peer}: login answered with {} message(s), {} bytes.",
-                            frames.len(),
-                            answer.len()
-                        ),
-                    ),
-                    Err(error) => self.say(
-                        LogLevel::Warn,
-                        format!("Connection from {peer} could not be answered: {error}"),
-                    ),
-                }
+                true
             }
 
-            self.say(
-                LogLevel::Info,
-                format!(
-                    "Connection from {peer}: encrypted message {messages} is 0x{id:04X} with {count} bytes{meaning}."
-                ),
-            );
+            ASK_SERVER_RESPONSE => {
+                // The reference answers with an ordinary request response, status 0:
+                // `03 00 02 00 00 00 00 00 00 00` in the trace.
+                let request = request_id(body);
+                let answer =
+                    crate::server::login_reply::request_response(request, crate::server::login_reply::GM_ERROR_NONE);
+                self.send(io, peer, encrypt, &[answer], "ask server response")
+                    .await
+            }
 
-            // The bytes as the client sent them once unscrambled. The raw trace cannot help here: it
-            // shows the ciphertext, and the key is per connection, so without this line nothing in the
-            // log says what a client actually asked for.
-            {
-                let shown = plain.len().min(64);
-                self.log.out(
-                    LogLevel::Debug,
-                    "auth.trace",
+            SET_PLAYER_STATUS => {
+                // Reference: nothing. The dword is 1 for "online", 0 for "offline", and the
+                // reference only logs it.
+                let status = request_id(body);
+                self.say(
+                    LogLevel::Info,
                     format!(
-                        "auth.trace {peer} message {messages} 0x{id:04X} body: {}{}",
-                        shared::network::socket::hex(&plain[2..shown]),
-                        if plain.len() > shown { " ..." } else { "" }
+                        "Connection from {peer}: player status {}, answered with nothing as the reference does.",
+                        if status == 1 { "online" } else { "offline" }
                     ),
                 );
+                true
+            }
+
+            REQUEST_GAME_INSTANCE => self.answer_game_instance(io, peer, body, encrypt).await,
+
+            // The preamble and its hash: the client's computer information, which the reference
+            // stores and answers only with the session info it has already been sent.
+            0x8001 | 0x8002 | 0x8000 | 0x8023 => true,
+
+            other => {
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Connection from {peer}: message {number} is 0x{other:04X} with {} bytes, which this server does not answer.",
+                        body.len() + 2
+                    ),
+                );
+                true
             }
         }
     }
+
+    /// Scramble and send whole frames, and say so.
+    async fn send(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        encrypt: &mut Arc4,
+        frames: &[Vec<u8>],
+        what: &str,
+    ) -> bool {
+        let mut answer = Vec::new();
+        for frame in frames {
+            answer.extend_from_slice(frame);
+        }
+        encrypt.apply(&mut answer);
+
+        match io.write_all(&answer).await {
+            Ok(()) => {
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Connection from {peer}: {what} answered with {} message(s), {} bytes.",
+                        frames.len(),
+                        answer.len()
+                    ),
+                );
+                true
+            }
+            Err(error) => {
+                self.say(
+                    LogLevel::Warn,
+                    format!("Connection from {peer} could not be answered: {error}"),
+                );
+                false
+            }
+        }
+    }
+
+    /// The login: read its fields, and answer the five messages a client needs before it shows a
+    /// character.
+    async fn answer_login(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        body: &[u8],
+        encrypt: &mut Arc4,
+    ) -> bool {
+        let Some(login) = decode_portal_login(body) else {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Connection from {peer}: the login message is {} bytes, which is too few for its fields.",
+                    body.len() + 2
+                ),
+            );
+            return true;
+        };
+
+        self.say(
+            LogLevel::Info,
+            format!(
+                "Connection from {peer}: login request {}, user {} session {} character '{}' type '{}'.",
+                login.request,
+                uuid_le_text(&login.user_id),
+                uuid_le_text(&login.session_id),
+                login.character,
+                login.account_type
+            ),
+        );
+
+        // The answer: the messages a client needs before it shows a character, in the order and at
+        // the sizes the records give. No characters yet, so the client is owed an empty list rather
+        // than a refusal.
+        let frames = crate::server::login_reply::reply_frames(
+            login.request,
+            login.user_id,
+            &[],
+            0,
+            &self.account_settings,
+        );
+        self.send(io, peer, encrypt, &frames, "the login").await
+    }
+
+    /// `AUTH_CMSG_REQUEST_GAME_INSTANCE` (`0x8029`): the client asks for a map, and this program
+    /// answers with a world or with a refusal.
+    ///
+    /// Reference: `AuthSrv_HandleRequestGameInstance`, which picks a live game server and answers
+    /// `0x0009` (an address and two tokens) followed by a request response. A request this program
+    /// cannot place is answered with the response alone, status 2 - never with an address nothing is
+    /// listening on, because that turns a describable error into a connect timeout.
+    async fn answer_game_instance(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        body: &[u8],
+        encrypt: &mut Arc4,
+    ) -> bool {
+        let Some(request) = decode_game_instance(body) else {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Connection from {peer}: a request for a game instance came with {} bytes, too few for its six dwords.",
+                    body.len() + 2
+                ),
+            );
+            return true;
+        };
+
+        self.say(
+            LogLevel::Info,
+            format!(
+                "Connection from {peer}: request {} for map {} (type {}, region {}, district {}, language {}) - the client wants a world.",
+                request.request,
+                request.map_id,
+                request.map_type,
+                request.region,
+                request.district,
+                request.language
+            ),
+        );
+
+        let Some(server) = self.game_server else {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Connection from {peer}: no world is configured to serve map {}, so the request is refused with status {} and no address - what the reference does when it has no game server, and better than naming a port nothing listens on.",
+                    request.map_id,
+                    crate::server::login_reply::GM_ERROR_NETWORK_ERROR
+                ),
+            );
+            let refusal = crate::server::login_reply::request_response(
+                request.request,
+                crate::server::login_reply::GM_ERROR_NETWORK_ERROR,
+            );
+            return self
+                .send(io, peer, encrypt, &[refusal], "the refusal")
+                .await;
+        };
+
+        // A number drawn per travel, so the world can tell one client's connection from another's.
+        // It is the pair - this token and the world's - that the world compares, and nothing else.
+        let mut token_bytes = [0u8; 4];
+        if getrandom::getrandom(&mut token_bytes).is_err() {
+            self.say(
+                LogLevel::Warn,
+                format!("Connection from {peer}: no entropy for the player token; using zero."),
+            );
+        }
+        let player_token = u32::from_le_bytes(token_bytes);
+        let host = crate::server::login_reply::host_blob(server.address);
+
+        let info = crate::server::login_reply::game_server_info(
+            request.request,
+            server.token,
+            request.map_id,
+            &host,
+            player_token,
+        );
+        let response = crate::server::login_reply::request_response(
+            request.request,
+            crate::server::login_reply::GM_ERROR_NONE,
+        );
+
+        self.say(
+            LogLevel::Info,
+            format!(
+                "Connection from {peer}: told to dial {} as world {} (map token), carrying player token 0x{player_token:08X} - and whether it dials that address rather than the one it was launched with is the open question.",
+                server.address, server.token
+            ),
+        );
+
+        self.send(io, peer, encrypt, &[info, response], "the game server info")
+            .await
+    }
+}
+
+/// The first dword of a body: the request id a reply must echo, or the value `0x800E` carries.
+fn request_id(body: &[u8]) -> u32 {
+    if body.len() < 4 {
+        return 0;
+    }
+    u32::from_le_bytes([body[0], body[1], body[2], body[3]])
+}
+
+/// What a `0x8029` asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GameInstanceRequest {
+    /// Echoed in the address and in the response.
+    pub request: u32,
+    /// 0 for an outpost, 1 for an explorable area.
+    pub map_type: u32,
+    /// The map the client wants.
+    pub map_id: u32,
+    /// A capacity hint, never a permission.
+    pub region: u32,
+    /// 0 means "any".
+    pub district: u32,
+    /// The client's language id.
+    pub language: u32,
+}
+
+/// Read a `0x8029` body: six dwords, 24 bytes.
+pub fn decode_game_instance(body: &[u8]) -> Option<GameInstanceRequest> {
+    if body.len() < 24 {
+        return None;
+    }
+    let dword = |at: usize| u32::from_le_bytes([body[at], body[at + 1], body[at + 2], body[at + 3]]);
+    Some(GameInstanceRequest {
+        request: dword(0),
+        map_type: dword(4),
+        map_id: dword(8),
+        region: dword(12),
+        district: dword(16),
+        language: dword(20),
+    })
 }
 
 impl Session for AuthSession {
@@ -558,6 +840,7 @@ mod tests {
                 [0x5Au8; MASTER_SECRET_LEN],
                 file_check.clone(),
                 crate::server::account_settings::load("../data/account_settings.conf").unwrap(),
+                None,
             )) as Box<dyn Session>
         })
     }
@@ -784,6 +1067,7 @@ mod tests {
                     master,
                     file_check.clone(),
                     settings.clone(),
+                    None,
                 )) as Box<dyn Session>
             })
         };
@@ -861,6 +1145,183 @@ mod tests {
 
         assert_eq!(at, 700, "the five messages account for every byte");
         assert_eq!(frames, vec![0x0016, 0x0014, 0x0011, 0x0003]);
+
+        manager.stop_network();
+        log.shutdown();
+    }
+
+    /// A client that has finished the plaintext half: the seed answered, the greeting read.
+    fn connected(
+        log: &Log,
+        master: [u8; MASTER_SECRET_LEN],
+        game_server: Option<GameServer>,
+    ) -> (SocketMgr, std::net::TcpStream, [u8; crate::server::handshake::KEY_LEN]) {
+        let factory: SessionFactory = {
+            let log = log.clone();
+            let file_check = shipped_file_check();
+            let settings =
+                crate::server::account_settings::load("../data/account_settings.conf").unwrap();
+            Arc::new(move || {
+                Box::new(AuthSession::new(
+                    log.clone(),
+                    master,
+                    file_check.clone(),
+                    settings.clone(),
+                    game_server,
+                )) as Box<dyn Session>
+            })
+        };
+
+        let mut manager = SocketMgr::new(factory);
+        let port = manager.start_network("127.0.0.1", 0, 1).unwrap();
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+
+        client.write_all(&preamble(2)).unwrap();
+        let mut server_seed = [0u8; SERVER_SEED_LEN];
+        client.read_exact(&mut server_seed).unwrap();
+        assert_eq!(&server_seed[..2], &0x1601u16.to_le_bytes());
+
+        let mut greeting = [0u8; 16];
+        client.read_exact(&mut greeting).unwrap();
+
+        (
+            manager,
+            client,
+            crate::server::handshake::derive_key(&master),
+        )
+    }
+
+    /// The reference's own post-login stream, in the segments a real client writes it in.
+    ///
+    /// The client sends the EULA and its ask-response together in one write, and its player status
+    /// and its request for a map together in another - nine and thirty-two bytes. A reader that
+    /// treats one write as one message sees neither of the second messages, which is exactly what
+    /// happened before `stream.rs` existed.
+    #[test]
+    fn the_eula_and_the_travel_request_are_answered_message_by_message() {
+        use common::cryptography::Arc4;
+
+        let log = Log::new();
+        let master = [0x5Cu8; MASTER_SECRET_LEN];
+        let world = GameServer {
+            token: 7,
+            address: "127.0.0.1:6113".parse().unwrap(),
+        };
+        let (mut manager, mut client, key) = connected(&log, master, Some(world));
+
+        // One outbound keystream for the whole conversation. The greeting's sixteen bytes came off
+        // it first, so the cipher is advanced past them before the answer is read.
+        let mut reading = Arc4::new(&key);
+        let mut greeting = [0u8; 16];
+        reading.apply(&mut greeting);
+
+        // 1. The EULA and the ask-response, in one write.
+        let mut sending = Arc4::new(&key);
+        let mut segment = vec![0x26, 0x80, 0x1A];
+        segment.extend_from_slice(&[0x35, 0x80, 0x02, 0x00, 0x00, 0x00]);
+        sending.apply(&mut segment);
+        client.write_all(&segment).unwrap();
+
+        // The EULA is answered with nothing; the ask-response with one request response, request 2.
+        let mut answer = [0u8; 10];
+        client.read_exact(&mut answer).unwrap();
+        reading.apply(&mut answer);
+        assert_eq!(&answer[..2], &[0x03, 0x00], "a request response");
+        assert_eq!(&answer[2..6], &2u32.to_le_bytes(), "echoing request 2");
+        assert_eq!(&answer[6..10], &[0, 0, 0, 0], "status 0");
+
+        // 2. The player status and the request for a map, in another write.
+        let mut segment = vec![0x0E, 0x80, 0x01, 0x00, 0x00, 0x00];
+        segment.extend_from_slice(&[
+            0x29, 0x80, // 0x8029
+            0x03, 0x00, 0x00, 0x00, // request 3
+            0x01, 0x00, 0x00, 0x00, // map type 1
+            0x92, 0x00, 0x00, 0x00, // map 146
+            0x00, 0x00, 0x00, 0x00, // region 0
+            0x02, 0x00, 0x00, 0x00, // district 2
+            0x00, 0x00, 0x00, 0x00, // language 0
+        ]);
+        sending.apply(&mut segment);
+        client.write_all(&segment).unwrap();
+
+        // The answer: the address, then the response behind it - 42 and 10.
+        let mut answer = [0u8; 52];
+        client.read_exact(&mut answer).unwrap();
+        reading.apply(&mut answer);
+
+        assert_eq!(&answer[..2], &[0x09, 0x00], "the game server info first");
+        assert_eq!(&answer[2..6], &3u32.to_le_bytes(), "echoing request 3");
+        assert_eq!(&answer[6..10], &7u32.to_le_bytes(), "the world's token");
+        assert_eq!(&answer[10..14], &146u32.to_le_bytes(), "the map it asked for");
+        assert_eq!(
+            &answer[14..24],
+            &[0x02, 0x00, 0x17, 0xE1, 127, 0, 0, 1, 0, 0],
+            "family 2, port 6113 big-endian, 127.0.0.1"
+        );
+
+        assert_eq!(&answer[42..44], &[0x03, 0x00], "then the request response");
+        assert_eq!(&answer[44..48], &3u32.to_le_bytes(), "echoing request 3");
+        assert_eq!(&answer[48..52], &[0, 0, 0, 0], "status 0");
+
+        manager.stop_network();
+        log.shutdown();
+    }
+
+    #[test]
+    fn a_travel_request_with_no_world_is_refused_rather_than_given_an_address() {
+        use common::cryptography::Arc4;
+
+        let log = Log::new();
+        let master = [0x5Du8; MASTER_SECRET_LEN];
+        let (mut manager, mut client, key) = connected(&log, master, None);
+
+        let mut reading = Arc4::new(&key);
+        let mut greeting = [0u8; 16];
+        reading.apply(&mut greeting);
+
+        let mut sending = Arc4::new(&key);
+        let mut segment = vec![0x29, 0x80, 0x04, 0x00, 0x00, 0x00];
+        segment.extend_from_slice(&[0u8; 20]);
+        sending.apply(&mut segment);
+        client.write_all(&segment).unwrap();
+
+        // One message only: the response, status 2, and no address. The reference's own rule for a
+        // game instance nobody is serving.
+        let mut answer = [0u8; 10];
+        client.read_exact(&mut answer).unwrap();
+        reading.apply(&mut answer);
+        assert_eq!(&answer[..2], &[0x03, 0x00]);
+        assert_eq!(&answer[2..6], &4u32.to_le_bytes());
+        assert_eq!(&answer[6..10], &2u32.to_le_bytes(), "status 2");
+
+        manager.stop_network();
+        log.shutdown();
+    }
+
+    #[test]
+    fn a_game_connection_on_the_auth_port_is_closed_without_a_word() {
+        // The measurement the log line exists for: a client that dials this port for gameplay is
+        // seen here, and nothing this port can do answers it.
+        let log = Log::new();
+        let (mut manager, mut client, _key) = connected(&log, [0x5Eu8; MASTER_SECRET_LEN], None);
+
+        let mut game = 0x000C_0500u32.to_le_bytes().to_vec();
+        game.extend_from_slice(&[0u8; 60]);
+        client.write_all(&game).unwrap();
+
+        let mut answer = [0u8; 1];
+        let mut total = 0usize;
+        loop {
+            match client.read(&mut answer) {
+                Ok(0) => break,
+                Ok(_) => total += 1,
+                Err(_) => break,
+            }
+        }
+        assert_eq!(total, 0, "a gameplay connection is not answered on the auth port");
 
         manager.stop_network();
         log.shutdown();
