@@ -12,3 +12,7 @@ workspace = true
 # The reference reads the clock through `<ctime>` and `localtime`. This is that call, and no
 # behaviour depends on it beyond the timestamp a log line and a backup file's name carry.
 chrono = "0.4"
+# The configuration format is JSON, and `Document` is the one reader of it. `serde_json` is the
+# standard for that; it is used for its data model, not for deriving per-module structs, so the
+# reference's string-keyed lookup survives (docs/decisions/0005-json-configuration.md).
+serde_json = "1"

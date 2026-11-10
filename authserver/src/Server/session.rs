@@ -63,7 +63,7 @@ pub struct AuthSession {
     log: Log,
     master: [u8; MASTER_SECRET_LEN],
     file_check: FileCheck,
-    /// The 591-byte block every login is answered with, from `data/account_settings.conf`.
+    /// The 591-byte block every login is answered with, from `data/account_settings.json`.
     account_settings: Vec<u8>,
     /// The world a travel request is sent to, when one is configured.
     game_server: Option<GameServer>,
@@ -830,7 +830,7 @@ mod tests {
     use std::time::Duration;
 
     fn shipped_file_check() -> FileCheck {
-        FileCheck::load("../data/file_check.conf").unwrap()
+        FileCheck::load("../data/file_check.json").unwrap()
     }
 
     fn factory(log: Log, file_check: FileCheck) -> SessionFactory {
@@ -839,7 +839,7 @@ mod tests {
                 log.clone(),
                 [0x5Au8; MASTER_SECRET_LEN],
                 file_check.clone(),
-                crate::server::account_settings::load("../data/account_settings.conf").unwrap(),
+                crate::server::account_settings::load("../data/account_settings.json").unwrap(),
                 None,
             )) as Box<dyn Session>
         })
@@ -1055,7 +1055,7 @@ mod tests {
 
         let log = Log::new();
         let master = [0x77u8; MASTER_SECRET_LEN];
-        let settings = crate::server::account_settings::load("../data/account_settings.conf").unwrap();
+        let settings = crate::server::account_settings::load("../data/account_settings.json").unwrap();
 
         let factory: SessionFactory = {
             let log = log.clone();
@@ -1160,7 +1160,7 @@ mod tests {
             let log = log.clone();
             let file_check = shipped_file_check();
             let settings =
-                crate::server::account_settings::load("../data/account_settings.conf").unwrap();
+                crate::server::account_settings::load("../data/account_settings.json").unwrap();
             Arc::new(move || {
                 Box::new(AuthSession::new(
                     log.clone(),

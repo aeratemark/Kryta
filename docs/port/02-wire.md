@@ -40,7 +40,7 @@ fatal.
 - Source of the shape: this client's protocol, recorded in `ASURA/docs/reference/client-protocol.md`
   section 7. The reference server has no equivalent - its client does not ask this - which is why
   `game/FileCheck/` exists in this tree's naming.
-- In this tree: `data/file_check.conf` holds both byte strings as values, and
+- In this tree: `data/file_check.json` holds both byte strings as values, and
   `authserver/src/Server/file_check.rs` reads them and does the comparison. The bytes are not
   compiled in because they change when the client's own files change.
 - Proved by: the shipped file's lengths (21 and 32) and header; a real socket sending the question
@@ -97,7 +97,7 @@ A refusal sends only `0x0003`, with status `11`.
   which prints each message with its header, its size and its first 24 bytes. That trace is the
   authority for the sizes, and it is what settles a disagreement in the older notes: their arithmetic
   sums an extra leading 10-byte message that the trace does not carry.
-- In this tree: `authserver/src/Server/login_reply.rs` and `data/account_settings.conf`, the 591-byte
+- In this tree: `authserver/src/Server/login_reply.rs` and `data/account_settings.json`, the 591-byte
   block as a value file because it is a copied payload.
 - **Checked byte for byte against that trace**, without a client: five tests compare each builder's
   output - all ten bytes of `0x0003` and `0x0014`, and the first 24 of `0x0016`, `0x0011` and `0x0007`

@@ -20,7 +20,7 @@
 //!
 //! Nothing here is decided by this server: the two 8-byte blobs in message 4 and the feature list are
 //! the reference's literals, and the 591-byte settings block is a copied payload in
-//! `data/account_settings.conf`.
+//! `data/account_settings.json`.
 
 /// The status field of a `0x0003` that accepts the login.
 pub const GM_ERROR_NONE: u32 = 0;
@@ -271,7 +271,7 @@ mod tests {
     }
 
     fn settings() -> Vec<u8> {
-        crate::server::account_settings::load("../data/account_settings.conf")
+        crate::server::account_settings::load("../data/account_settings.json")
             .expect("the shipped settings block")
     }
 
@@ -376,7 +376,7 @@ mod tests {
         }
 
         fn settings() -> Vec<u8> {
-            crate::server::account_settings::load("../data/account_settings.conf").unwrap()
+            crate::server::account_settings::load("../data/account_settings.json").unwrap()
         }
 
         #[test]

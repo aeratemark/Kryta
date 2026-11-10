@@ -27,8 +27,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 /// The config file read when `-c` names none.
-/// Reference: `_ACORE_REALM_CONFIG  "authserver.conf"`.
-const DEFAULT_CONFIG: &str = "authserver.conf";
+/// Reference: `_ACORE_REALM_CONFIG  "authserver.conf"`, with this project's own file format: JSON.
+const DEFAULT_CONFIG: &str = "authserver.json";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -71,7 +71,7 @@ fn run(args: &[String]) -> Result<(), String> {
     }
 
     let mut config =
-        Config::load(&options.config, false, policy).map_err(|error| error.to_string())?;
+        Config::load_json(&options.config, false, policy).map_err(|error| error.to_string())?;
     config.set_dry_run(options.dry_run);
 
     for complaint in config.complaints() {
@@ -297,8 +297,8 @@ fn run(args: &[String]) -> Result<(), String> {
     // everything there is scrambled with a key both sides derive and that derivation is not written.
     // The file check is a value file: its bytes are the client's, and they change when the client's
     // own files change, so they are read here rather than compiled in.
-    let file_check = FileCheck::load("data/file_check.conf").map_err(|error| {
-        format!("the file check at data/file_check.conf cannot be read: {error}")
+    let file_check = FileCheck::load("data/file_check.json").map_err(|error| {
+        format!("the file check at data/file_check.json cannot be read: {error}")
     })?;
     log.out(
         LogLevel::Info,
@@ -328,13 +328,13 @@ fn run(args: &[String]) -> Result<(), String> {
             report(&note);
         }
 
-        let accounts = game::portal::FileAccounts::load("data/accounts.conf")
+        let accounts = game::portal::FileAccounts::load("data/accounts.json")
             .map_err(|error| format!("the portal's account file cannot be read: {error}"))?;
         log.out(
             LogLevel::Info,
             "server.authserver",
             format!(
-                "Portal: {} account(s) from data/accounts.conf, binding {portal_bind}.",
+                "Portal: {} account(s) from data/accounts.json, binding {portal_bind}.",
                 accounts.len()
             ),
         );
@@ -375,7 +375,7 @@ fn run(args: &[String]) -> Result<(), String> {
     }
 
     // The 591-byte block every login is answered with: a copied payload, so a file.
-    let account_settings = crate::server::account_settings::load("data/account_settings.conf")
+    let account_settings = crate::server::account_settings::load("data/account_settings.json")
         .map_err(|error| format!("the account settings block cannot be read: {error}"))?;
     log.out(
         LogLevel::Info,
@@ -638,7 +638,7 @@ mod tests {
 
     #[test]
     fn the_config_file_defaults_to_the_reference_name() {
-        assert_eq!(parse(&[]).config, PathBuf::from("authserver.conf"));
+        assert_eq!(parse(&[]).config, PathBuf::from("authserver.json"));
     }
 
     #[test]

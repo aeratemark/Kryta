@@ -1,0 +1,125 @@
+{
+  "note": "authserver.json.dist - the auth program's own configuration. Reference: src/server/apps/authserver/authserver.conf.dist, whose option names these are; the format is this project's (docs/decisions/0005-json-configuration.md). One config file per program: this program reads this file and no other, and a key it does not know is a start-up error unless --config-policy says otherwise. Only the keys the ported stages read are here, with the reference's own default. A value marked immutable is the client's number rather than the server's: changing it does not change the client.",
+
+  "RealmServerPort": {
+    "value": 6112,
+    "doc": "Where this program answers login connections. Reference: GetOption<int32>(\"RealmServerPort\", 3724). It is 6112 here because that is the port this client was launched against and reaches; 3724 is the reference's default and no client of this game asks for it."
+  },
+
+  "BindIP": {
+    "value": "0.0.0.0",
+    "doc": "The address the listener binds. 0.0.0.0 is every interface."
+  },
+
+  "PidFile": {
+    "value": "",
+    "doc": "Written when a PID is wanted for a service manager. Empty writes nothing."
+  },
+
+  "StatusInterval": {
+    "value": 5,
+    "doc": "How often the program writes its own status line, in seconds: how long it has been up, where it listens, and how many connections it has accepted. A server that cannot say whether anything reached it cannot be tested."
+  },
+
+  "Log": {
+    "EffectiveConfig": {
+      "value": true,
+      "doc": "Every key this program read from this file, with any database password masked, at debug. It needs its logger: Logger.server.loading = 6,Console Auth."
+    }
+  },
+
+  "Portal": {
+    "Enable": {
+      "value": true,
+      "doc": "The portal the client takes its identity from before it logs in: four HTTP endpoints. This program serves it (docs/decisions/0003-portal-host.md), and the accounts it answers from are data/accounts.json."
+    },
+    "Bind": {
+      "value": "127.0.0.1:6601",
+      "doc": "Where those endpoints answer. The client was launched with -portal 127.0.0.1 and speaks to localhost:6601."
+    }
+  },
+
+  "Network": {
+    "Trace": {
+      "value": true,
+      "doc": "Every byte of every connection, in and out, as a debug line. Off by default in a served server: it is an instrument for an investigation. It needs its logger: Logger.network.trace = 6,Console Auth."
+    }
+  },
+
+  "Database": {
+    "Trace": {
+      "value": true,
+      "doc": "Every statement the database layer runs, as a debug line. It needs its logger: Logger.sql.trace = 6,Console Auth."
+    }
+  },
+
+  "RealmsStateUpdateDelay": {
+    "value": 20,
+    "doc": "How often the world list is refreshed, in seconds. Reference: RealmsStateUpdateDelay, whose default is this."
+  },
+
+  "MaxPingTime": {
+    "value": 30,
+    "doc": "How often the login database is pinged, in minutes. Reference: MaxPingTime, whose default is this."
+  },
+
+  "BanExpiryCheckInterval": {
+    "value": 60,
+    "doc": "How often expired bans are cleared, in seconds. Reference: BanExpiryCheckInterval, whose default is this."
+  },
+
+  "LoginDatabaseInfo": {
+    "value": "127.0.0.1;5432;kryta;change-me;kryta_login",
+    "doc": "host;port;user;password;database, as the reference spells it. The fourth field is a password: it is masked in every log line this program prints, and this file is not committed with a real one. The role and the databases were created for this project."
+  },
+
+  "LoginDatabase": {
+    "WorkerThreads": {
+      "value": 2,
+      "doc": "Asynchronous connections to the login database."
+    },
+    "SynchThreads": {
+      "value": 1,
+      "doc": "Synchronous connections, used where the caller cannot wait for a callback."
+    }
+  },
+
+  "LogsDir": {
+    "value": "",
+    "doc": "Where file appenders write. Empty means the working directory."
+  },
+
+  "Appender": {
+    "Console": {
+      "value": [1, 5, 0, "1 9 3 6 5 8"],
+      "doc": "Type, level, flags, then the type's own fields. Type 1 is the console and its last field is the colour list for fatal, error, warn, info, debug, trace. The levels are 1 fatal to 6 trace; 5 is debug."
+    },
+    "Auth": {
+      "value": [2, 5, 0, "Auth.log", "w"],
+      "doc": "Type 2 is a file: the name, then the mode (a append, w overwrite)."
+    }
+  },
+
+  "Logger": {
+    "root": {
+      "value": [4, "Console Auth"],
+      "doc": "Level, then appender names. A logger inherits from its dotted parent and finally from root."
+    },
+    "network.trace": {
+      "value": [6, "Console Auth"],
+      "doc": "The byte trace's own logger. Its level is what decides whether Network.Trace shows anything: 6 is trace, which is where the bytes are written."
+    },
+    "sql.trace": {
+      "value": [6, "Console Auth"],
+      "doc": "The database trace's own logger, read the same way."
+    },
+    "auth.trace": {
+      "value": [6, "Console Auth"],
+      "doc": "The decrypted body of each message the client sends, which the byte trace cannot show: it holds the ciphertext, and the key is per connection."
+    },
+    "server.loading": {
+      "value": [6, "Console Auth"],
+      "doc": "The effective configuration dump, and the loading stages."
+    }
+  }
+}

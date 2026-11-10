@@ -39,8 +39,13 @@ content.
 6. **A stage is done when it works** - the reference's behaviour reproduced, and the client's
    judgement wherever the client can see it. Not when the tests pass, and not when the log looks
    right.
-7. **Values are files, decisions are code.** Every number lives in a program's conf file or in
-   `data/`. A rule that needs a number takes it as an argument.
+7. **Values are JSON files, decisions are code.** Every number and every configuration value lives in
+   a JSON file - a program's own, or one under `data/` - and is read through the one handler,
+   `common/src/Configuration/Json.rs`. No datum lives only in code and none only in the database. A
+   number that is part of an algorithm, or a field's offset inside a layout its builder writes, stays
+   in code; those two exceptions are the whole list. A rule that needs a number takes it as an
+   argument. `docs/port/04-configuration.md` says how to write a file and which constants are still
+   moving.
 8. **Every file is ASCII.** Write `-`, `->`, `=>`, `"`, `'`, `...`, `#`. Never rewrite a file with
    a `Get-Content` / `Set-Content` round trip.
 9. **A move inside this tree is additive.** Copy into the new home, re-export at the old path,
@@ -80,7 +85,7 @@ authserver links shared;   worldserver links shared, game, scripts
 | `game/` | one directory per noun of the game; the socket layer lives in `game/Server/` | `src/server/game/` |
 | `scripts/` | `ScriptMgr` and `AddScripts`: content written against hooks | `src/server/scripts/` |
 | `modules/` | `mod-*`, out of tree | `modules/` |
-| `authserver/`, `worldserver/` | the two programs, each with its own conf file | `src/server/apps/` |
+| `authserver/`, `worldserver/` | the two programs, each with its own config file | `src/server/apps/` |
 | `data/` | the content tree and its updater input | `data/` |
 
 The socket layer is not a program. Sockets and sessions live in `game/Server/`, which is why one
@@ -144,6 +149,8 @@ the client is the judge rather than a test.
 | the reference's measured structure, and the port order | `docs/port/01-structure.md` |
 | the wire facts this tree uses, and what it does not know yet | `docs/port/02-wire.md` |
 | what the server reports, and how to switch on its traces | `docs/port/03-tracing.md` |
+| how a configuration file is written, and which numbers are still constants | `docs/port/04-configuration.md` |
+| the configuration reader | `common/src/Configuration/`, and `Json.rs` in it for the format |
 | a decision taken away from the reference, and why | `docs/decisions/` |
 | workspace, dependency order, lint policy | `Cargo.toml` |
 | the byte buffer | `shared/src/Packets/` |
@@ -152,7 +159,7 @@ the client is the judge rather than a test.
 | the login conversation | `authserver/src/` |
 | the game program | `worldserver/src/` |
 | the hook registry | `scripts/src/ScriptMgr/` |
-| one config file per program | `authserver/authserver.conf.dist`, `worldserver/worldserver.conf.dist` |
+| one config file per program | `authserver/authserver.json.dist`, `worldserver/worldserver.json.dist` |
 | this machine's cargo | `C:\Users\Apo\.cargo\bin\cargo.exe` |
 
 A correction replaces the text it corrects. It is never appended beside the old text, in a file

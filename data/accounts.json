@@ -1,0 +1,18 @@
+{
+  "note": "Who the portal says an account is, and the pair the client's login message will carry. This is this project's own and it is temporary: a real identity store is a schema decision and the login database has no account table yet. A name not listed answers the reference's own refusal: 400 who are you?",
+
+  "accounts": [
+    {
+      "user": "user1@example.com",
+      "user_id": "0F5A2C1E-1111-2222-3333-444455556666",
+      "token": "AAAAAAAA-0000-1111-2222-333344445555",
+      "doc": "The name this machine's client types, with the password 123. It is first because a client asked to log in as it and the server refused while the name was absent."
+    },
+    {
+      "user": "player@example.com",
+      "user_id": "0F5A2C1E-1111-2222-3333-444455556666",
+      "token": "AAAAAAAA-0000-1111-2222-333344445555",
+      "doc": "A second name, so that a test can log in as somebody and still be somebody else."
+    }
+  ]
+}

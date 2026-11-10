@@ -21,8 +21,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 /// The config file read when `-c` names none.
-/// Reference: `_ACORE_CORE_CONFIG  "worldserver.conf"`.
-const DEFAULT_CONFIG: &str = "worldserver.conf";
+/// Reference: `_ACORE_CORE_CONFIG  "worldserver.json"`, with this project's own file format: JSON.
+const DEFAULT_CONFIG: &str = "worldserver.json";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -65,7 +65,7 @@ fn run(args: &[String]) -> Result<(), String> {
     }
 
     let mut config =
-        Config::load(&options.config, false, policy).map_err(|error| error.to_string())?;
+        Config::load_json(&options.config, false, policy).map_err(|error| error.to_string())?;
     config.set_dry_run(options.dry_run);
 
     for complaint in config.complaints() {
@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn the_config_file_defaults_to_the_reference_name() {
-        assert_eq!(parse(&[]).config, PathBuf::from("worldserver.conf"));
+        assert_eq!(parse(&[]).config, PathBuf::from("worldserver.json"));
     }
 
     #[test]

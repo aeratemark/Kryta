@@ -96,13 +96,14 @@ Updated as stages land, because this is a statement of today and not of intent.
 | `shared/src/Packets/` | started - the byte buffer; the opcode table and the message families are not written; `9f456f1` |
 | `shared/src/Worlds/` | done - the world list is read from `realmlist` and a login refuses to start on an empty one; `7adbe37` |
 | `shared/src/Secrets/` | not started - the reference's only secret is WoW's TOTP master key, so what this game's secret is has not been decided |
+| `common/` Configuration | done - the reference's lookup, severity policy, environment override and masking, over **JSON** instead of the reference's `Key = value`: one handler (`Json.rs`), one hexadecimal decoder, and record lists read as rows rather than keys; `docs/decisions/0005-json-configuration.md` |
 | `authserver/` | stages 1 to 8 - config, log, PID file, login database and its schema, world list, listener; it also reports its own status on a timer, because a server that cannot say whether anything reached it cannot be tested |
-| the file check | answered from `data/file_check.conf`, before the version message on the same socket: a client that asks gets its 32 bytes, or the socket closes |
+| the file check | answered from `data/file_check.json`, before the version message on the same socket: a client that asks gets its 32 bytes, or the socket closes |
 | the auth conversation | the plaintext half, the login message read, and the five-message answer checked byte for byte against the reference trace; `13b5287`, `5802932` |
 | the message stream | a table of the client's nine auth messages, because no message carries its length: a read holding four messages is answered four times. A run of this client sent them as `0x8001`, `0x8002`, `0x8000` and `0x8023` in one 76-byte segment, each named with its size, its build number and its decrypted body in the log |
 | the rest of the login | the EULA (answered with nothing, as the reference does), the ask-response, the player status, and the request for a map, which is answered with the world's own address in `0x0009` and an `0x0003` behind it |
 | which address a client dials | **measured, 2026-11-10, build 39167**: the launch address, not the one it is handed. A listener on the named port accepted nothing and the gameplay connection arrived on the auth port 35 ms later. The auth program is therefore the front door and hands it to the world; `docs/decisions/0004-gameplay-connections-arrive-at-the-front-door.md` |
-| the portal | the four endpoints served over HTTP on 6601 by the auth program, with an account list in `data/accounts.conf`; `game/src/Portal/`, `docs/decisions/0003-portal-host.md` |
+| the portal | the four endpoints served over HTTP on 6601 by the auth program, with an account list in `data/accounts.json`; `game/src/Portal/`, `docs/decisions/0003-portal-host.md` |
 | `worldserver/` | stages 1 to 4 - config, log, PID file; stops at its databases; `b604814` |
 | `game/`, `scripts/`, `modules/` | not started |
 

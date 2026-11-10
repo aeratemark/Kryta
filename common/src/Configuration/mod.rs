@@ -3,7 +3,33 @@
 //! Reference: `src/common/Configuration/Config.{h,cpp}` at 30a36ec4d, and
 //! `src/common/Configuration/ConfigValueCache.h`.
 //!
-//! The format is the reference's own, and the quirks in it are deliberate:
+//! # The format
+//!
+//! The file is **JSON**, read by [`json::Document`], and `docs/decisions/0005-json-configuration.md`
+//! is the record of why this tree deviates there: a configuration in this project is an operator's
+//! file, edited and shared, and JSON is the format such a file can be shown, diffed and read by
+//! another program. The reference's own format is `Key = value`, and its parser is still here -
+//! [`Config::parse`] - because it is the reference's translation and its quirks are measured
+//! behaviour, but no file this tree ships is in it.
+//!
+//! What did **not** change is the arrangement, and that is the point:
+//!
+//! - A key is a dotted path (`RealmServerPort`, `Logger.network.trace`), spelled the reference's way
+//!   whatever the file format, so every caller and every document still says the same word.
+//! - Lookup is [`Config::value`], the reference's `GetValueDefault<T>`: an environment variable
+//!   wins over the file, a missing key is reported at its severity and the default answers, and a
+//!   value that does not parse is reported and the default answers.
+//! - A problem is a [`Complaint`] with the reference's severity policy, and a `Fatal` one stops the
+//!   program instead of logging and carrying on.
+//!
+//! One deviation, and it is a Rust shape rather than a behaviour change: where the reference
+//! calls `ABORT()` on a `Fatal` severity, this returns [`ConfigError::Fatal`] and the program
+//! turns it into exit code 1. The message is the reference's.
+//!
+//! # The reference's own parser, and its quirks
+//!
+//! Kept because it is the reference's translation, and because the quirks are behaviour somebody may
+//! port a file against:
 //!
 //! - A line is trimmed; empty lines are skipped.
 //! - A line starting with `#` is a comment, and a line starting with `[` is a section header.
@@ -15,19 +41,14 @@
 //! - The value is everything after the first `=`, trimmed, with **every** `"` removed - not only
 //!   a surrounding pair.
 //! - A key that appears twice in one file is reported, and the first one wins.
-//!
-//! Lookup is [`Config::value`], the reference's `GetValueDefault<T>`: an environment variable
-//! wins over the file, a missing key is reported at its severity and the default answers, and a
-//! value that does not parse is reported and the default answers.
-//!
-//! One deviation, and it is a Rust shape rather than a behaviour change: where the reference
-//! calls `ABORT()` on a `Fatal` severity, this returns [`ConfigError::Fatal`] and the program
-//! turns it into exit code 1. The message is the reference's.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+
+#[path = "Json.rs"]
+pub mod json;
 
 /// What a configuration problem is worth.
 ///
@@ -167,6 +188,9 @@ pub enum ConfigError {
     Fatal(String),
     /// A `--config-policy` value this reader does not understand.
     BadPolicy(String),
+    /// The file is not a configuration at all: it does not parse as JSON, or its root is not an
+    /// object of keys.
+    Malformed(String),
 }
 
 impl fmt::Display for ConfigError {
@@ -175,6 +199,7 @@ impl fmt::Display for ConfigError {
             Self::Unusable(complaint) => f.write_str(&complaint.message),
             Self::Fatal(message) => f.write_str(message),
             Self::BadPolicy(text) => write!(f, "unknown config policy '{text}'"),
+            Self::Malformed(message) => f.write_str(message),
         }
     }
 }
@@ -245,9 +270,89 @@ impl Config {
         Ok(config)
     }
 
-    /// Read a file's text.
+    /// Read a JSON file: the project's format.
     ///
-    /// Reference: the body of `ParseFile`, line by line, which is where the quirks are.
+    /// The same three outcomes the reference's loader has, in the same order: a missing file is the
+    /// `missing_file` severity (or a successful empty load when the caller says the file is
+    /// optional), a file with no keys in it is the same, and a file that does not parse is refused
+    /// with what the parser said. What the document holds is then the reference's bag of keys, so
+    /// every getter below behaves exactly as it does for the reference's own format.
+    pub fn load_json(
+        filename: impl AsRef<Path>,
+        is_optional: bool,
+        policy: Policy,
+    ) -> Result<Self, ConfigError> {
+        let filename = filename.as_ref().to_path_buf();
+
+        let text = match std::fs::read_to_string(&filename) {
+            Ok(text) => text,
+            Err(_) => {
+                let severity = if is_optional {
+                    Severity::Skip
+                } else {
+                    policy.missing_file
+                };
+                let message = format!(
+                    "> Config::LoadFile: Failed open {}file '{}'",
+                    if is_optional { "optional " } else { "" },
+                    filename.display()
+                );
+                // A skip is a successful no-op: the program carries on with no keys.
+                if severity == Severity::Skip {
+                    return Ok(Self::empty(filename, policy));
+                }
+                return Err(ConfigError::Unusable(Complaint { severity, message }));
+            }
+        };
+
+        // A file that exists and does not parse is refused whatever `is_optional` says: a typo must
+        // not become a server that quietly runs on defaults while its operator believes otherwise.
+        let document = json::Document::parse(&text, &filename)?;
+
+        let (options, complaints) = document.settings();
+        let config = Self {
+            filename: filename.clone(),
+            options,
+            critical: BTreeSet::new(),
+            policy,
+            dry_run: false,
+            complaints,
+        };
+
+        if config.options.is_empty() {
+            // A file that stated keys and had every one of them refused is not empty: saying "Empty
+            // file" would send the operator looking for the wrong problem.
+            let refused: Vec<&str> = config
+                .complaints
+                .iter()
+                .filter(|complaint| complaint.severity >= Severity::Error)
+                .map(|complaint| complaint.message.as_str())
+                .collect();
+            if !refused.is_empty() {
+                return Err(ConfigError::Malformed(refused.join("\n")));
+            }
+
+            let severity = if is_optional {
+                Severity::Skip
+            } else {
+                policy.missing_file
+            };
+            let message = format!(
+                "> Config::LoadFile: Empty file '{}'",
+                config.filename.display()
+            );
+            if severity == Severity::Skip {
+                return Ok(config);
+            }
+            return Err(ConfigError::Unusable(Complaint { severity, message }));
+        }
+
+        Ok(config)
+    }
+
+    /// A file's text, parsed as the reference's own format.
+    ///
+    /// Kept for the reference's parser; no file this tree ships is written this way.
     pub fn parse(source: &str, filename: PathBuf, policy: Policy) -> Self {
         let mut options: BTreeMap<String, String> = BTreeMap::new();
         let mut complaints = Vec::new();
@@ -478,6 +583,15 @@ impl Config {
         default: &str,
     ) -> Result<(String, Vec<Complaint>), ConfigError> {
         self.lookup(name, default)
+    }
+
+    /// A value as bytes: a file states a byte string as `{"hex": "f1 02 20 00"}`.
+    ///
+    /// `None` when the file does not state the key, so a loader can decide for itself whether the
+    /// absence is fatal; `Some(Err)` when it states something that is not hexadecimal. The decoding
+    /// is [`json::hex_bytes`] and there is no other, so no loader grows a parser of its own.
+    pub fn bytes(&self, name: &str) -> Option<Result<Vec<u8>, String>> {
+        self.options.get(name).map(|text| json::hex_bytes(text))
     }
 
     /// Dry run, set by `--dry-run`. Reference: `ConfigMgr::setDryRun`.
@@ -714,5 +828,118 @@ mod tests {
         assert!(described.iter().any(|(key, value)| key == "RealmServerPort" && value == "6112"));
         assert!(described.iter().any(|(key, value)| key == "LoginDatabaseInfo" && value.contains("********")));
         assert!(!described.iter().any(|(_, value)| value.contains("secret")));
+    }
+
+    /// A JSON file goes through the same getters as the reference's format, which is the whole
+    /// reason the format changed and the reader did not.
+    fn json_file(name: &str, text: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kryta-config-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{name}.json"));
+        std::fs::write(&path, text).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_json_file_is_read_by_the_same_getters() {
+        let path = json_file(
+            "auth",
+            r#"{
+                "RealmServerPort": 6112,
+                "BindIP": "0.0.0.0",
+                "Portal": {"Enable": true, "Bind": "127.0.0.1:6601"},
+                "LoginDatabaseInfo": "127.0.0.1;5432;kryta;secret;kryta_login"
+            }"#,
+        );
+        let config = Config::load_json(&path, false, Policy::default()).unwrap();
+
+        assert_eq!(config.value::<u16>("RealmServerPort", 3724).unwrap().0, 6112);
+        assert_eq!(
+            config.value_string("BindIP", "0.0.0.0").unwrap().0,
+            "0.0.0.0"
+        );
+        assert!(config.value_bool("Portal.Enable", false).unwrap().0);
+        assert_eq!(
+            config.value_string("Portal.Bind", "").unwrap().0,
+            "127.0.0.1:6601"
+        );
+
+        // The masking is not a property of the format: a JSON file describes itself the same way.
+        let described = config.describe();
+        assert!(
+            described
+                .iter()
+                .any(|(key, value)| key == "LoginDatabaseInfo" && value.contains("********"))
+        );
+        assert!(!described.iter().any(|(_, value)| value.contains("secret")));
+    }
+
+    #[test]
+    fn a_json_file_is_read_with_the_references_lookup_order() {
+        // A stated key answers its own value; a key the file does not state answers the default and
+        // says so. The environment variable above the file is the same one the reference's format
+        // reads, and it is not exercised here because setting one is unsafe in this edition and
+        // unsafe code is forbidden in this tree.
+        let path = json_file("lookup", r#"{"RealmServerPort": 6112}"#);
+        let config = Config::load_json(&path, false, Policy::default()).unwrap();
+
+        let (stated, complaints) = config.value::<u16>("RealmServerPort", 3724).unwrap();
+        assert_eq!(stated, 6112);
+        assert!(complaints.is_empty());
+
+        let (absent, complaints) = config.value::<u16>("MaxPingTime", 30).unwrap();
+        assert_eq!(absent, 30);
+        assert_eq!(complaints[0].severity, Severity::Warn);
+    }
+
+    #[test]
+    fn a_json_file_that_is_malformed_is_refused_even_when_it_is_optional() {
+        // An optional file that exists and is wrong is not an absent file: a typo must not become a
+        // server that quietly runs on defaults.
+        let path = json_file("broken", "{ \"RealmServerPort\": }");
+        let error = Config::load_json(&path, true, Policy::default()).unwrap_err();
+        assert!(matches!(error, ConfigError::Malformed(_)), "{error}");
+        assert!(error.to_string().contains("not valid JSON"), "{error}");
+    }
+
+    #[test]
+    fn an_optional_json_file_that_is_absent_is_an_empty_configuration() {
+        let config = Config::load_json(
+            "does-not-exist.json",
+            true,
+            Policy::default(),
+        )
+        .unwrap();
+        assert_eq!(config.keys().count(), 0);
+    }
+
+    #[test]
+    fn a_json_file_with_no_keys_is_the_references_empty_file() {
+        let path = json_file("empty", r#"{"note": "nothing configured yet"}"#);
+        let error = Config::load_json(&path, false, Policy::default()).unwrap_err();
+        assert!(error.to_string().contains("Empty file"), "{error}");
+    }
+
+    #[test]
+    fn bytes_are_decoded_in_one_place() {
+        let path = json_file(
+            "bytes",
+            r#"{"data": {"hex": "08 00 66 21", "doc": "the block a client is handed"}}"#,
+        );
+        let config = Config::load_json(&path, false, Policy::default()).unwrap();
+        assert_eq!(
+            config.bytes("data").unwrap().unwrap(),
+            vec![0x08, 0x00, 0x66, 0x21]
+        );
+        assert!(config.bytes("nothing").is_none());
+    }
+
+    #[test]
+    fn bytes_that_are_not_hexadecimal_say_so_rather_than_answering_an_empty_slice() {
+        let path = json_file("badbytes", r#"{"data": "zz"}"#);
+        let config = Config::load_json(&path, false, Policy::default()).unwrap();
+        let error = config.bytes("data").unwrap().unwrap_err();
+        assert!(error.contains("not a hexadecimal byte"), "{error}");
     }
 }
