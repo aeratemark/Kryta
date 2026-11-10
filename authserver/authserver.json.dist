@@ -40,6 +40,10 @@
   },
 
   "Network": {
+    "Threads": {
+      "value": 1,
+      "doc": "Threads serving the accepted sockets, for both listeners this program opens. Reference: Network.Threads, whose default is this. Must be greater than 0; a connection goes to the thread with the fewest already."
+    },
     "Trace": {
       "value": true,
       "doc": "Every byte of every connection, in and out, as a debug line. Off by default in a served server: it is an instrument for an investigation. It needs its logger: Logger.network.trace = 6,Console Auth."
@@ -56,6 +60,11 @@
   "RealmsStateUpdateDelay": {
     "value": 20,
     "doc": "How often the world list is refreshed, in seconds. Reference: RealmsStateUpdateDelay, whose default is this."
+  },
+
+  "WorldsFile": {
+    "value": "data/realms.json",
+    "doc": "The file a world can also be described in, merged over the realmlist table: a row with an id the table holds overrides it field by field, a row with a new id is added. Empty means the table alone."
   },
 
   "LoginDatabaseInfo": {

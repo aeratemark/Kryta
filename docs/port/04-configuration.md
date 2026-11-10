@@ -81,6 +81,7 @@ Configuration, and nothing else:
 |---|---|---|
 | `authserver/authserver.json` | the auth program's own configuration | `authserver`, `-c` |
 | `worldserver/worldserver.json` | the game program's own configuration | `worldserver`, `-c` |
+| `data/realms.json` | the worlds a login may send a player to, merged over the `realmlist` table | `authserver`, `WorldsFile` |
 
 The `.dist` files are committed; the live ones are not, because they hold a database password. Copy
 one, edit it, keep it.
@@ -99,14 +100,33 @@ all; bytes are decoded by `common::utilities::hex_bytes`.
 
 A file that holds **rows** is a record list and is not a set of keys: it is read as rows through the same
 reader (`Document::records`), so a single file can carry both a `note` and a list without either being
-squeezed into the other's shape. Nothing in the tree is a row list today.
+squeezed into the other's shape. `data/realms.json` is the one today: a world is a setting, and it is
+also a row in the `realmlist` table, so the file is merged over the table - same id overrides, new id is
+added, and a field the file does not state keeps the table's value.
 
-## Settings that are still not in a file
+## Every setting is in a file
 
-| setting | where it is now | where it goes |
-|---|---|---|
-| the world list | `realmlist` in `kryta_login` | `data/realms.json`, a file row overriding a database row of the same id |
-| the database layer's defaults - host, port, user, database names | `database/src/Database/mod.rs` | the program's own `.json`, beside the connection string that already overrides them |
-| the network thread count, the acceptor's backlog, the buffer sizes | a literal at each `start_network` call, and defaults inside `shared/src/Network/` | the program's own `.json`, as `Network.Threads` and its siblings, when a program needs to choose them |
+| setting | is set in |
+|---|---|
+| the login listener: port, bind address, thread count, trace | `authserver.json` |
+| the portal: enabled, where it answers | `authserver.json` |
+| the login database: connection string, worker and synchronous connections, trace | `authserver.json` |
+| the world list: every field of every world, including a world the table does not hold | `data/realms.json`, merged over `realmlist` |
+| the intervals this program reports and refreshes at | `authserver.json` |
+| logging: directory, appenders, logger levels | `authserver.json`, `worldserver.json` |
+| the PID file, the effective-config dump | `authserver.json`, `worldserver.json` |
+| everything the world program will need - its port, its thread pool, its map threads, the console, SOAP, its data directory | `worldserver.json`, arriving with the stage that reads them |
 
-Every other setting the programs have is in their file and read from it.
+Two consequences of taking that seriously, both now in the code:
+
+- **The connection string is critical.** A program cannot fall back to a compiled-in host and open a
+  database nobody named, so a file without `LoginDatabaseInfo` is a fatal configuration error rather
+  than a silent default (`main.rs`, `mark_critical`). The reference's parser still tolerates a short
+  string and fills the rest; no shipped file is short.
+- **A setting arrives with the stage that reads it.** `Network.Threads` is read because the listeners
+  exist; `WorldServerPort` is not in `worldserver.json` yet because nothing binds it. A key in a file
+  is therefore a key the program uses, never a promise.
+
+Nothing else in the tree is a setting: what the client dictates is a constant in the code that answers
+with it, and what a player does is a row.
+

@@ -73,7 +73,6 @@ fn run(args: &[String]) -> Result<(), String> {
     let mut config =
         Config::load_json(&options.config, false, policy).map_err(|error| error.to_string())?;
     config.set_dry_run(options.dry_run);
-
     for complaint in config.complaints() {
         report(complaint);
     }
@@ -88,6 +87,15 @@ fn run(args: &[String]) -> Result<(), String> {
     }
     let (bind, notes) = config
         .value_string("BindIP", "0.0.0.0")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+
+    // How many threads serve the accepted sockets, for every listener this program opens. Reference:
+    // `Network.Threads` (1), which its socket manager takes as its thread count.
+    let (network_threads, notes) = config
+        .value::<usize>("Network.Threads", 1)
         .map_err(|error| error.to_string())?;
     for note in notes {
         report(&note);
@@ -177,6 +185,10 @@ fn run(args: &[String]) -> Result<(), String> {
     //
     // Reference: `DatabaseLoader loader("server.authserver"); loader.AddDatabase(LoginDatabase,
     // "Login");` - the loader opens the pool, and a pool that cannot open stops the program.
+    //
+    // The connection string is critical: a setting is read from the file, so a program is not
+    // allowed to fall back to a compiled-in host and open a database nobody named.
+    config.mark_critical("LoginDatabaseInfo");
     let settings = read_settings(&config, DatabaseKind::Login)?;
 
     // The database's own trace: every statement the pool runs, on any of its connections.
@@ -262,6 +274,19 @@ fn run(args: &[String]) -> Result<(), String> {
         "server.authserver",
         format!("World list: {loaded} world(s), refreshed every {update_delay} s."),
     );
+
+    // The same rows as settings: a world's address is the operator's choice, so it can be written in
+    // a file as well as in the table, and a file row overrides a table row of the same id. A file
+    // that is not there merges nothing.
+    let (worlds_file, notes) = config
+        .value_string("WorldsFile", "data/realms.json")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    if !worlds_file.is_empty() {
+        worlds.merge_file(&worlds_file, &log)?;
+    }
 
     // From here the pool is shared: the portal asks it who a login name is, from a network thread,
     // on every login. Its synchronous connection is one connection, so the pool goes behind a lock -
@@ -377,7 +402,7 @@ fn run(args: &[String]) -> Result<(), String> {
             sockets.set_trace(log.clone());
         }
         let bound = sockets
-            .start_network(host, portal_port, 1)
+            .start_network(host, portal_port, network_threads)
             .map_err(|error| format!("the portal could not start: {error}"))?;
         log.out(
             LogLevel::Info,
@@ -468,7 +493,7 @@ fn run(args: &[String]) -> Result<(), String> {
     }
 
     let bound = sockets
-        .start_network(&bind, port, 1)
+        .start_network(&bind, port, network_threads)
         .map_err(|error| format!("Failed to initialize network: {error}"))?;
 
     // The line that says the program is up, what it is up on, and how often it will say so again.

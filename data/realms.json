@@ -1,0 +1,20 @@
+{
+  "note": "realms.json - the worlds a login may send a player to, as an operator writes them. The same rows live in the login database's realmlist table (the reference's own home for them, docs/decisions/0005-json-configuration.md); a row here with an id the table holds overrides it field by field, and a row with a new id is added. A field this file does not state keeps the table's value, and a world only this file states starts from the reference's defaults.",
+
+  "information": {
+    "what": "A world's address and port are the operator's choice, so they belong in a settings file as well as in the table.",
+    "how it is read": "Once at start-up, after the table. The program logs how many rows came from this file.",
+    "what is not here": "Anything a player does (accounts and characters are rows in the database), and anything the client dictates."
+  },
+
+  "realms": [
+    {
+      "id": 2,
+      "name": "Kryta",
+      "address": "127.0.0.1",
+      "localAddress": "127.0.0.1",
+      "port": 6113,
+      "doc": "The world this machine serves. The id is the map token a client carries back on its gameplay connection, so it must match a realmlist row's id; the port is where the world program will listen and is what a login hands out."
+    }
+  ]
+}

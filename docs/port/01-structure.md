@@ -94,7 +94,7 @@ Updated as stages land, because this is a statement of today and not of intent.
 | `database/` world and character schemas | not started - the tables are Tyria's and are a decision, not a port |
 | `shared/src/Network/` | done as a library - a client is accepted, answered and counted; `4596b27` |
 | `shared/src/Packets/` | started - the byte buffer; the opcode table and the message families are not written; `9f456f1` |
-| `shared/src/Worlds/` | done - the world list is read from `realmlist` and a login refuses to start on an empty one; `7adbe37` |
+| `shared/src/Worlds/` | done - the world list is read from `realmlist`, a login refuses to start on an empty one, and `data/realms.json` merges over it so an operator can state a world in a file; `7adbe37` |
 | `shared/src/Secrets/` | not started - the reference's only secret is WoW's TOTP master key, so what this game's secret is has not been decided |
 | `common/` Configuration | done - the reference's lookup, severity policy, environment override and masking, over **JSON** instead of the reference's `Key = value`: one handler (`Json.rs`), one hexadecimal decoder, and record lists read as rows rather than keys; `docs/decisions/0005-json-configuration.md` |
 | `authserver/` | stages 1 to 8 - config, log, PID file, login database and its schema, world list, listener; it also reports its own status on a timer, because a server that cannot say whether anything reached it cannot be tested |
