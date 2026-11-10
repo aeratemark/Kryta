@@ -155,6 +155,7 @@ the client is the judge rather than a test.
 | the wire facts this tree uses, and what it does not know yet | `docs/port/02-wire.md` |
 | what the server reports, and how to switch on its traces | `docs/port/03-tracing.md` |
 | every setting, where it is set, and what is not a setting | `docs/port/04-configuration.md` |
+| the tools: the client patch, the hosts setting, the imports, and what is still borrowed | `docs/port/05-tooling.md` |
 | the settings reader | `common/src/Configuration/`, and `Json.rs` in it for the format |
 | a decision taken away from the reference, and why | `docs/decisions/` |
 | workspace, dependency order, lint policy | `Cargo.toml` |

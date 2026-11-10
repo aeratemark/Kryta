@@ -75,6 +75,11 @@ the client is the judge, not a test.
 8. **`game/` nouns** - one directory at a time, each its own commit.
 9. **`modules/`** - the first `mod-*` crate, and the cargo member line that names it.
 
+Outside the server there is a second deliverable: **the tools**, in `tools/`. A client has to be patched
+to talk to us, a machine setting decides whether it reaches us, and a capture is what settles a wire
+question no log can - each of those is ours, and `docs/port/05-tooling.md` says what is ported, from
+where, and what is still borrowed.
+
 ## Where the port stands
 
 Updated as stages land, because this is a statement of today and not of intent.
