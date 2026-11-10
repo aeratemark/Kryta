@@ -60,20 +60,25 @@ and the load reports which came from where).
 
 ## What stays in code
 
-The owner's rule is "every hardcoded number or config", and taking that to its word would put the
-RC4 state and SHA-1's initial words in a file. The line this tree draws, and the reason it is drawn
-here rather than nowhere:
+One question decides it: **would two operators running this build legitimately have different
+values?**
 
-- **A number goes into a file** when it is a machine's choice (ports, intervals, buffers), content
-  (maps, spawns, defaults, accounts, realms), or a client fact that a build can change (message
-  sizes, error codes, map types). The third kind is marked `immutable` with the evidence in `doc`.
-- **A number stays in code** only when it is *part of an algorithm* - the RC4 S-box, the key
-  derivation's round constants and rotation widths, SHA-1's initial state - or *structural*: a
-  field's offset inside a layout that the builder writes, where the layout and the number are one
-  thing and separating them would let a file desynchronise the wire.
+- **Yes** - a port, an address, a database connection, a log level - it is a setting and it goes in the
+  program's file.
+- **No** - and then no file at all: a constant in the code that uses it when the client dictates the
+  value (message sizes, status codes, the handshake's arithmetic, the file check and account settings
+  payloads), a row in the database when a player made it (an account, a character).
+- **Not a setting, but also not a choice of anybody's** - a number that is part of an algorithm (the
+  RC4 S-box, the key derivation's round constants and rotation widths, SHA-1's initial state) or
+  *structural* (a field's offset inside a layout its builder writes) - stays in code, because
+  separating it would let a file desynchronise the wire.
 
-Everything else in the tree that is still a constant is tracked, one line each, in
-`docs/port/04-configuration.md`, with the file it is moving to.
+An earlier version of this section read the rule as "every hardcoded number or config", which put
+content and client facts in files beside the settings. That is what the first three rows of this
+record's cost line above are paying for.
+
+The settings that are still constants today - the world list above all - are tracked, one line each, in
+`docs/port/04-configuration.md`.
 
 ## What it costs
 
@@ -81,7 +86,8 @@ Everything else in the tree that is still a constant is tracked, one line each, 
   JSON ones. Its parser survives; its files do not.
 - `serde_json` joins `common`'s dependencies. It is used for its data model - `Value` and the
   parser - not for deriving a struct per module, which would have reintroduced a hand-written reader
-  by the back door and made an option name a Rust identifier.
-- Two shapes to understand instead of one: settings become keys, and rows stay rows. The
-  alternative - squeezing rows into keys - would make `accounts[2].token` a key name, which is how a
-  configuration turns into a database nobody can query.
+  by the back door and made a setting's name a Rust identifier.
+- Three wrong things were carried into files by the first version of this record and taken out again:
+  the account list (a player's, so a row - 0006) and two payloads (the client's, so constants). What
+  the format change actually costs is small; what reading the rule as "every number" cost was three
+  corrections.
