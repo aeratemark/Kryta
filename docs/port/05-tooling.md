@@ -61,7 +61,7 @@ copy carries the same records ASURA's did.
 **Py4GW_Stealth is a declared dependency of this tool and of nothing else here.** It is a separate
 project that injects into the client (`--py4gw-root`, or `PY4GW_STEALTH`); no program in this
 repository reads from it. A record is the client's message *struct*, not the packed frame -
-`docs/port/02-wire.md`, "A size is the reference's, not the sniffer's", and the `layer` field in every
+`docs/port/02-wire.md`, "Three kinds of capture", and the `layer` field in every
 capture's header say which one a file holds.
 
 ## Evidence

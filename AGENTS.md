@@ -21,8 +21,10 @@ Guild Wars in place of Azeroth.
 | consulted per question | `C:\Users\Apo\Documents\GitHub\ASURA` at `ca9f532`, a previous server for this client, declared failed. Opened only when one specific in-game fact is needed - what this client sends, expects or does. Never for design, structure, process or planning. Its documents describe its own function; they are not rules here. |
 
 When the reference and another source disagree about design, the reference wins. When the question
-is what the client sends or expects, the client wins, and the recordings under
-`C:\Users\Apo\Documents\GitHub\ASURA\recordings\` are where that was measured.
+is what the client sends or expects, the client wins, and the captures in `recordings/` are where that
+was measured - three kinds of capture, and which layer of the protocol each one holds, is
+`docs/port/02-wire.md`, "Three kinds of capture"; reading the wrong one as the wire is how a header
+doubles.
 
 A port means the reference's structure, behaviour, field order, sizes and order of operations,
 translated into Rust. It does not mean the reference's comments, its C++ idioms, or its Azeroth

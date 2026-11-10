@@ -107,3 +107,15 @@ client got inside the game:
 The `LogsDir` key decides where file appenders write; empty means the working directory. The shipped
 configuration writes `Auth.log` for the auth program and `Server.log` and `Errors.log` for the world
 program, and the console appender writes the same lines to the terminal.
+
+## When a trace is not enough: the client's side
+
+A trace here is this server's view. It says what arrived and what left, with sizes - and nothing about
+what the client did with it. The other half is a capture of the client, made by
+`tools/client/sniff-capture.py`, and the two are read side by side: the trace says what was sent, the
+capture says what the client received and when.
+
+Read a capture knowing which layer it holds. `recordings/` has three kinds, only two of which are the
+wire, and a struct dump is two or more bytes wider than the frame - `docs/port/02-wire.md`, "Three
+kinds of capture", is the rule, and every capture's own header names its `layer` and `header_len`.
+

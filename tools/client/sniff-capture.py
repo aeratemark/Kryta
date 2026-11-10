@@ -8,9 +8,19 @@ the client actually sent and received, with timings. Diffing the two -- and diff
 a capture of this server against a capture of the reference at the same spot -- is
 how a movement or load problem is diagnosed instead of guessed at.
 
-The sniffer itself lives in the client-side injection (Py4GW_Stealth). This script
-is the front end: it says "capture for N seconds, from this client, into this file".
-This tree has no other dependency on that project; nothing is read from it at runtime.
+The sniffer itself lives in the client-side injection (Py4GW_Stealth, `--py4gw-root`
+or `PY4GW_STEALTH`). This script is the front end: it says "capture for N seconds,
+from this client, into this file". That project is a declared dependency of this tool
+and of nothing else in this tree: no program here reads from it.
+
+A record is the client's message *struct*, not the packed frame - a four-byte header,
+every field widened to four bytes, zero padding. That is a project fact, not this
+tool's footnote: docs/port/02-wire.md, "Three kinds of capture", says which of the
+three capture kinds holds the wire, and what reading the wrong one costs.
+
+Where this came from: ported from ASURA's tools/sniff-capture.py - same commands,
+same records, same sanitising. Only the paths and the interpreter variable this tree
+names are its own (KRYTA_PY32, which still honours ASURA_PY32).
 
 Elevation is required, and not by choice
 ----------------------------------------

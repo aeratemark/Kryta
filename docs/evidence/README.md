@@ -19,5 +19,5 @@ in the repository rather than at another project's working copy.
 - **A newer measurement wins.** Where a file here disagrees with a capture this tree made later, the
   later one is right, and the correction is written where the fact is used.
 - **A recorded size is not always a wire size.** `recordings/client/` holds struct dumps, two or more
-  bytes wider than the frame; `docs/port/02-wire.md`, "A size is the reference's, not the sniffer's",
-  says how to tell the two apart.
+  bytes wider than the frame; `docs/port/02-wire.md`, "Three kinds of capture", says which of the
+  three kinds holds the wire and how to tell them apart.

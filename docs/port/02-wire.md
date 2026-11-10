@@ -25,19 +25,28 @@ a header whose bit 15 is set came from the client, and the header selects the fi
   client's first frame as `header 32778`, which is `0x800A`, and `recordings/gwps/world/load-stream.log`
   prints the server's own `SEND 0x017C   6 bytes : 7C 01 3F 3F 00 00`.
 
-### A size is the reference's, not the sniffer's
+### Three kinds of capture, and which layer each holds
 
-The **wire** size of a message is the reference's declared size for its header
-(`ASURA/crates/asura-protocol/src/packets.rs`, the `size` column, which is `sizeof` the struct its
-`pack` writes), and the reference's own send trace prints it: `SEND 0x017C 6 bytes`,
-`SEND 0x0186 2 bytes`.
+`recordings/` holds three different things, made by three different tools, and **only two of them are
+the wire**. A size or a header taken from the wrong one is the wrong number, so a citation says which
+file it came from and every capture says its own layer in its header (`layer`, `header_len`).
 
-The captures under `recordings/client/` are **not** wire bytes. That tool reads the client's
-handler table, so what it records is the client's message struct - two bytes wider than the wire for
-a fixed message, and much wider where the struct pads (`docs/evidence/packet-coverage.md` says so
-in as many words: `0x001E` 8 against 6, `0x0186` 4 against 2, `0x000A` 240 against 140). Reading those
-numbers as wire sizes turns a two-byte header into a four-byte one and an eighteen-byte message into
-twenty; this tree did that once and undid it in the same round.
+| directory | who made it | what a record holds | the header |
+|---|---|---|---|
+| `recordings/gwps/` | the reference server's own send trace | the packed frame it wrote | two bytes |
+| `recordings/asura/` | a working server, recording its own socket | the packed frame, both directions | two bytes |
+| `recordings/client/` | the client sniffer (`tools/client/sniff-capture.py`), hooking the client's handler table | the client's message **struct**: every field widened to four bytes, zero padding out to the struct's size | four bytes |
+
+- The **wire** size of a message is the reference's declared size for its header
+  (`ASURA/crates/asura-protocol/src/packets.rs`, the `size` column, which is `sizeof` the struct its
+  `pack` writes), and the traces print it: `SEND 0x017C 6 bytes`, `SEND 0x0186 2 bytes`.
+- A struct is **two bytes wider** for a fixed message and far wider where it pads - the recorded table
+  says it in as many words (`docs/evidence/packet-coverage.md`: `0x001E` 8 against 6, `0x0186` 4
+  against 2, `0x000A` 240 against 140).
+- **Why this is written down here and not in the tool:** reading `recordings/client/` as wire bytes
+  turns a two-byte header into four, a 6-byte load head into 20 and a 58-byte confirm into 56. This
+  tree did exactly that, broke a layer that was right, and undid it the next commit (`d9f0849`). The
+  fact belongs to the project, not to the sniffer's docstring.
 
 Not written: the opcode table itself. This tree has the headers the messages it sends and splits use,
 each a constant beside the builder that writes it; the rest of the table - 194 client-to-server and
