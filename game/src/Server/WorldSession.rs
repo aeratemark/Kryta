@@ -17,7 +17,6 @@
 //! so the pair is logged and not compared. That is stated here rather than implied by silence.
 
 use common::logging::{Log, LogLevel};
-use database::database::Param;
 use shared::cryptography::handshake::{self, CLIENT_SEED_HEADER, CLIENT_SEED_LEN, SERVER_SEED_LEN};
 use shared::cryptography::AuthCrypt;
 use shared::network::socket::{Session, SessionFuture, SessionIo};
@@ -25,7 +24,8 @@ use shared::network::socket::{Session, SessionFuture, SessionIo};
 use crate::server::packets::{
     agent_packets, character_packets, creation_load_block, instance_packets, misc_packets,
 };
-use crate::server::protocol::{GAME_HEADER_LEN, GameVersion};
+use crate::server::protocol::GameVersion;
+use database::database::Param;
 use crate::world::World;
 
 /// The agent id a character-creation connection's player is drawn as.
@@ -35,28 +35,17 @@ use crate::world::World;
 /// number is the world's to give, and nothing else reads it until a map exists.
 const CREATION_AGENT: u32 = 1;
 
-/// The client's asks on a gameplay connection, as this client was measured sending them.
+/// The client's asks on a gameplay connection, as the reference's dispatch reads them.
 ///
-/// Evidence: `ASURA/recordings/client/feature/character_creation/character_creation-live-necro_factions.jsonl`,
-/// a sniff of a live client on a server that worked with it. The client's game opcodes are not the
-/// `0x8000` family the auth connection uses: `0x0089` is what it sent, in four bytes.
-const CHAR_CREATION_REQUEST_PLAYER: u16 = 0x0089;
-const CHAR_CREATION_REQUEST_ARMORS: u16 = 0x008A;
-const CHAR_CREATION_CHANGE_PROF: u16 = 0x0060;
-const CHAR_CREATION_CONFIRM: u16 = 0x008B;
-/// A dye change on the creation screen: a slot and a colour, twelve bytes. Thirty-five of them arrive
-/// while a player picks colours.
-const ITEM_UPDATE_EQUIPPED_COLOR: u16 = 0x0084;
-/// The client's ping on the gameplay connection: four bytes, the header alone. The server does not
-/// answer it - the capture shows nothing answering, and the server pings on its own timer instead.
-const GAME_PING: u16 = 0x000D;
-
-/// The asks a client makes once it has a character and wants a map. Their sizes are measured; nothing
-/// in this world answers them yet, so the log names each one, which is what says what is missing.
-const INSTANCE_LOAD_REQUEST_SPAWN: u16 = 0x0088;
-const INSTANCE_LOAD_REQUEST_PLAYERS: u16 = 0x0090;
-const INSTANCE_UNNAMED_0091: u16 = 0x0091;
-const UNNAMED_0063: u16 = 0x0063;
+/// Sizes from `ASURA/docs/reference/client-protocol.md`'s table: the request-player and
+/// request-armors asks are the header alone, a profession change is a campaign and a profession, the
+/// confirm carries the character's name and appearance, and a ping is the header alone.
+const CHAR_CREATION_REQUEST_PLAYER: u16 = 0x8089;
+const CHAR_CREATION_REQUEST_ARMORS: u16 = 0x808A;
+const CHAR_CREATION_CHANGE_PROF: u16 = 0x8060;
+const CHAR_CREATION_CONFIRM: u16 = 0x808B;
+/// `GAME_CMSG_PING_REQUEST`: two bytes on the gameplay connection.
+const GAME_PING: u16 = 0x800D;
 
 /// The statement a creation confirm runs.
 ///
@@ -69,67 +58,22 @@ const INSERT_CHARACTER: &str = "INSERT INTO \"characters\" (\"uuid\", \"account_
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
 ON CONFLICT (\"name\") DO NOTHING RETURNING 1";
 
-/// How many bytes each message this world knows is, header included.
+/// How many bytes each message this world knows is.
 ///
 /// A gameplay message carries no length, so the table is what splits the stream - the same rule the
-/// login connection follows (`authserver/src/Server/stream.rs`). The sizes are the ones a live client
-/// and its server were measured using (`ASURA/recordings/client/feature/character_creation/
-/// character_creation-live-necro_factions.jsonl`), not the reference's declared maxima, which count
-/// the header as two bytes and are wrong by two for every one of them. A header that is not here, or
-/// a confirm whose name cannot be read, stops the reading and is reported with its bytes rather than
-/// guessed at.
+/// login connection follows (`authserver/src/Server/stream.rs`). The sizes are the reference's own:
+/// `msgdefs`' declared size per header, which is what its `pack` writes and what its receive path reads
+/// (`ASURA/crates/asura-protocol/src/packets.rs`, the `size` column). A header that is not here stops
+/// the reading and is reported with its bytes rather than guessed at.
 fn game_message_size(header: u16) -> Option<usize> {
     match header {
-        // `89 00 00 00`: the header alone.
-        CHAR_CREATION_REQUEST_PLAYER => Some(4),
-        // Unmeasured: no capture of this client sends it. Four bytes is the header alone.
-        CHAR_CREATION_REQUEST_ARMORS => Some(4),
-        // `60 00 00 00` and two dwords - the campaign and the profession.
-        CHAR_CREATION_CHANGE_PROF => Some(12),
-        // `84 00 00 00` and two dwords - a dye slot and a colour.
-        ITEM_UPDATE_EQUIPPED_COLOR => Some(12),
-        // `8b 00 00 00`, a counted name, and thirty-four bytes after it: 56 bytes for a name of eight
-        // units. The count is inside the message, so the size is read from the bytes.
-        CHAR_CREATION_CONFIRM => None,
-        // `0d 00 00 00`: the header alone.
-        GAME_PING => Some(4),
-        // Measured, and unanswered here: the client asking for the map's spawns and its players, and
-        // two messages whose names no source this tree has.
-        INSTANCE_LOAD_REQUEST_SPAWN => Some(4),
-        INSTANCE_LOAD_REQUEST_PLAYERS => Some(24),
-        INSTANCE_UNNAMED_0091 => Some(12),
-        UNNAMED_0063 => Some(4),
+        CHAR_CREATION_REQUEST_PLAYER => Some(2),
+        CHAR_CREATION_REQUEST_ARMORS => Some(2),
+        CHAR_CREATION_CHANGE_PROF => Some(4),
+        CHAR_CREATION_CONFIRM => Some(58),
+        GAME_PING => Some(2),
         _ => None,
     }
-}
-
-/// How many bytes a creation confirm is: the header, a counted name, and the thirty-four bytes after
-/// it.
-///
-/// Evidence: the recording's one confirm - 56 bytes, `8b 00 00 00 | 08 00 | sixteen bytes of name |
-/// 34 bytes`. The tail's fields are not named in any source this tree has, so its length is taken as
-/// measured rather than derived.
-const CONFIRM_TAIL: usize = 34;
-
-/// The confirm's size, read from its own counted name, or `None` while the count has not arrived.
-fn confirm_size(message: &[u8]) -> Option<usize> {
-    let count = message.get(4..6)?;
-    let units = u16::from_le_bytes([count[0], count[1]]) as usize;
-    Some(GAME_HEADER_LEN + 2 + units * 2 + CONFIRM_TAIL)
-}
-
-/// The size of the message at the front of `pending`, if it can be told yet.
-fn size_of(header: u16, pending: &[u8]) -> Option<usize> {
-    if header == CHAR_CREATION_CONFIRM {
-        confirm_size(pending)
-    } else {
-        game_message_size(header)
-    }
-}
-
-/// Whether this world can split a message with this header out of the stream at all.
-fn known_header(header: u16) -> bool {
-    header == CHAR_CREATION_CONFIRM || game_message_size(header).is_some()
 }
 
 /// What a character-creation connection has chosen so far.
@@ -163,10 +107,19 @@ fn creation_player_block(creation: &Creation) -> Vec<Vec<u8>> {
     let agent = CREATION_AGENT;
     let mut frames = vec![instance_packets::instance_player_data_start()];
 
+    for header in [
+        character_packets::FACTION_MAX_KURZICK,
+        character_packets::FACTION_MAX_LUXON,
+        character_packets::FACTION_MAX_BALTHAZAR,
+        character_packets::FACTION_MAX_IMPERIAL,
+    ] {
+        frames.push(character_packets::faction_max(header, 10_000));
+    }
+
     frames.push(agent_packets::agent_update_attribute_points(agent, 50, 50));
     frames.push(character_packets::player_update_profession(
         agent,
-        u32::from(creation.profession),
+        creation.profession,
         0,
         0,
     ));
@@ -174,9 +127,14 @@ fn creation_player_block(creation: &Creation) -> Vec<Vec<u8>> {
         agent,
         character_packets::CREATION_UNLOCKED_PROFESSIONS,
     ));
-    frames.push(character_packets::skillbar_update(agent, &[]));
+    frames.push(character_packets::skillbar_update(
+        agent,
+        &[0u32; 8],
+        &[0u32; 8],
+        1,
+    ));
     frames.push(character_packets::update_unlocked_skills(&[]));
-    frames.push(character_packets::character_update_factions(&[0u32; character_packets::FACTION_RECORD_DWORDS]));
+    frames.push(character_packets::character_update_factions(&[0u32; 13]));
     frames.push(agent_packets::agent_update_attributes(agent, &[0u32; 42]));
 
     // The creation path's own numbers: `GameSrv_SendPlayerHealthEnergy` sends energy 20, health 100
@@ -451,7 +409,7 @@ impl WorldSession {
             // Everything already unscrambled and not yet answered, before any more is read.
             while let Some(bytes) = pending.first_chunk::<2>() {
                 let header = u16::from_le_bytes(*bytes);
-                if !known_header(header) {
+                let Some(size) = game_message_size(header) else {
                     self.say(
                         LogLevel::Warn,
                         format!(
@@ -461,10 +419,6 @@ impl WorldSession {
                     );
                     let _ = io.close().await;
                     return;
-                }
-                // A counted message whose count has not arrived yet needs more bytes, not a guess.
-                let Some(size) = size_of(header, &pending) else {
-                    break;
                 };
                 if pending.len() < size {
                     break;
@@ -542,6 +496,12 @@ impl WorldSession {
         match header {
             // The creation screen's own asks, in the order a working server answers them.
             CHAR_CREATION_REQUEST_PLAYER => {
+                // The body is the two bytes of the client's current choice, which is a campaign and
+                // a profession; the reference reads them and re-draws from that choice.
+                if message.len() >= 4 {
+                    creation.campaign = message[2];
+                    creation.profession = message[3];
+                }
                 let frames = creation_player_block(creation);
                 self.send(io, peer, crypt, &frames, "the creation screen's player data")
                     .await;
@@ -558,14 +518,9 @@ impl WorldSession {
                 Some(true)
             }
             CHAR_CREATION_CHANGE_PROF => {
-                // The body is two dwords: the campaign and the profession. Evidence: the recording's
-                // `60 00 00 00 02 00 00 00 01 00 00 00`.
-                if let Some(body) = message.get(GAME_HEADER_LEN..GAME_HEADER_LEN + 4) {
-                    creation.campaign = u32::from_le_bytes([body[0], body[1], body[2], body[3]]) as u8;
-                }
-                if let Some(body) = message.get(GAME_HEADER_LEN + 4..GAME_HEADER_LEN + 8) {
-                    creation.profession =
-                        u32::from_le_bytes([body[0], body[1], body[2], body[3]]) as u8;
+                if message.len() >= 4 {
+                    creation.campaign = message[2];
+                    creation.profession = message[3];
                 }
                 self.say(
                     LogLevel::Info,
@@ -577,7 +532,7 @@ impl WorldSession {
                 let frames = vec![
                     character_packets::player_update_profession(
                         CREATION_AGENT,
-                        u32::from(creation.profession),
+                        creation.profession,
                         0,
                         0,
                     ),
@@ -590,40 +545,21 @@ impl WorldSession {
                     .await;
                 Some(true)
             }
-            // A dye change: a slot and a colour. This world has no item to dye, so it says what it saw
-            // and does not answer - the reference re-equips the piece, which needs the item stream.
-            ITEM_UPDATE_EQUIPPED_COLOR => {
-                let slot = message.get(GAME_HEADER_LEN..GAME_HEADER_LEN + 4).map(|body| {
-                    u32::from_le_bytes([body[0], body[1], body[2], body[3]])
-                });
-                let colour = message
-                    .get(GAME_HEADER_LEN + 4..GAME_HEADER_LEN + 8)
-                    .map(|body| u32::from_le_bytes([body[0], body[1], body[2], body[3]]));
-                self.say(
-                    LogLevel::Info,
-                    format!(
-                        "Gameplay connection from {peer}: a dye change on creation slot {:?} to colour {:?}, which needs an item to apply to.",
-                        slot, colour
-                    ),
-                );
-                Some(true)
-            }
             CHAR_CREATION_CONFIRM => {
                 // The confirm carries the name as a counted string and then the packed appearance
-                // word; this world reads the name and writes the row.
+                // word; the reference reads exactly those and writes the rows.
                 self.confirm_creation(io, peer, message, creation, version, crypt)
                     .await;
                 Some(true)
             }
-            // The client's ping: measured, and unanswered. The capture shows the client sending it and
-            // the server carrying on with its own traffic.
+            // A ping on the gameplay connection: two bytes, answered with the same two bytes.
             GAME_PING => {
-                self.log.out(
-                    LogLevel::Debug,
-                    "network.trace",
-                    format!("trace {peer} game in  a ping; it is not answered, as measured."),
-                );
-                Some(true)
+                let mut answer = message.to_vec();
+                crypt.encrypt(&mut answer);
+                match io.write_all(&answer).await {
+                    Ok(()) => Some(true),
+                    Err(_) => Some(false),
+                }
             }
             _ => None,
         }
@@ -632,10 +568,16 @@ impl WorldSession {
     /// The creation screen's confirm: write the character, and say whether it was written.
     ///
     /// Reference: `GameSrv_HandleCharCreationConfirm` - read the name and the packed appearance, write
-    /// the row, answer `0x0188` with the character's id, its name and the settings the list will carry;
-    /// a name that is taken is answered with `0x018B` and the taken-name code. The row is this tree's
-    /// own (`docs/decisions/0007-character-schema.md`), and the creation defaults are the reference's:
-    /// level 1, the helmet shown, the unlocked-profession bit set to the profession that was chosen.
+    /// the rows, answer `0x0188` with the character's id, its name, the reference's own `0x2211` and
+    /// the settings the list will carry; a name that is taken is answered with `0x018B` and the
+    /// taken-name code. The row is this tree's own (`docs/decisions/0007-character-schema.md`), and
+    /// the creation defaults are the reference's: level 1, the helmet shown, the unlocked-profession
+    /// bit set to the profession that was chosen.
+    ///
+    /// The confirm's layout is the reference's message table: the `u16` header, a counted name whose
+    /// field holds up to twenty units, then the packed appearance word (`ASURA`,
+    /// `crates/asura-protocol/src/packets.rs`, the `0x808B` row: header, `String16` of twenty, then
+    /// the body's dword).
     async fn confirm_creation(
         &self,
         io: &mut SessionIo,
@@ -645,15 +587,10 @@ impl WorldSession {
         version: &GameVersion,
         crypt: &mut AuthCrypt,
     ) {
-        // The header is four bytes; the name's count is the two after it, and the units follow.
-        // Evidence: the recording's confirm - `8b 00 00 00 | 08 00 | sixteen bytes of name`.
-        let Some(count) = message
-            .get(GAME_HEADER_LEN..GAME_HEADER_LEN + 2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]) as usize)
-        else {
+        let Some(count) = message.get(2..4).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize) else {
             return;
         };
-        let name_at = GAME_HEADER_LEN + 2;
+        let name_at = 4;
         let end = name_at + count * 2;
         if message.len() < end + 4 {
             self.say(
@@ -759,7 +696,18 @@ impl WorldSession {
                         creation.campaign
                     ),
                 );
-                let answer = character_packets::char_creation_success(id, &name);
+                let settings = crate::characters::CharacterSettings {
+                    last_outpost: 0,
+                    appearance,
+                    campaign: creation.campaign,
+                    level: 1,
+                    is_pvp: creation.campaign == 0,
+                    secondary_profession: 0,
+                    helm_status: 1,
+                    pieces: Vec::new(),
+                };
+                let answer =
+                    character_packets::char_creation_success(id, &name, &settings.to_blob());
                 let _ = self
                     .send(io, peer, crypt, &[answer], "the character creation")
                     .await;
@@ -768,7 +716,7 @@ impl WorldSession {
                 self.say(
                     LogLevel::Error,
                     format!(
-                        "Gameplay connection from {peer}: the character '{name}' was not written: {error}"
+                        "Gameplay connection from {peer}: the character '{name}' could not be written: {error}"
                     ),
                 );
                 let refusal = character_packets::char_creation_error(
@@ -780,7 +728,7 @@ impl WorldSession {
                 self.say(
                     LogLevel::Error,
                     format!(
-                        "Gameplay connection from {peer}: the character database answered no query."
+                        "Gameplay connection from {peer}: the character database answered no query, so '{name}' was not written."
                     ),
                 );
             }
@@ -949,20 +897,12 @@ mod tests {
         let mut opening = common::cryptography::Arc4::new(&key);
         opening.apply(&mut block);
         assert_eq!(block, creation_load_block());
-        // The recording's own twenty bytes for the load head, then the four for the creation start.
-        assert_eq!(
-            block,
-            vec![
-                0x7C, 0x01, 0x00, 0x00, 0x3F, 0x00, 0x00, 0x00, 0x3F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x89, 0x01, 0x00, 0x00,
-            ]
-        );
+        assert_eq!(block, vec![0x7C, 0x01, 0x3F, 0x3F, 0x00, 0x00, 0x89, 0x01]);
 
         // 5. The creation screen's first ask: the player-data block, whole and in order.
         let expected = creation_player_block(&Creation::start());
         let expected_bytes: usize = expected.iter().map(Vec::len).sum();
-        // The client's ask, as it was measured: the opcode and the header's zero word.
-        let mut ask = vec![0x89, 0x00, 0x00, 0x00];
+        let mut ask = vec![0x89, 0x80];
         let mut sending = common::cryptography::Arc4::new(&key);
         // The client's own outbound stream: the version message and the seed were plaintext, so its
         // cipher starts here.
@@ -991,6 +931,7 @@ mod tests {
             headers,
             vec![
                 0x0186, // instance_player_data_start
+                0x00EA, 0x00EB, 0x00EC, 0x00ED, // the four faction caps
                 0x0037, // attribute points
                 0x00B7, // profession
                 0x00B6, // unlocked professions
@@ -1002,6 +943,48 @@ mod tests {
                 0x018A, // instance_player_data_done
             ]
         );
+
+        manager.stop_network();
+        log.shutdown();
+    }
+
+    #[test]
+    fn a_world_that_is_not_this_one_is_closed() {
+        let log = Log::new();
+        let world = Arc::new(world());
+        let mut manager = shared::network::socket_mgr::SocketMgr::new(factory(
+            log.clone(),
+            Arc::clone(&world),
+            [0x5Bu8; MASTER_SECRET_LEN],
+        ));
+        let port = manager.start_network("127.0.0.1", 0, 1).unwrap();
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+
+        let version = GameVersion {
+            version: 39167,
+            h0008: 1,
+            map_token: 99,
+            map_id: 0,
+            player_token: 1,
+            account: [0; 16],
+            character: [0; 16],
+            h0038: 0,
+            h003c: 0,
+        };
+        client.write_all(&version.encode()).unwrap();
+
+        let mut byte = [0u8; 1];
+        let mut total = 0;
+        while let Ok(read) = client.read(&mut byte) {
+            if read == 0 {
+                break;
+            }
+            total += read;
+        }
+        assert_eq!(total, 0, "a connection for another world is closed without a word");
 
         manager.stop_network();
         log.shutdown();
@@ -1108,13 +1091,13 @@ Logger.root = 6,Console
         // the thirty-four bytes this test leaves zero after the appearance's four.
         let name = "Kryta Test";
         let units: Vec<u16> = name.encode_utf16().collect();
-        let appearance_at = 4 + 2 + units.len() * 2;
+        let appearance_at = 4 + units.len() * 2;
         // Thirty-four bytes follow the name, and the appearance word is the first four of them.
-        let mut confirm = vec![0u8; appearance_at + 34];
-        confirm[0..4].copy_from_slice(&[0x8B, 0x00, 0x00, 0x00]);
-        confirm[4..6].copy_from_slice(&(units.len() as u16).to_le_bytes());
+        let mut confirm = vec![0u8; 58];
+        confirm[0..2].copy_from_slice(&0x808Bu16.to_le_bytes());
+        confirm[2..4].copy_from_slice(&(units.len() as u16).to_le_bytes());
         for (index, unit) in units.iter().enumerate() {
-            let at = 6 + index * 2;
+            let at = 4 + index * 2;
             confirm[at..at + 2].copy_from_slice(&unit.to_le_bytes());
         }
         confirm[appearance_at..appearance_at + 4].copy_from_slice(&0x00AB_CDEFu32.to_le_bytes());
@@ -1124,17 +1107,17 @@ Logger.root = 6,Console
 
         // The answer: `0x0188` with the character's id, its name, and the twenty-six bytes measured
         // after them.
-        let mut answered = vec![0u8; 4 + 16 + 2 + units.len() * 2 + 26];
+        let mut answered = vec![0u8; 2 + 16 + 2 + units.len() * 2 + 2 + 2 + crate::characters::CHARACTER_SETTINGS_LEN];
         client.read_exact(&mut answered).unwrap();
         reading.apply(&mut answered);
-        assert_eq!(&answered[..4], &[0x88, 0x01, 0x00, 0x00], "the creation succeeded");
+        assert_eq!(&answered[..2], &0x0188u16.to_le_bytes(), "the creation succeeded");
 
         manager.stop_network();
 
         // And the row is there, under the account the version message named.
         let uuid_text = crate::characters::uuid_text(&{
             let mut id = [0u8; 16];
-            id.copy_from_slice(&answered[4..20]);
+            id.copy_from_slice(&answered[2..18]);
             id
         });
         let mut pool = pool.lock().unwrap();
@@ -1149,45 +1132,4 @@ Logger.root = 6,Console
         log.shutdown();
     }
 
-    #[test]
-    fn a_world_that_is_not_this_one_is_closed() {
-        let log = Log::new();
-        let world = Arc::new(world());
-        let mut manager = shared::network::socket_mgr::SocketMgr::new(factory(
-            log.clone(),
-            Arc::clone(&world),
-            [0x5Bu8; MASTER_SECRET_LEN],
-        ));
-        let port = manager.start_network("127.0.0.1", 0, 1).unwrap();
-        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-        client
-            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-            .unwrap();
-
-        let version = GameVersion {
-            version: 39167,
-            h0008: 1,
-            map_token: 99,
-            map_id: 0,
-            player_token: 1,
-            account: [0; 16],
-            character: [0; 16],
-            h0038: 0,
-            h003c: 0,
-        };
-        client.write_all(&version.encode()).unwrap();
-
-        let mut byte = [0u8; 1];
-        let mut total = 0;
-        while let Ok(read) = client.read(&mut byte) {
-            if read == 0 {
-                break;
-            }
-            total += read;
-        }
-        assert_eq!(total, 0, "a connection for another world is closed without a word");
-
-        manager.stop_network();
-        log.shutdown();
-    }
 }

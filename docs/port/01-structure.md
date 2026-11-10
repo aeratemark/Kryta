@@ -91,7 +91,7 @@ Updated as stages land, because this is a statement of today and not of intent.
 | `database/` connection and pool | done - the pool opens, pings, and runs a deferred statement on a worker; `eab6be5` |
 | `database/` Updater, apply half | done - a file runs once, is recorded with its sha1, and a changed file is refused; `22767f7` |
 | `database/` the login schema | done - `realmlist` and `updates`, applied by the program itself from `data/sql/base/db_auth/`; `22767f7`, `9ebbb45` |
-| `database/` the character schema | done for `characters` - applied by the world program from `data/sql/base/db_characters/characters.sql`, and read by both programs; the table is this tree's own design and not a port, `docs/decisions/0007-character-schema.md`. A login that runs before the world's first start finds no table, says so, and lists no character |
+| `database/` the character schema | done for `characters` - applied by the world program from `data/sql/base/db_characters/characters.sql` and read by both programs; the table is this tree's own design, `docs/decisions/0007-character-schema.md`. A login before the world's first start finds no table, says so, and lists no character |
 | `database/` the world schema | not started - nothing in the world database is read or written yet |
 | `shared/src/Network/` | done as a library - a client is accepted, answered and counted; `4596b27` |
 | `shared/src/Packets/` | started - the byte buffer; the opcode table and the message families are not written; `9f456f1` |
@@ -102,7 +102,7 @@ Updated as stages land, because this is a statement of today and not of intent.
 | the file check | answered from its own constants, before the version message on the same socket: a client that asks gets its 32 bytes, or the socket closes. Payload, not an option - `authserver/src/Server/file_check.rs` |
 | the auth conversation | the plaintext half, the login message read, and the five-message answer checked byte for byte against the reference trace; `13b5287`, `5802932` |
 | the message stream | a table of the client's nine auth messages, because no message carries its length: a read holding four messages is answered four times. A run of this client sent them as `0x8001`, `0x8002`, `0x8000` and `0x8023` in one 76-byte segment, each named with its size, its build number and its decrypted body in the log |
-| the rest of the login | the EULA (answered with nothing, as the reference does), the ask-response, the player status, the request for a map, which is answered with the world's own address in `0x0009` and an `0x0003` behind it, and the character list, which is read from the character database and carries each character's 62-byte settings blob |
+| the rest of the login | the EULA (answered with nothing, as the reference does), the ask-response, the player status, and the request for a map, which is answered with the world's own address in `0x0009` and an `0x0003` behind it |
 | which address a client dials | **measured, 2026-11-10, build 39167**: the launch address, not the one it is handed. A listener on the named port accepted nothing and the gameplay connection arrived on the auth port 35 ms later. The auth program is therefore the front door and hands it to the world; `docs/decisions/0004-gameplay-connections-arrive-at-the-front-door.md` |
 | the portal | the four endpoints served over HTTP on 6601 by the auth program, answering from the login database's `account` table; `game/src/Portal/`, `authserver/src/Server/accounts.rs`, `docs/decisions/0003-portal-host.md`, `0006-accounts-are-rows.md` |
 | the front door | a gameplay connection that arrives on the auth port is read for the world it names (`game/src/Server/Protocol/`), copied to that world's address from the world list (`shared/src/Network/Relay.rs`), and the world's answer carried back. A world that does not answer closes the client within 3 s rather than leaving it waiting; `authserver/src/Server/front_door.rs` |
@@ -110,9 +110,7 @@ Updated as stages land, because this is a statement of today and not of intent.
 | `worldserver/` | stages 1 to 9 - config, log, PID file, the script manager (0 scripts, 0 hooks registered), its two databases opened and pinged, the map catalogue loaded (one map: the creation instance), and its listener on `BindIP`:`WorldServerPort` as world `RealmID` |
 | `scripts/` | the hook registry content is written against: a loader, `Initialize`, and the count of what was registered. Nothing is registered yet, and the log says so - that is the result, not a placeholder |
 | `game/World/` | the world a program represents: its id, and the maps it can put a client in, loaded from `data/maps.json` at `SetInitialWorldSettings` |
-| `game/Server/` | the gameplay connection: the 64-byte version message (`Protocol/`), the four-byte frame header every message carries (`Protocol/`), the instance family (`Packets/`), `WorldSession` (the exchange, the creation block and the confirm) and `WorldSocketMgr` (the listener) |
-| the creation confirm | `0x008B` is read for its counted name and the appearance word behind it, the row is written to `characters` under the account the version message named, and the answer is `0x0188` - the id, the name and the twenty-six bytes a client was measured accepting; a name already held is `0x018B` with `0x0106`. A created character appears in the login's list on the next login |
-| the game frame's header | **four bytes** - the `u16` opcode and a zero `u16` - measured from a live client and its server in both directions, and the numbers the size table uses are that recording's totals. The client's gameplay opcodes are the `0x00` family, not the login connection's `0x8000` family: a world dispatching on `0x8089` answers nothing (`docs/port/02-wire.md`, "The frame") |
+| `game/Server/` | the gameplay connection: the 64-byte version message (`Protocol/`), the instance family (`Packets/`), `WorldSession` (the exchange and the creation block) and `WorldSocketMgr` (the listener) |
 | `modules/`, the rest of `game/` | not started |
 
 What "done" means here is narrower than a finished server: it means the stage behaves as the
@@ -153,19 +151,16 @@ every message in both directions is the arrangement this project exists to avoid
 
 ## What is next, and what stops it
 
-A client today logs in, is shown its characters, accepts the EULA, and asks for the
-character-creation instance. Its gameplay connection reaches the world, and every message on it now
-carries the four-byte header a live client was measured reading: the version message, the seed
-exchange, the creation block, a profession change and the confirm all land, and confirming a name
-writes the character and answers with its id - so the character appears in the list on the next
-login. What the screen does not get is its equipment, because the item stream is unbuilt. In order:
+A client today logs in, is shown an empty character list, accepts the EULA, and asks for the
+character-creation instance. Its gameplay connection now reaches the world: the version message, the
+seed exchange and the two-message creation block all land. What is left is the creation screen's own
+conversation. In order:
 
 | next | why it is next | what stops it |
 |---|---|---|
 | the front door (done) - `00 05 0C 00` on 6112 is copied to the world it names | measured: this client ignores the address it is handed, so the gameplay connection arrives where the login did (`docs/decisions/0004`) | nothing; it landed |
 | the world's listener and the creation block (done) - `WorldSocketMgr`, `WorldSession`, `0x017C` + `0x0189` | the creation screen cannot show without them | nothing; it landed |
-| the creation screen's conversation (answered up to the confirm) - the player-data block (`0x0089`: the reference's fourteen messages in order), the PvP half (`0x008A`), a profession change (`0x0060`) and the confirm (`0x008B`) | the screen is drawn, then asks what to draw | the profession's equipment: about 180 item messages belong in that block, and the item stream does not exist, so the client draws an undressed character |
-| the frame's four-byte header and the client's `0x00` opcodes (done) - every builder and the size table, from the one recording that shows both directions | a two-byte header desynchronises the client on its first message | nothing; it landed |
-| the character schema and the confirm (done) - `characters`, written at the confirm, and the list read back through the login's answer | a confirmed character has to be listed, and later entered as | nothing; it landed |
-| a real map: an outpost with its map blob, spawns and the instance table | a created character has nowhere to be put, so entering cannot begin | `Gw.dat` reading (`game/Pack/`) is unbuilt |
+| the creation screen's conversation (partly done) - the player-data block (`0x8089`: fourteen messages in the reference's order) and the PvP half (`0x808A`) are answered, and a profession change (`0x8060`) re-announces the choice | the screen is drawn, then asks what to draw | the inventory (a profession's starting equipment) needs the item framing, and the confirm (`0x808B`) needs a character schema - neither exists |
+| the character schema and the confirm (done) - `characters`, written at `0x808B`, and the list read back through the login's answer | a confirmed character has to be listed, and later entered as | nothing; it landed |
+| a real map: an outpost with its map blob, spawns and the instance table | the creation screen's confirm needs somewhere to put the character, and nothing else can be entered without it | `Gw.dat` reading (`game/Pack/`) is unbuilt |
 
