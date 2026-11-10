@@ -58,22 +58,58 @@ const INSERT_CHARACTER: &str = "INSERT INTO \"characters\" (\"uuid\", \"account_
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
 ON CONFLICT (\"name\") DO NOTHING RETURNING 1";
 
-/// How many bytes each message this world knows is.
+/// How many bytes each message this world knows is, header included.
 ///
 /// A gameplay message carries no length, so the table is what splits the stream - the same rule the
 /// login connection follows (`authserver/src/Server/stream.rs`). The sizes are the reference's own:
 /// `msgdefs`' declared size per header, which is what its `pack` writes and what its receive path reads
 /// (`ASURA/crates/asura-protocol/src/packets.rs`, the `size` column). A header that is not here stops
 /// the reading and is reported with its bytes rather than guessed at.
+///
+/// The confirm is the one message with no fixed size, because its name is a counted string: its size is
+/// read out of the message itself (see [`confirm_size`]).
 fn game_message_size(header: u16) -> Option<usize> {
     match header {
         CHAR_CREATION_REQUEST_PLAYER => Some(2),
         CHAR_CREATION_REQUEST_ARMORS => Some(2),
         CHAR_CREATION_CHANGE_PROF => Some(4),
-        CHAR_CREATION_CONFIRM => Some(58),
         GAME_PING => Some(2),
         _ => None,
     }
+}
+
+/// How many bytes a creation confirm is: the header, a counted name, and the thirty-four bytes after
+/// it.
+///
+/// Measured, with the one caveat this tree can honestly state: the only capture of a confirm is a
+/// **struct dump** (`recordings/client/feature/character_creation/character_creation-live-necro_factions.jsonl`,
+/// seq 462), whose header is two bytes wider than the wire. What it shows, past the widened header, is
+/// a counted name and then thirty-four bytes - `00 00`, then eight dwords - and those fields are the
+/// same width on the wire, because only the header is padded. A name of eight units is therefore 54
+/// bytes on the wire, not the reference's declared 58, which is its struct at the name field's
+/// capacity. Whether the client packs the name at its capacity or as the count says is settled by the
+/// client's own bytes: if it sends 58, the log says so with the four bytes left over.
+fn confirm_size(message: &[u8]) -> Option<usize> {
+    let count = message.get(2..4)?;
+    let units = u16::from_le_bytes([count[0], count[1]]) as usize;
+    Some(2 + 2 + units * 2 + CONFIRM_TAIL_LEN)
+}
+
+/// The thirty-four bytes a confirm carries after its name: two zero bytes, then eight dwords.
+const CONFIRM_TAIL_LEN: usize = 34;
+
+/// The size of the message at the front of `pending`, if it can be told yet.
+fn size_of(header: u16, pending: &[u8]) -> Option<usize> {
+    if header == CHAR_CREATION_CONFIRM {
+        confirm_size(pending)
+    } else {
+        game_message_size(header)
+    }
+}
+
+/// Whether this world can split a message with this header out of the stream at all.
+fn known_header(header: u16) -> bool {
+    header == CHAR_CREATION_CONFIRM || game_message_size(header).is_some()
 }
 
 /// What a character-creation connection has chosen so far.
@@ -375,7 +411,7 @@ impl WorldSession {
             // Everything already unscrambled and not yet answered, before any more is read.
             while let Some(bytes) = pending.first_chunk::<2>() {
                 let header = u16::from_le_bytes(*bytes);
-                let Some(size) = game_message_size(header) else {
+                if !known_header(header) {
                     self.say(
                         LogLevel::Warn,
                         format!(
@@ -385,6 +421,10 @@ impl WorldSession {
                     );
                     let _ = io.close().await;
                     return;
+                }
+                // A counted message whose count has not arrived yet needs more bytes, not a guess.
+                let Some(size) = size_of(header, &pending) else {
+                    break;
                 };
                 if pending.len() < size {
                     break;

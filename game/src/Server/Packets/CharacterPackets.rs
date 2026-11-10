@@ -70,9 +70,9 @@ fn dwords(values: &[u32]) -> Vec<u8> {
 ///
 /// Layout from the reference's message table: header, a sixteen-byte blob, a `String16` whose field
 /// holds twenty units, a word, and a counted byte array (`ASURA`,
-/// `crates/asura-protocol/src/packets.rs`, the `0x8088 + 0x100` row whose fields are `MsgHeader`,
-/// `Blob(16)`, `String16(20)`, `Word`, `Array8(1024)`). The constant `0x2211` is the reference's own
-/// and unexplained there too (`GameSrv.c:1951`); it is carried because the message carries it.
+/// `crates/asura-protocol/src/packets.rs`, the row whose fields are `MsgHeader`, `Blob(16)`,
+/// `String16(20)`, `Word`, `Array8(1024)`). The constant `0x2211` is the reference's own and
+/// unexplained there too (`GameSrv.c:1951`); it is carried because the message carries it.
 pub fn char_creation_success(character: [u8; 16], name: &str, settings: &[u8]) -> Vec<u8> {
     let units: Vec<u16> = name.encode_utf16().take(20).collect();
     let mut body = Vec::with_capacity(16 + 2 + units.len() * 2 + 2 + 2 + settings.len());

@@ -71,7 +71,7 @@ The frames, with the reference's own wire sizes:
 | 5 | client -> server | `0x8060` | 4 | campaign and profession, chosen |
 | 6 | server -> client | `0x00B7` | 9 | the agent, the professions and the PvP flag |
 | 7 | server -> client | `0x00B6` | 10 | the agent and the unlocked-profession bitmap |
-| 8 | client -> server | `0x808B` | 58 at its widest | the confirm: the header, a counted name of up to twenty units, the packed appearance |
+| 8 | client -> server | `0x808B` | 2 + 2 + 2n + 34 | the confirm: the header, a counted name of `n` units, two zero bytes and eight dwords - 58 bytes for a name of ten |
 | 9 | server -> client | `0x0188` | 102 for a name of eight units | written: the header, the id, the name, `0x2211`, the settings block |
 | 10 | server -> client | `0x018B` | 6 | refused: the header and the error code |
 
