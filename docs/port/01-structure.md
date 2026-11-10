@@ -143,3 +143,16 @@ every message in both directions is the arrangement this project exists to avoid
 | the five unassigned game directories (`Autobroadcast`, `Battlefield`, `Miscellaneous`, `Skills`, `Weather`) | `Skills` collides with `Spells/ -> Skills/`, so one of the two needs another name |
 | whether `game/Modules/` (the reference has one, 2 files) stays separate from cargo modules in `modules/` | two things called modules in one tree |
 | where a pack's configuration lives now that content is not SQL rows | the reference's `data/sql/` model does not describe `Gw.dat` |
+
+## What is next, and what stops it
+
+A client today logs in, is shown an empty character list, accepts the EULA, and asks for the
+character-creation instance; then it dials the gameplay connection at the address it was launched
+with, and nothing can answer it. In order:
+
+| next | why it is next | what stops it |
+|---|---|---|
+| the front door - the auth program accepts a `00 05 0C 00` connection on 6112 and copies it to the world's address | measured: this client ignores the address it is handed, so the gameplay connection arrives where the login did (`docs/decisions/0004`) | nothing; it is the next build |
+| the world program's listener (`game/Server/`: `WorldSocketMgr`, `WorldSocket`, `WorldSession`) | it is the only thing that can answer a gameplay connection | the reference starts `StartWorldNetwork` after `sWorld->SetInitialWorldSettings`, and the world program still stops at its databases - stages 5 to 8 must land first, with an empty content tree that reports zero maps |
+| the gameplay connection's protocol: the 64-byte version message, the token pair the front door issued, the seed exchange, then the creation instance's load block | the creation screen cannot progress without it | a travel has to be recorded for the world to check, which the front door brings |
+| content: the creation instance first (no geometry), then one outpost with a map blob, then spawns and the `Gw.dat` reader (`game/Pack/`) | the world serves maps, and has none | `Gw.dat` reading is unbuilt |
