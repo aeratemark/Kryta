@@ -12,7 +12,7 @@
 
 /// The four bytes that name a gameplay connection, as a bare little-endian `u32`.
 ///
-/// Evidence: `ASURA/docs/reference/client-protocol.md` section 2 - a capture of this client's three
+/// Evidence: `docs/evidence/client-protocol.md` section 2 - a capture of this client's three
 /// connection headers, this one with a 64-byte first message.
 pub const GAME_CMSG_VERSION: u32 = 0x000C_0500;
 

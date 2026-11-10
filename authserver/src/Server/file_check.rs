@@ -18,7 +18,7 @@ use std::fmt;
 
 /// The question, as a capture prints it.
 ///
-/// Source: `ASURA/docs/reference/client-protocol.md` section 7, measured from this client.
+/// Source: `docs/evidence/client-protocol.md` section 7, measured from this client.
 const REQUEST_HEX: &str = "01 00 00 00 00 f1 00 10 00 01 00 00 00 00 00 00 00 00 00 00 00";
 
 /// The answer, as a capture prints it.

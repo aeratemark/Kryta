@@ -47,13 +47,35 @@ dials the address on its command line, so nothing needs the block. `enable --fil
 client built with `--detach`, which repoints the client's own DNS base name and therefore needs both
 the block and a content server.
 
-## What is still borrowed, and what porting it costs
+## Capturing a client
 
-| borrowed | used for | what porting needs |
+```powershell
+# start an elevated PowerShell first: py4gw.connect() is a write, and refuses without it
+python tools/client/sniff-capture.py --seconds 90 --dir both --out recordings/client/feature/<subject>/<name>.jsonl
+python tools/client/sniff-capture.py --self-test        # needs neither a client nor elevation
+```
+
+Proved: the self-test passes from this tree (masking, record writing, the capture header), and the
+copy carries the same records ASURA's did.
+
+**Py4GW_Stealth is a declared dependency of this tool and of nothing else here.** It is a separate
+project that injects into the client (`--py4gw-root`, or `PY4GW_STEALTH`); no program in this
+repository reads from it. A record is the client's message *struct*, not the packed frame -
+`docs/port/02-wire.md`, "A size is the reference's, not the sniffer's", and the `layer` field in every
+capture's header say which one a file holds.
+
+## Evidence
+
+`recordings/` and `docs/evidence/` hold the measurements this tree cites, copied here so a citation
+points at something in the repository. `docs/evidence/README.md` says what each file is, where it came
+from, and that a document there is evidence rather than a rule.
+
+## What is still borrowed
+
+| borrowed | used for | status |
 |---|---|---|
-| ASURA `tools/sniff-capture.py` | every capture this tree cites was made with it | the capture itself is done by **Py4GW_Stealth**, a third project that injects into the client (elevated, 32-bit). Porting the front end is easy; the dependency behind it is not ours to move. Until then this tree's own evidence is the server's traces (`docs/port/03-tracing.md`) |
-| `ASURA/recordings/**` and `ASURA/docs/reference/client-protocol.md` | cited as the source of wire facts in a dozen code files | copy the pieces this tree relies on into `docs/evidence/`, once, with their provenance - a capture is not a dependency until the day it is gone |
-| `ASURA/crates/asura-protocol`, `crates/asura-world` | read for the protocol: builders, message table, creation handlers | not a dependency: read, ported into `game/src/Server/Protocol/`, `Packets/` and `Creation/`, and never called at run time |
+| `ASURA/crates/asura-protocol`, `crates/asura-world` | read for the protocol: the message table, the builders, the creation handlers | not a dependency: read, ported into `game/src/Server/Protocol/`, `Packets/` and `Creation/`, cited where a fact came from, and never called at run time |
+| `ASURA/tools/*` beyond the four above | their own milestones: test batteries, seed scripts, table generators | not used here; a tool this tree needs is ported before it is used |
 
 ## Where a tool goes
 

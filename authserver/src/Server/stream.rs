@@ -11,7 +11,7 @@
 //! login that was not there, and the client, owed an answer to `0x8035`, waited and then reset.
 //!
 //! Every size below is the reference's own send-or-receive trace of one working login,
-//! `ASURA/recordings/gwps/world/load-stream.log`, except the two counted ones, which are walked
+//! `recordings/gwps/world/load-stream.log`, except the two counted ones, which are walked
 //! rather than measured because their length is on the wire.
 
 /// The frames a client sends on the auth connection, and how many bytes each one is.
@@ -34,7 +34,7 @@
 /// `0x800D` was learned from a client, not from the trace: a run whose gameplay connection was
 /// refused went back to the character list, said it was offline (`0x800E` with a zero), and then
 /// sent this - and a table without it stopped splitting the stream. It is
-/// `AUTH_CMSG_DISCONNECT`, six bytes, per `ASURA/docs/reference/client-protocol.md`'s table.
+/// `AUTH_CMSG_DISCONNECT`, six bytes, per `docs/evidence/client-protocol.md`'s table.
 const FIXED: &[(u16, usize)] = &[
     (0x8000, 6),
     (0x8002, 22),
@@ -139,7 +139,7 @@ mod tests {
 
     /// The four messages of the reference's own post-login half, as its trace prints them.
     ///
-    /// `ASURA/recordings/gwps/world/load-stream.log`, 2026-10-26: the client's EULA, its ask-response,
+    /// `recordings/gwps/world/load-stream.log`, 2026-10-26: the client's EULA, its ask-response,
     /// its player status, and its request for a map.
     const TRACED_ACCEPT_EULA: &str = "26 80 1A";
     const TRACED_ASK_SERVER: &str = "35 80 02 00 00 00";

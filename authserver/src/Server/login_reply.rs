@@ -13,7 +13,7 @@
 //! | 4 | `0x0011` account info | 81 |
 //! | 5 | `0x0003` request response | 10 |
 //!
-//! The sizes are the reference's own wire trace (`ASURA/recordings/gwps/world/load-stream.log`, one
+//! The sizes are the reference's own wire trace (`recordings/gwps/world/load-stream.log`, one
 //! login): `0x0007` 102 bytes for a five-unit name, `0x0016` 599, `0x0014` 10, `0x0011` 81,
 //! `0x0003` 10. With no characters it is 700, and the client shows an empty character list rather than
 //! failing.
@@ -31,7 +31,7 @@ pub const GM_ERROR_AUTH_ERROR: u32 = 11;
 /// The status field of a `0x0003` that refuses a request this server cannot place - a map nobody is
 /// serving.
 ///
-/// Evidence: `ASURA/docs/reference/client-protocol.md` section 5a, which records that a travel the
+/// Evidence: `docs/evidence/client-protocol.md` section 5a, which records that a travel the
 /// auth service cannot place is refused with the ordinary request response and status 2 **and no
 /// info message**, because the client then shows an error it can describe. An info message naming a
 /// port nothing listens on is worse than either: the client leaves the character list and dies on a
@@ -359,7 +359,7 @@ mod tests {
     }
     /// The reference's own bytes, from the send trace of one login.
     ///
-    /// `ASURA/recordings/gwps/world/load-stream.log` prints each reply's header, its size and its first
+    /// `recordings/gwps/world/load-stream.log` prints each reply's header, its size and its first
     /// 24 bytes. Everything the trace shows, these builders must produce exactly - which is the only
     /// check of the packet stream that needs no client.
     mod against_the_reference_trace {

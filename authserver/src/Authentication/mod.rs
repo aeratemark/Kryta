@@ -10,7 +10,7 @@
 
 /// What the first four bytes of a connection say it is.
 ///
-/// Evidence: `ASURA/docs/reference/client-protocol.md`, section 2, where the three constants and
+/// Evidence: `docs/evidence/client-protocol.md`, section 2, where the three constants and
 /// their sizes are recorded from captures:
 ///
 /// | header | constant | message | size |
@@ -33,13 +33,13 @@ pub enum ConnectionKind {
 
 /// The four bytes of an auth connection.
 ///
-/// Evidence: `ASURA/docs/reference/client-protocol.md` section 2, the table above.
+/// Evidence: `docs/evidence/client-protocol.md` section 2, the table above.
 pub const AUTH_VERSION_HEADER: u32 = 0x000C_0400;
 /// The four bytes of a gameplay connection.
 pub const GAME_VERSION_HEADER: u32 = 0x000C_0500;
 /// The header of the client's login message, the first thing it sends once the exchange is done.
 ///
-/// Evidence: `ASURA/docs/reference/client-protocol.md` section 4, which records it as
+/// Evidence: `docs/evidence/client-protocol.md` section 4, which records it as
 /// `AUTH_CMSG_PORTAL_ACCOUNT_LOGIN` (`0x8038`, 150 bytes on the wire) carrying the portal's
 /// `user_id` and `session_id`, a character name and a type.
 pub const PORTAL_ACCOUNT_LOGIN: u16 = 0x8038;

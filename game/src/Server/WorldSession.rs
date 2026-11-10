@@ -37,7 +37,7 @@ pub(crate) const CREATION_AGENT: u32 = 1;
 
 /// The client's asks on a gameplay connection, as the reference's dispatch reads them.
 ///
-/// Sizes from `ASURA/docs/reference/client-protocol.md`'s table: the request-player and
+/// Sizes from `docs/evidence/client-protocol.md`'s table: the request-player and
 /// request-armors asks are the header alone, a profession change is a campaign and a profession, the
 /// confirm carries the character's name and appearance, and a ping is the header alone.
 const CHAR_CREATION_REQUEST_PLAYER: u16 = 0x8089;

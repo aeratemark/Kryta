@@ -14,7 +14,7 @@
 
 /// The block, as a capture prints it.
 ///
-/// Source: the reference's own send trace of one login (`ASURA/recordings/gwps/world/load-stream.log`),
+/// Source: the reference's own send trace of one login (`recordings/gwps/world/load-stream.log`),
 /// written up in `docs/port/02-wire.md`. One hex string rather than a byte array, so comparing it with
 /// a trace is a text comparison.
 const BLOCK_HEX: &str = concat!(

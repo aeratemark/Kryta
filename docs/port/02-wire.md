@@ -16,7 +16,7 @@ Two rules govern every line here, and both come from `AGENTS.md`:
 After the handshake every message is a `u16` header and then its fields, with **no length field**:
 a header whose bit 15 is set came from the client, and the header selects the field layout.
 
-- Source: `ASURA/docs/reference/client-protocol.md` section 1, which corrects an earlier claim of a
+- Source: `docs/evidence/client-protocol.md` section 1, which corrects an earlier claim of a
   length field and names the three reference functions that show it.
 - Why it matters: a port that writes a length the client does not expect gets error `007` and
   nothing else.
@@ -32,9 +32,9 @@ The **wire** size of a message is the reference's declared size for its header
 `pack` writes), and the reference's own send trace prints it: `SEND 0x017C 6 bytes`,
 `SEND 0x0186 2 bytes`.
 
-The captures under `ASURA/recordings/client/` are **not** wire bytes. That tool reads the client's
+The captures under `recordings/client/` are **not** wire bytes. That tool reads the client's
 handler table, so what it records is the client's message struct - two bytes wider than the wire for
-a fixed message, and much wider where the struct pads (`ASURA/docs/work/packet-coverage.md` says so
+a fixed message, and much wider where the struct pads (`docs/evidence/packet-coverage.md` says so
 in as many words: `0x001E` 8 against 6, `0x0186` 4 against 2, `0x000A` 240 against 140). Reading those
 numbers as wire sizes turns a two-byte header into a four-byte one and an eighteen-byte message into
 twenty; this tree did that once and undid it in the same round.
@@ -85,7 +85,7 @@ fatal.
 | the question | 21 bytes, `01 00 00 00 00 F1 00 10 00 01` then eleven zeros |
 | the answer | 32 bytes: header `0x02F1`, length `0x0020`, then six file ids in tight consecutive order with a zero among them |
 
-- Source of the shape: this client's protocol, recorded in `ASURA/docs/reference/client-protocol.md`
+- Source of the shape: this client's protocol, recorded in `docs/evidence/client-protocol.md`
   section 7. The reference server has no equivalent - its client does not ask this - which is why
   `game/FileCheck/` exists in this tree's naming.
 - In this tree: both byte strings are constants in `authserver/src/Server/file_check.rs`, because they
@@ -117,7 +117,7 @@ The session comes from call 1 and travels in `Authorization: Arena <session>`. T
 reference's own: a missing or unknown session is `401`, a provider that is not `Portal` is
 `400 Unsupported provider`, and a login name nobody knows is `400 who are you?`.
 
-- Source: `ASURA/docs/reference/client-protocol.md` section 4, measured with a real client at build
+- Source: `docs/evidence/client-protocol.md` section 4, measured with a real client at build
   39112, where all four answered `200` and the pair they returned is what the login message carried.
 - In this tree: `game/src/Portal/`, which is one of the directories the naming adds because the
   reference has no equivalent. The arrangement is a request-to-response function with no socket in
@@ -142,7 +142,7 @@ whatever the account holds:
 With no characters that is 700 bytes, and the client shows an empty character list; with one it is 802.
 A refusal sends only `0x0003`, with status `11`.
 
-- Source: `ASURA/recordings/gwps/world/load-stream.log`, the reference's own send trace of one login,
+- Source: `recordings/gwps/world/load-stream.log`, the reference's own send trace of one login,
   which prints each message with its header, its size and its first 24 bytes. That trace is the
   authority for the sizes, and it is what settles a disagreement in the older notes: their arithmetic
   sums an extra leading 10-byte message that the trace does not carry.
@@ -173,7 +173,7 @@ read can hold four messages and still be answered correctly.
 | `0x800E` | 6 | set player status |
 | `0x8029` | 26 | request game instance, six dwords |
 
-- Source: `ASURA/recordings/gwps/world/load-stream.log`, the same trace, one line per message either
+- Source: `recordings/gwps/world/load-stream.log`, the same trace, one line per message either
   direction, with its size. The two counted messages are walked rather than measured because their
   length is on the wire: a `u16` count of UTF-16 units, not a count of bytes and not padded out to the
   field the reference's struct reserves.
@@ -210,8 +210,8 @@ A request this server cannot place is answered with the response alone and statu
 address: the client then shows an error it can describe, where an address nothing listens on is a
 connect timeout with no message.
 
-- Source: `ASURA/recordings/gwps/world/load-stream.log` for the order and the bytes, and
-  `ASURA/docs/reference/client-protocol.md` section 5a for the two layouts and the refusal rule.
+- Source: `recordings/gwps/world/load-stream.log` for the order and the bytes, and
+  `docs/evidence/client-protocol.md` section 5a for the two layouts and the refusal rule.
 - In this tree: `authserver/src/Server/login_reply.rs` (`game_server_info`, `host_blob`,
   `GM_ERROR_NETWORK_ERROR`) and `authserver/src/Server/session.rs`, which answers six dwords with an
   address taken from the realm list's own row.
@@ -249,7 +249,7 @@ The first thing a client sends on a gameplay connection, and the whole of what t
 | 40 | 16 | the character, the same |
 | 56 | 8 | `h0038`, `h003C`, both observed 0 |
 
-- Source: `ASURA/docs/reference/client-protocol.md` section 11.1, which records the reference reading
+- Source: `docs/evidence/client-protocol.md` section 11.1, which records the reference reading
   the same fields in the same order (`Connection_ReadVersion`).
 - In this tree: `game/src/Server/Protocol/` - the first message of the game library's protocol, with
   the offsets spelled out in a test so a reordering fails a test rather than a client.
@@ -267,7 +267,7 @@ one would read `0x0400` as a message id.
 | `0x000C0500` | a gameplay connection | 64 |
 | `0x000C0FFF` | a control connection | 4 |
 
-- Source: `ASURA/docs/reference/client-protocol.md` section 2.
+- Source: `docs/evidence/client-protocol.md` section 2.
 - In this tree: `authserver/src/Authentication/`, whose `ConnectionKind::classify` answers one of the
   three and refuses anything else rather than guessing.
 - Proved by: a real socket sending `0x000C0400` and being told what it is, and one sending
@@ -286,7 +286,7 @@ both               key = the client's own 20-byte digest of the master
 both               RC4 keyed with those 20 bytes, one instance per direction, both from offset 0
 ```
 
-- Source: `ASURA/docs/reference/client-protocol.md` section 3, whose sizes and constants come from
+- Source: `docs/evidence/client-protocol.md` section 3, whose sizes and constants come from
   the reference's handshake and the client's own arithmetic.
 - In this tree: `authserver/src/Server/handshake.rs` (the sizes, the two constants as decimal
   digits, `shared_secret`, `server_seed`) and `common/src/Cryptography/Arc4.rs` (the cipher).
@@ -309,7 +309,7 @@ instance per direction, both from offset zero.
 - Source of the shape: recorded behaviour - five rounds over the five little-endian words of the
   master, from SHA-1's initial state, with its first two round constants and two f functions, and a
   digest that adds the working state back onto the input words. Recorded in
-  `ASURA/docs/reference/client-protocol.md` section 3 and implemented there.
+  `docs/evidence/client-protocol.md` section 3 and implemented there.
 - In this tree: `authserver/src/Server/handshake.rs` (`derive_key`) and `common/src/Cryptography/`
   (`Arc4`). It is the one wire fact here that is **transcribed rather than derived**, because there
   is no other record of it and nothing in this repository can prove it: no capture holds a master

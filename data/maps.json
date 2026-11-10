@@ -4,7 +4,7 @@
   "information": {
     "what a row means": "id is the client's own map id - the one a login is asked for and a client carries back - and type is the client's MapType: 0 outpost, 1 explorable, 11 character creation.",
     "what is not here yet": "a map with geometry: an outpost needs its map blob, its spawns and its instance table, and none of those exist (docs/port/01-structure.md, 'What is next').",
-    "where the numbers come from": "a live client: it asks for map 0 with type 11 while a character is being made (ASURA/docs/reference/client-protocol.md and the reference's own send trace)."
+    "where the numbers come from": "a live client: it asks for map 0 with type 11 while a character is being made (docs/evidence/client-protocol.md and the reference's own send trace)."
   },
 
   "maps": [

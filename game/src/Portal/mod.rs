@@ -3,7 +3,7 @@
 //! This is one of the directories this tree's naming adds, because the reference has no equivalent.
 //! The **arrangement** is the reference's: a plain request-to-response function with no socket in
 //! it, so the same code serves from a program or from a test. The **protocol** is this client's,
-//! recorded in `ASURA/docs/reference/client-protocol.md` section 4 and reproduced here endpoint by
+//! recorded in `docs/evidence/client-protocol.md` section 4 and reproduced here endpoint by
 //! endpoint.
 //!
 //! The client is launched with `-portal 127.0.0.1` and speaks plain HTTP to `localhost:6601`, in

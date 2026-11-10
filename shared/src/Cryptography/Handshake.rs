@@ -4,7 +4,7 @@
 //! `HandleAuthChallenge` is where the reference's own exchange happens. The **numbers and the
 //! arithmetic here are this client's**, measured, and each one names its evidence.
 //!
-//! What the exchange is, from `ASURA/docs/reference/client-protocol.md` section 3:
+//! What the exchange is, from `docs/evidence/client-protocol.md` section 3:
 //!
 //! ```text
 //! client -> server   header 0x4200, then 64 bytes: the client's public value, little endian,
@@ -27,7 +27,7 @@
 
 /// The header of the client's seed message.
 ///
-/// Evidence: `ASURA/docs/reference/client-protocol.md` section 3, step 1.
+/// Evidence: `docs/evidence/client-protocol.md` section 3, step 1.
 pub const CLIENT_SEED_HEADER: u16 = 0x4200;
 
 /// The header of the server's seed message.
