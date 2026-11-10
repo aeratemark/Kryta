@@ -1139,6 +1139,7 @@ name = "worldserver"
 version = "0.1.0"
 dependencies = [
  "common",
+ "database",
  "game",
  "scripts",
  "shared",

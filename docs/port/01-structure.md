@@ -106,7 +106,7 @@ Updated as stages land, because this is a statement of today and not of intent.
 | the portal | the four endpoints served over HTTP on 6601 by the auth program, answering from the login database's `account` table; `game/src/Portal/`, `authserver/src/Server/accounts.rs`, `docs/decisions/0003-portal-host.md`, `0006-accounts-are-rows.md` |
 | the front door | a gameplay connection that arrives on the auth port is read for the world it names (`game/src/Server/Protocol/`), copied to that world's address from the world list (`shared/src/Network/Relay.rs`), and the world's answer carried back. A world that does not answer closes the client within 3 s rather than leaving it waiting; `authserver/src/Server/front_door.rs` |
 | the account table | `account` in `kryta_login`: the login name the client types, and the pair the portal issued for it. A name it does not hold is the reference's own `400 who are you?`. Rows are inserted by an operator - creating an account is not built yet |
-| `worldserver/` | stages 1 to 4 - config, log, PID file; stops at its databases; `b604814` |
+| `worldserver/` | stages 1 to 5 - config, log, PID file, and its two databases opened, pinged and brought to their (still empty) schema with their pools reported; stops at the worker threads |
 | `game/`, `scripts/`, `modules/` | not started |
 
 What "done" means here is narrower than a finished server: it means the stage behaves as the

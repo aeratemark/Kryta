@@ -28,13 +28,20 @@
 /// 0x8035   6  ask server response
 /// 0x800E   6  set player status
 /// 0x8029  26  request game instance, six dwords
+/// 0x800D   6  disconnect
 /// ```
+///
+/// `0x800D` was learned from a client, not from the trace: a run whose gameplay connection was
+/// refused went back to the character list, said it was offline (`0x800E` with a zero), and then
+/// sent this - and a table without it stopped splitting the stream. It is
+/// `AUTH_CMSG_DISCONNECT`, six bytes, per `ASURA/docs/reference/client-protocol.md`'s table.
 const FIXED: &[(u16, usize)] = &[
     (0x8000, 6),
     (0x8002, 22),
     (0x8023, 6),
     (0x8026, 3),
     (0x8035, 6),
+    (0x800D, 6),
     (0x800E, 6),
     (0x8029, 26),
 ];
@@ -156,6 +163,7 @@ mod tests {
             (TRACED_ASK_SERVER, 6),
             (TRACED_PLAYER_STATUS, 6),
             (TRACED_REQUEST_INSTANCE, 26),
+            ("0D 80 00 00 00 00", 6),
         ] {
             let message = bytes(text);
             assert_eq!(message.len(), size);

@@ -18,6 +18,45 @@
     "doc": "Where file appenders write. Empty means the working directory."
   },
 
+  "WorldDatabaseInfo": {
+    "value": "127.0.0.1;5432;kryta;change-me;kryta_world",
+    "doc": "host;port;user;password;database - the world's own tables, which is what the game is made of rather than what its players did. The fourth field is a password: it is masked in every log line, and this file is not committed with a real one."
+  },
+
+  "WorldDatabase": {
+    "WorkerThreads": {
+      "value": 2,
+      "doc": "Asynchronous connections to the world database."
+    },
+    "SynchThreads": {
+      "value": 1,
+      "doc": "Synchronous connections, used where the caller cannot wait."
+    }
+  },
+
+  "CharacterDatabaseInfo": {
+    "value": "127.0.0.1;5432;kryta;change-me;kryta_characters",
+    "doc": "host;port;user;password;database - characters, their items and their progress. A player's rows, not a designer's."
+  },
+
+  "CharacterDatabase": {
+    "WorkerThreads": {
+      "value": 2,
+      "doc": "Asynchronous connections to the character database."
+    },
+    "SynchThreads": {
+      "value": 1,
+      "doc": "Synchronous connections to it."
+    }
+  },
+
+  "Database": {
+    "Trace": {
+      "value": false,
+      "doc": "Every statement both pools run, as a debug line. It needs its logger: Logger.sql.trace = 6,Console Server."
+    }
+  },
+
   "Appender": {
     "Console": {
       "value": [1, 4, 0, "1 9 3 6 5 8"],

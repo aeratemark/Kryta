@@ -44,6 +44,8 @@ const ASK_SERVER_RESPONSE: u16 = 0x8035;
 const SET_PLAYER_STATUS: u16 = 0x800E;
 /// The client's request-game-instance (`0x8029`): the map it wants to load.
 const REQUEST_GAME_INSTANCE: u16 = 0x8029;
+/// The client's disconnect (`0x800D`): it is leaving, and the session ends with it.
+const DISCONNECT: u16 = 0x800D;
 
 /// Where a client that asks for a map is sent: a world's address and the id it is known by.
 ///
@@ -491,6 +493,17 @@ impl AuthSession {
             }
 
             REQUEST_GAME_INSTANCE => self.answer_game_instance(io, peer, body, encrypt).await,
+
+            DISCONNECT => {
+                // Reference: the disconnect handler ends the session. Seen in this tree's own log
+                // when a client's gameplay connection was refused: it said it was offline, then sent
+                // `0D 80 00 00 00 00`, and a table without this header stopped splitting the stream.
+                self.say(
+                    LogLevel::Info,
+                    format!("Connection from {peer}: the client is disconnecting."),
+                );
+                false
+            }
 
             // The preamble and its hash: the client's computer information, which the reference
             // stores and answers only with the session info it has already been sent.

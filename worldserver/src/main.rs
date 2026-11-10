@@ -17,6 +17,8 @@ mod remote_access;
 use common::configuration::{Complaint, Config, Policy, PolicyOverride, Severity};
 use common::logging::{Log, LogLevel};
 use common::utilities::create_pid_file;
+use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
+use database::updater::{collect_files, UpdateState};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -141,11 +143,51 @@ fn run(args: &[String]) -> Result<(), String> {
         }
     }
 
-    log.shutdown();
-
-    // Stage 5. Reference: `StartDB()`, which opens the World and Character pools.
+    // Stage 5. Reference: `StartDB()`, which opens the World and Character pools and runs the schema
+    // updater on each - the stage the auth program has, twice.
     //
-    // Stages after it, in the reference's order, and none exists yet:
+    // The world program opens two databases rather than one. Neither schema is the reference's: the
+    // login database's `realmlist` transfers because a world list is a world list, but the world's
+    // content and a character's sheets are Tyria's, so both schemas start empty and are filled by
+    // the stages that own them.
+    let (sql_trace, notes) = config
+        .value_bool("Database.Trace", false)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+
+    let mut opened = Vec::new();
+    for (kind, label, schema) in [
+        (DatabaseKind::World, "World", "data/sql/base/db_world"),
+        (DatabaseKind::Character, "Character", "data/sql/base/db_characters"),
+    ] {
+        let settings = read_settings(&config, kind)?;
+        let mut pool = DatabaseWorkerPool::open_with_trace(kind, &settings, &log, sql_trace)?;
+
+        let schema = std::path::Path::new(schema);
+        let files = collect_files(schema, UpdateState::Released).map_err(|error| {
+            format!(
+                "the {label} schema at {} is not readable: {error}",
+                schema.display()
+            )
+        })?;
+        let summary = pool.apply_updates(&files, &log)?;
+        pool.ping()
+            .map_err(|error| format!("the {label} database does not answer: {error}"))?;
+
+        log.out(
+            LogLevel::Info,
+            "server.worldserver",
+            format!(
+                "Started {label} database connection pool: {} file(s) applied, {} already current.",
+                summary.updated, summary.skipped
+            ),
+        );
+        opened.push(pool);
+    }
+
+    // Stages after this one, in the reference's order, and none exists yet:
     //   ThreadPool                    the worker threads, `ThreadPool` (2)
     //   SetScriptLoader(AddScripts)   the script hooks, and the modules loader beside them
     //   sScriptMgr->Initialize
@@ -157,12 +199,12 @@ fn run(args: &[String]) -> Result<(), String> {
     //   sScriptMgr->OnStartup
     // On shutdown: `sWorldSessionMgr->KickAll`, `sMapMgr->UnloadAll`,
     // `sScriptMgr->OnAfterUnloadAllMaps`, `sScriptMgr->OnShutdown`.
-    //
-    // The world program opens two databases rather than one, and neither schema is here: the login
-    // database's `realmlist` transfers from the reference because a world list is a world list, but
-    // the world's content and a character's sheets are Tyria's and have no reference counterpart.
+    for pool in &mut opened {
+        pool.close();
+    }
+    log.shutdown();
     Err(format!(
-        "stage 5 'the world and character databases' is not ported (reference: StartDB); dry run: {}",
+        "stage 6 'the worker threads' is not ported (reference: ThreadPool); dry run: {}",
         config.is_dry_run()
     ))
 }

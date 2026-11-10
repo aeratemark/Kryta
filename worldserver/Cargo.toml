@@ -13,9 +13,11 @@ name = "worldserver"
 path = "src/main.rs"
 
 # Reference: `target_link_libraries(worldserver PUBLIC modules scripts game ...)`. `modules`
-# appears when the first mod-* crate exists.
+# appears when the first mod-* crate exists. `database` is reached through `game` in the reference's
+# graph; here it is named because this program opens its own two pools (stage 5, `StartDB`).
 [dependencies]
 game = { path = "../game" }
 scripts = { path = "../scripts" }
 shared = { path = "../shared" }
 common = { path = "../common" }
+database = { path = "../database" }
