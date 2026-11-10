@@ -14,8 +14,3 @@ database = { path = "../database" }
 shared = { path = "../shared" }
 # The portal's session and token identifiers come from the operating system's entropy.
 getrandom = "0.2"
-
-[dev-dependencies]
-# The framer's test reads a recorded session, which is JSONL: the wire is what the walker is measured
-# against, and a hand-written parser of it would be a second, worse reader.
-serde_json = "1"

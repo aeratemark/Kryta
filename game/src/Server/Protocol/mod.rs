@@ -15,12 +15,9 @@
 //!   It is the message the front door reads to learn which world a client was sent to, and the first
 //!   one the world program reads itself (`docs/decisions/0004`).
 
-#[path = "Frame.rs"]
-pub mod frame;
-#[path = "Tables.rs"]
-pub mod tables;
-
-pub use frame::{Frame, FrameError, HEADER_LEN};
+pub use shared::packets::frame;
+pub use shared::packets::tables;
+pub use shared::packets::{Frame, FrameError, HEADER_LEN};
 
 /// The four bytes that name a gameplay connection, as a bare little-endian `u32`.
 ///

@@ -331,7 +331,6 @@ dependencies = [
  "common",
  "database",
  "getrandom 0.2.17",
- "serde_json",
  "shared",
 ]
 
@@ -795,6 +794,7 @@ dependencies = [
  "database",
  "getrandom 0.2.17",
  "num-bigint",
+ "serde_json",
  "tokio",
 ]
 

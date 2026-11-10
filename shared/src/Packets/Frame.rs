@@ -9,7 +9,7 @@
 //! Ported from `ASURA/crates/asura-protocol/src/client/frame.rs`: same walker, same shapes, same
 //! error cases. The Rust here is this tree's, the rule is not.
 
-use crate::server::protocol::tables::{self, Conn, FieldKind};
+use crate::packets::tables::{self, Conn, FieldKind};
 
 /// The header is two bytes. Everything after it is the body, whose length the table fixes.
 pub const HEADER_LEN: usize = 2;
@@ -91,21 +91,39 @@ impl Frame {
 
     /// The table's name for this header, for a log line.
     pub fn label(&self) -> String {
-        match tables::lookup(Conn::Game, self.header(), true) {
+        match tables::lookup(Conn::Game, self.header(), true).or_else(|| tables::lookup(Conn::Auth, self.header(), true)) {
             Some(row) => row.label(),
             None => format!("{:#06X}", self.header()),
         }
     }
 
-    /// Frame one message off the front of `bytes`, and say how many bytes it used.
+    /// Frame one login-connection message off the front of `bytes`, and say how many bytes it used.
+    ///
+    /// The same walk as a gameplay message: the two connections differ in their rows, not in their
+    /// rule. A login message is where a counted field first bit this tree - the client's computer info
+    /// carries two of them.
+    pub fn decode_login_message(bytes: &[u8], from_client: bool) -> Result<(Frame, usize), FrameError> {
+        Frame::decode_with(Conn::Auth, bytes, from_client)
+    }
+
+    /// Frame one gameplay message off the front of `bytes`, and say how many bytes it used.
     pub fn decode_game_message(bytes: &[u8], from_client: bool) -> Result<(Frame, usize), FrameError> {
+        Frame::decode_with(Conn::Game, bytes, from_client)
+    }
+
+    /// Frame one message of either connection.
+    pub fn decode_with(
+        conn: Conn,
+        bytes: &[u8],
+        from_client: bool,
+    ) -> Result<(Frame, usize), FrameError> {
         if bytes.len() < HEADER_LEN {
             return Err(FrameError::Incomplete {
                 needed: HEADER_LEN,
             });
         }
         let header = u16::from_le_bytes([bytes[0], bytes[1]]);
-        let Some(row) = tables::lookup(Conn::Game, header, from_client) else {
+        let Some(row) = tables::lookup(conn, header, from_client) else {
             return Err(FrameError::UnknownHeader { header });
         };
         let shapes: Vec<Shape> = row.fields.iter().map(shape_of).collect();
@@ -303,7 +321,7 @@ mod tests {
     /// recorded, and the recording is this tree's own copy of that session.
     #[test]
     fn the_wire_recordings_frame_to_their_own_sizes() {
-        let path = "../recordings/asura/world/live-client-session-20261027-223528.jsonl";
+        let path = "../../recordings/asura/world/live-client-session-20261027-223528.jsonl";
         let Ok(text) = std::fs::read_to_string(path) else {
             eprintln!("no recording at {path}; the walk is not measured here");
             return;
