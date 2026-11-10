@@ -39,13 +39,8 @@ content.
 6. **A stage is done when it works** - the reference's behaviour reproduced, and the client's
    judgement wherever the client can see it. Not when the tests pass, and not when the log looks
    right.
-7. **A configuration file holds settings: the values that differ per operator.** Ask one question
-   before writing a file: would two operators running this build legitimately have different values?
-   Yes - port, address, database connection, log level - so it is a setting and it goes in the
-   program's JSON file. No - and it does not go in a file at all: it is a constant in the code that
-   uses it when the client dictates it, or a row in the database when a player made it. A number that
-   is part of an algorithm, or a field's offset inside a layout its builder writes, stays in code.
-   `docs/port/04-configuration.md` lists the settings and what is left to move.
+7. **Settings live in a JSON file.** A setting is read from the file; it is never compiled in.
+   `docs/port/04-configuration.md` says how a file is written and which files there are.
 8. **Every file is ASCII.** Write `-`, `->`, `=>`, `"`, `'`, `...`, `#`. Never rewrite a file with
    a `Get-Content` / `Set-Content` round trip.
 9. **A move inside this tree is additive.** Copy into the new home, re-export at the old path,
