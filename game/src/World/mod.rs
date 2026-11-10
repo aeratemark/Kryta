@@ -42,6 +42,8 @@ impl MapEntry {
 pub struct World {
     realm: u32,
     maps: Vec<MapEntry>,
+    /// The bags, items and profession sets a character-creation screen is built from.
+    creation: crate::creation::Tables,
 }
 
 impl World {
@@ -50,6 +52,7 @@ impl World {
         Self {
             realm,
             maps: Vec::new(),
+            creation: crate::creation::Tables::default(),
         }
     }
 
@@ -63,6 +66,25 @@ impl World {
     /// The maps this world hosts.
     pub fn maps(&self) -> &[MapEntry] {
         &self.maps
+    }
+
+    /// The creation data: the bags, the items and the profession sets.
+    pub fn creation(&self) -> &crate::creation::Tables {
+        &self.creation
+    }
+
+    /// Read the two creation files, and report what came from them.
+    ///
+    /// Reference: the same `SetInitialWorldSettings` pass that loads a world's content; a creation
+    /// screen's bags and equipment are as much content as a map is.
+    pub fn load_creation(
+        &mut self,
+        inventory_path: impl AsRef<std::path::Path>,
+        equipment_path: impl AsRef<std::path::Path>,
+        log: &Log,
+    ) -> Result<(usize, usize, usize), String> {
+        self.creation = crate::creation::Tables::load(inventory_path, equipment_path, log)?;
+        Ok(self.creation.counts())
     }
 
     /// One map, by the client's id.

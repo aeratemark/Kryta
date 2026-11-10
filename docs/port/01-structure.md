@@ -110,7 +110,8 @@ Updated as stages land, because this is a statement of today and not of intent.
 | `worldserver/` | stages 1 to 9 - config, log, PID file, the script manager (0 scripts, 0 hooks registered), its two databases opened and pinged, the map catalogue loaded (one map: the creation instance), and its listener on `BindIP`:`WorldServerPort` as world `RealmID` |
 | `scripts/` | the hook registry content is written against: a loader, `Initialize`, and the count of what was registered. Nothing is registered yet, and the log says so - that is the result, not a placeholder |
 | `game/World/` | the world a program represents: its id, and the maps it can put a client in, loaded from `data/maps.json` at `SetInitialWorldSettings` |
-| `game/Server/` | the gameplay connection: the 64-byte version message (`Protocol/`), the instance family (`Packets/`), `WorldSession` (the exchange and the creation block) and `WorldSocketMgr` (the listener) |
+| `game/Server/` | the gameplay connection: the 64-byte version message (`Protocol/`), the instance and item families (`Packets/`), `WorldSession` (the exchange, the creation block and the confirm) and `WorldSocketMgr` (the listener) |
+| `game/Creation/` | the creation screen's content: the reference's six bags, the items it creates before a choice, the 32 (campaign, profession) sets, and the player-data block built from them; the data is `data/inventory.json` and `data/equipment.json`, imported from its rows by `tools/import-creation-inventory.py` |
 | `modules/`, the rest of `game/` | not started |
 
 What "done" means here is narrower than a finished server: it means the stage behaves as the

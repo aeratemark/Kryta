@@ -1,0 +1,220 @@
+{
+  "note": "inventory.json - the bags and the items a new character's client is given, imported from ASURA's seed rows by tools/import-creation-inventory.py.",
+  "information": {
+    "what a row means": "a bag is a row of the client's inventory model: its id, its model, its kind and its slot count. An item carries the file id the client draws, its kind, its dyes, its flags and its name as UTF-16 units.",
+    "where the numbers come from": "ASURA crates/asura-store/src/state/inventory/seed.rs, whose rows came from a capture of the reference at its parity point.",
+    "why items and not nothing": "a client given no items has no inventory model, and it dies drawing the character it has just made."
+  },
+  "bags": [
+    {
+      "bag_id": 1,
+      "model": 0,
+      "type": 1,
+      "slots": 20,
+      "assoc_item": 1
+    },
+    {
+      "bag_id": 2,
+      "model": 5,
+      "type": 5,
+      "slots": 41,
+      "assoc_item": 0
+    },
+    {
+      "bag_id": 6,
+      "model": 6,
+      "type": 3,
+      "slots": 12,
+      "assoc_item": 0
+    },
+    {
+      "bag_id": 3,
+      "model": 7,
+      "type": 4,
+      "slots": 25,
+      "assoc_item": 0
+    },
+    {
+      "bag_id": 4,
+      "model": 8,
+      "type": 4,
+      "slots": 25,
+      "assoc_item": 0
+    },
+    {
+      "bag_id": 5,
+      "model": 21,
+      "type": 2,
+      "slots": 9,
+      "assoc_item": 0
+    }
+  ],
+  "items": [
+    {
+      "file_id": 2147595574,
+      "item_type": 3,
+      "dye_tint": 1,
+      "dye_colors": 0,
+      "materials": 0,
+      "unk1": 0,
+      "flags": 536875008,
+      "value": 5,
+      "model_id": 32,
+      "quantity": 1,
+      "profession": 0,
+      "name": [
+        8616
+      ],
+      "modifiers": [
+        608703488
+      ],
+      "id": 1,
+      "bag_id": null,
+      "slot": null
+    },
+    {
+      "file_id": 293940,
+      "item_type": 9,
+      "dye_tint": 0,
+      "dye_colors": 0,
+      "materials": 0,
+      "unk1": 0,
+      "flags": 554172929,
+      "value": 0,
+      "model_id": 22269,
+      "quantity": 100,
+      "profession": 0,
+      "name": [],
+      "modifiers": [],
+      "id": 2,
+      "bag_id": 1,
+      "slot": 0
+    },
+    {
+      "file_id": 293940,
+      "item_type": 9,
+      "dye_tint": 0,
+      "dye_colors": 0,
+      "materials": 0,
+      "unk1": 0,
+      "flags": 554172929,
+      "value": 0,
+      "model_id": 22269,
+      "quantity": 100,
+      "profession": 0,
+      "name": [],
+      "modifiers": [],
+      "id": 9,
+      "bag_id": 1,
+      "slot": 1
+    },
+    {
+      "file_id": 2147523424,
+      "item_type": 15,
+      "dye_tint": 6,
+      "dye_colors": 0,
+      "materials": 0,
+      "unk1": 0,
+      "flags": 572526592,
+      "value": 0,
+      "model_id": 1699,
+      "quantity": 1,
+      "profession": 1,
+      "name": [],
+      "modifiers": [],
+      "id": 3,
+      "bag_id": 5,
+      "slot": 0
+    },
+    {
+      "file_id": 2147483739,
+      "item_type": 7,
+      "dye_tint": 19,
+      "dye_colors": 11,
+      "materials": 0,
+      "unk1": 0,
+      "flags": 536875014,
+      "value": 0,
+      "model_id": 823,
+      "quantity": 1,
+      "profession": 1,
+      "name": [],
+      "modifiers": [],
+      "id": 4,
+      "bag_id": 5,
+      "slot": 2
+    },
+    {
+      "file_id": 2147483742,
+      "item_type": 19,
+      "dye_tint": 19,
+      "dye_colors": 11,
+      "materials": 0,
+      "unk1": 0,
+      "flags": 536875014,
+      "value": 0,
+      "model_id": 2440,
+      "quantity": 1,
+      "profession": 1,
+      "name": [],
+      "modifiers": [],
+      "id": 5,
+      "bag_id": 5,
+      "slot": 3
+    },
+    {
+      "file_id": 2147483741,
+      "item_type": 16,
+      "dye_tint": 19,
+      "dye_colors": 11,
+      "materials": 0,
+      "unk1": 0,
+      "flags": 536875014,
+      "value": 0,
+      "model_id": 6136,
+      "quantity": 1,
+      "profession": 1,
+      "name": [],
+      "modifiers": [],
+      "id": 6,
+      "bag_id": 5,
+      "slot": 4
+    },
+    {
+      "file_id": 2147483738,
+      "item_type": 4,
+      "dye_tint": 19,
+      "dye_colors": 11,
+      "materials": 0,
+      "unk1": 0,
+      "flags": 536875014,
+      "value": 0,
+      "model_id": 355,
+      "quantity": 1,
+      "profession": 1,
+      "name": [],
+      "modifiers": [],
+      "id": 7,
+      "bag_id": 5,
+      "slot": 5
+    },
+    {
+      "file_id": 2147483740,
+      "item_type": 13,
+      "dye_tint": 19,
+      "dye_colors": 11,
+      "materials": 0,
+      "unk1": 0,
+      "flags": 536875014,
+      "value": 0,
+      "model_id": 1598,
+      "quantity": 1,
+      "profession": 1,
+      "name": [],
+      "modifiers": [],
+      "id": 8,
+      "bag_id": 5,
+      "slot": 6
+    }
+  ]
+}

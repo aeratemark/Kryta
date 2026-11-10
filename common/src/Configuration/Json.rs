@@ -253,9 +253,77 @@ impl Record<'_> {
         })
     }
 
-    /// A field's bytes, from `<field>: {"hex": "..."}`.
-    pub fn bytes(&self, field: &str) -> Result<Option<Vec<u8>>, String> {
+    /// A field's numbers, from `<field>: [1, 2, 3]`.
+    ///
+    /// A record list of a protocol's own data needs arrays: an item's name is a list of UTF-16 code
+    /// units and its modifiers are a list of dwords, and neither is a scalar a key could hold.
+    pub fn numbers(&self, field: &str) -> Result<Option<Vec<u32>>, String> {
         if METADATA.contains(&field) {
+            return Ok(None);
+        }
+        let Some(value) = self.value.get(field) else {
+            return Ok(None);
+        };
+        let Value::Array(items) = unwrap_envelope(value) else {
+            return Err(format!(
+                "> Config: {}.{field} in {} is not a list of numbers",
+                self.at,
+                self.filename.display()
+            ));
+        };
+
+        let mut numbers = Vec::with_capacity(items.len());
+        for item in items {
+            let Some(number) = item.as_u64() else {
+                return Err(format!(
+                    "> Config: {}.{field} in {} holds a value that is not a number",
+                    self.at,
+                    self.filename.display()
+                ));
+            };
+            numbers.push(number as u32);
+        }
+        Ok(Some(numbers))
+    }
+
+    /// A field's rows, when the field holds a record list of its own.
+    pub fn rows(&self, field: &str) -> Result<Vec<Record<'_>>, String> {
+        if METADATA.contains(&field) {
+            return Ok(Vec::new());
+        }
+        let Some(value) = self.value.get(field) else {
+            return Ok(Vec::new());
+        };
+        let Value::Array(items) = value else {
+            return Err(format!(
+                "> Config: {}.{field} in {} is not a record list",
+                self.at,
+                self.filename.display()
+            ));
+        };
+
+        let mut records = Vec::with_capacity(items.len());
+        for (index, row) in items.iter().enumerate() {
+            if !row.is_object() {
+                return Err(format!(
+                    "> Config: {}.{field}[{}] in {} is a {}, but a row is an object of fields",
+                    self.at,
+                    index + 1,
+                    self.filename.display(),
+                    kind(row)
+                ));
+            }
+            records.push(Record {
+                at: format!("{}.{field}[{}]", self.at, index + 1),
+                filename: self.filename,
+                value: row,
+            });
+        }
+        Ok(records)
+    }
+
+    /// A field's bytes, from `<field>: {"hex": "..."}`.
+    pub fn bytes(&self, field: &str) -> Result<Option<Vec<u8>>, String> {        if METADATA.contains(&field) {
             return Ok(None);
         }
         let Some(value) = self.value.get(field) else {

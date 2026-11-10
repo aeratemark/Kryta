@@ -1,0 +1,3602 @@
+{
+  "note": "equipment.json - what a new character wears per campaign and profession, imported from ASURA's generated table by tools/import-creation-inventory.py.",
+  "information": {
+    "what a row means": "a set is one (campaign, profession) pair and the items the creation screen puts on a character of it. The item fields are the wire's own order, which is what GAME_SMSG_CREATE_NAMED_ITEM writes.",
+    "where the numbers come from": "the reference's GetDefaultEquipments (GmDefaultArmors.c), generated into ASURA crates/asura-world/src/default_equipment.rs."
+  },
+  "sets": [
+    {
+      "campaign": 0,
+      "profession": 1,
+      "items": [
+        {
+          "file_id": 2147484296,
+          "item_type": 4,
+          "dye_tint": 3,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19051,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747813888
+          ]
+        },
+        {
+          "file_id": 2147484297,
+          "item_type": 7,
+          "dye_tint": 3,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19052,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747813888
+          ]
+        },
+        {
+          "file_id": 2147484298,
+          "item_type": 13,
+          "dye_tint": 3,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19053,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747813888
+          ]
+        },
+        {
+          "file_id": 2147483716,
+          "item_type": 16,
+          "dye_tint": 3,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 16323,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            569906177
+          ]
+        },
+        {
+          "file_id": 2147484300,
+          "item_type": 19,
+          "dye_tint": 3,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19054,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747813888
+          ]
+        },
+        {
+          "file_id": 2147493102,
+          "item_type": 27,
+          "dye_tint": 3,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 973082880,
+          "value": 0,
+          "model_id": 18114,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            10141
+          ],
+          "modifiers": [
+            664278025
+          ]
+        },
+        {
+          "file_id": 2147498020,
+          "item_type": 24,
+          "dye_tint": 3,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 939528448,
+          "value": 0,
+          "model_id": 17561,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            31950
+          ],
+          "modifiers": [
+            664278281
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 0,
+      "profession": 2,
+      "items": [
+        {
+          "file_id": 2147484301,
+          "item_type": 4,
+          "dye_tint": 7,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19071,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747811328
+          ]
+        },
+        {
+          "file_id": 2147484302,
+          "item_type": 7,
+          "dye_tint": 7,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19072,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484303,
+          "item_type": 13,
+          "dye_tint": 7,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19073,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747811328
+          ]
+        },
+        {
+          "file_id": 2147483790,
+          "item_type": 16,
+          "dye_tint": 7,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 16331,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            569907457
+          ]
+        },
+        {
+          "file_id": 2147484304,
+          "item_type": 19,
+          "dye_tint": 7,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19074,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147493155,
+          "item_type": 5,
+          "dye_tint": 4,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 975180032,
+          "value": 0,
+          "model_id": 17112,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            10140
+          ],
+          "modifiers": [
+            639107840
+          ]
+        },
+        {
+          "file_id": 2147493028,
+          "item_type": 5,
+          "dye_tint": 4,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 975180032,
+          "value": 0,
+          "model_id": 17111,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            10138
+          ],
+          "modifiers": [
+            639107328
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 0,
+      "profession": 3,
+      "items": [
+        {
+          "file_id": 2147484305,
+          "item_type": 4,
+          "dye_tint": 1,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19043,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484306,
+          "item_type": 7,
+          "dye_tint": 1,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19044,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484307,
+          "item_type": 13,
+          "dye_tint": 1,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19045,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147483893,
+          "item_type": 16,
+          "dye_tint": 10,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 16297,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            569905153
+          ]
+        },
+        {
+          "file_id": 2147484308,
+          "item_type": 19,
+          "dye_tint": 1,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19046,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147595729,
+          "item_type": 26,
+          "dye_tint": 0,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 975180032,
+          "value": 0,
+          "model_id": 18065,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            10164
+          ],
+          "modifiers": [
+            664277001
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 0,
+      "profession": 4,
+      "items": [
+        {
+          "file_id": 2147484309,
+          "item_type": 4,
+          "dye_tint": 6,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 18554,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484310,
+          "item_type": 7,
+          "dye_tint": 6,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 18555,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484311,
+          "item_type": 13,
+          "dye_tint": 6,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 18556,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147483992,
+          "item_type": 16,
+          "dye_tint": 6,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 16281,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            569902081
+          ]
+        },
+        {
+          "file_id": 2147484312,
+          "item_type": 19,
+          "dye_tint": 6,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 18557,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147660347,
+          "item_type": 26,
+          "dye_tint": 0,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 975180032,
+          "value": 0,
+          "model_id": 17658,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            10157
+          ],
+          "modifiers": [
+            664273929
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 0,
+      "profession": 5,
+      "items": [
+        {
+          "file_id": 2147484074,
+          "item_type": 4,
+          "dye_tint": 9,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 16144,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484075,
+          "item_type": 7,
+          "dye_tint": 9,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 16176,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484076,
+          "item_type": 13,
+          "dye_tint": 9,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 16254,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484055,
+          "item_type": 16,
+          "dye_tint": 9,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 16277,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            569901569
+          ]
+        },
+        {
+          "file_id": 2147484077,
+          "item_type": 19,
+          "dye_tint": 9,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 17087,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147524393,
+          "item_type": 26,
+          "dye_tint": 0,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 975180032,
+          "value": 0,
+          "model_id": 17566,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            10155
+          ],
+          "modifiers": [
+            664273417
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 0,
+      "profession": 6,
+      "items": [
+        {
+          "file_id": 2147484124,
+          "item_type": 4,
+          "dye_tint": 8,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 16148,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484125,
+          "item_type": 7,
+          "dye_tint": 8,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 16192,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484126,
+          "item_type": 13,
+          "dye_tint": 8,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 16260,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147537281,
+          "item_type": 16,
+          "dye_tint": 9,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805311234,
+          "value": 0,
+          "model_id": 16292,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            569903105
+          ]
+        },
+        {
+          "file_id": 2147484127,
+          "item_type": 19,
+          "dye_tint": 8,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 17091,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147659460,
+          "item_type": 26,
+          "dye_tint": 0,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 975180032,
+          "value": 0,
+          "model_id": 17750,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            10160
+          ],
+          "modifiers": [
+            664274953
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 0,
+      "profession": 7,
+      "items": [
+        {
+          "file_id": 2147484593,
+          "item_type": 4,
+          "dye_tint": 11,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 18143,
+          "quantity": 1,
+          "profession": 7,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484594,
+          "item_type": 7,
+          "dye_tint": 11,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 18153,
+          "quantity": 1,
+          "profession": 7,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484595,
+          "item_type": 13,
+          "dye_tint": 11,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 18154,
+          "quantity": 1,
+          "profession": 7,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747811328
+          ]
+        },
+        {
+          "file_id": 2147484627,
+          "item_type": 16,
+          "dye_tint": 11,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19095,
+          "quantity": 1,
+          "profession": 7,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            569908481
+          ]
+        },
+        {
+          "file_id": 2147484596,
+          "item_type": 19,
+          "dye_tint": 11,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 18155,
+          "quantity": 1,
+          "profession": 7,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147659200,
+          "item_type": 32,
+          "dye_tint": 3,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 975180032,
+          "value": 0,
+          "model_id": 19103,
+          "quantity": 1,
+          "profession": 7,
+          "name": [
+            21963
+          ],
+          "modifiers": [
+            664280329
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 0,
+      "profession": 8,
+      "items": [
+        {
+          "file_id": 2147484711,
+          "item_type": 4,
+          "dye_tint": 12,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19091,
+          "quantity": 1,
+          "profession": 8,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484712,
+          "item_type": 7,
+          "dye_tint": 12,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19092,
+          "quantity": 1,
+          "profession": 8,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484713,
+          "item_type": 13,
+          "dye_tint": 12,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19093,
+          "quantity": 1,
+          "profession": 8,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484710,
+          "item_type": 16,
+          "dye_tint": 12,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19099,
+          "quantity": 1,
+          "profession": 8,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            569909249
+          ]
+        },
+        {
+          "file_id": 2147484714,
+          "item_type": 19,
+          "dye_tint": 12,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805310726,
+          "value": 0,
+          "model_id": 19094,
+          "quantity": 1,
+          "profession": 8,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147659266,
+          "item_type": 26,
+          "dye_tint": 2,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 975180032,
+          "value": 0,
+          "model_id": 19112,
+          "quantity": 1,
+          "profession": 8,
+          "name": [
+            22054
+          ],
+          "modifiers": [
+            664281097
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 0,
+      "profession": 9,
+      "items": [
+        {
+          "file_id": 2147485271,
+          "item_type": 4,
+          "dye_tint": 13,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805311750,
+          "value": 0,
+          "model_id": 19806,
+          "quantity": 1,
+          "profession": 9,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747813888
+          ]
+        },
+        {
+          "file_id": 2147485272,
+          "item_type": 7,
+          "dye_tint": 13,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805311750,
+          "value": 0,
+          "model_id": 19807,
+          "quantity": 1,
+          "profession": 9,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147485273,
+          "item_type": 13,
+          "dye_tint": 13,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805311750,
+          "value": 0,
+          "model_id": 19808,
+          "quantity": 1,
+          "profession": 9,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147714097,
+          "item_type": 16,
+          "dye_tint": 13,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805312258,
+          "value": 0,
+          "model_id": 19794,
+          "quantity": 1,
+          "profession": 9,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            569910529
+          ]
+        },
+        {
+          "file_id": 2147485274,
+          "item_type": 19,
+          "dye_tint": 13,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805311750,
+          "value": 0,
+          "model_id": 19809,
+          "quantity": 1,
+          "profession": 9,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747813888
+          ]
+        },
+        {
+          "file_id": 2147689608,
+          "item_type": 36,
+          "dye_tint": 4,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 973083904,
+          "value": 0,
+          "model_id": 19813,
+          "quantity": 1,
+          "profession": 9,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            664282377
+          ]
+        },
+        {
+          "file_id": 2147689613,
+          "item_type": 24,
+          "dye_tint": 3,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 939529472,
+          "value": 0,
+          "model_id": 19812,
+          "quantity": 1,
+          "profession": 9,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            664282633
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 0,
+      "profession": 10,
+      "items": [
+        {
+          "file_id": 2147485330,
+          "item_type": 4,
+          "dye_tint": 14,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805311750,
+          "value": 0,
+          "model_id": 19782,
+          "quantity": 1,
+          "profession": 10,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147485331,
+          "item_type": 7,
+          "dye_tint": 14,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805311750,
+          "value": 0,
+          "model_id": 19783,
+          "quantity": 1,
+          "profession": 10,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1754791961
+          ]
+        },
+        {
+          "file_id": 2147485332,
+          "item_type": 13,
+          "dye_tint": 14,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805311750,
+          "value": 0,
+          "model_id": 19784,
+          "quantity": 1,
+          "profession": 10,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147485329,
+          "item_type": 16,
+          "dye_tint": 14,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805311750,
+          "value": 0,
+          "model_id": 19778,
+          "quantity": 1,
+          "profession": 10,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            569911553
+          ]
+        },
+        {
+          "file_id": 2147485333,
+          "item_type": 19,
+          "dye_tint": 14,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 805311750,
+          "value": 0,
+          "model_id": 19785,
+          "quantity": 1,
+          "profession": 10,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147689600,
+          "item_type": 35,
+          "dye_tint": 4,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 975181056,
+          "value": 0,
+          "model_id": 19810,
+          "quantity": 1,
+          "profession": 10,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            664283401
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 1,
+      "profession": 1,
+      "items": [
+        {
+          "file_id": 2147483739,
+          "item_type": 7,
+          "dye_tint": 19,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 823,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            8867
+          ],
+          "modifiers": [
+            2747799808
+          ]
+        },
+        {
+          "file_id": 2147483742,
+          "item_type": 19,
+          "dye_tint": 19,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 2440,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            9489
+          ],
+          "modifiers": [
+            2747799808
+          ]
+        },
+        {
+          "file_id": 2147483738,
+          "item_type": 4,
+          "dye_tint": 19,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 355,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            8686
+          ],
+          "modifiers": [
+            2747799808
+          ]
+        },
+        {
+          "file_id": 2147483740,
+          "item_type": 13,
+          "dye_tint": 19,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 1598,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            9255
+          ],
+          "modifiers": [
+            2747799808
+          ]
+        },
+        {
+          "file_id": 2147483741,
+          "item_type": 16,
+          "dye_tint": 19,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 6136,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            9379
+          ],
+          "modifiers": [
+            2747799808
+          ]
+        },
+        {
+          "file_id": 2147523424,
+          "item_type": 15,
+          "dye_tint": 6,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 572526592,
+          "value": 0,
+          "model_id": 1699,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            9301
+          ],
+          "modifiers": [
+            616038400
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 1,
+      "profession": 2,
+      "items": [
+        {
+          "file_id": 2147483797,
+          "item_type": 7,
+          "dye_tint": 7,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 887,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            8879
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147483799,
+          "item_type": 19,
+          "dye_tint": 7,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 2504,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            9502
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147483796,
+          "item_type": 4,
+          "dye_tint": 7,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 419,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            8699
+          ],
+          "modifiers": [
+            2747795968
+          ]
+        },
+        {
+          "file_id": 2147483798,
+          "item_type": 13,
+          "dye_tint": 7,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 1666,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            9268
+          ],
+          "modifiers": [
+            2747795968
+          ]
+        },
+        {
+          "file_id": 2147483791,
+          "item_type": 16,
+          "dye_tint": 7,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 6138,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            9393
+          ],
+          "modifiers": [
+            2747795968
+          ]
+        },
+        {
+          "file_id": 2147493028,
+          "item_type": 5,
+          "dye_tint": 0,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 572526592,
+          "value": 0,
+          "model_id": 477,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            8767
+          ],
+          "modifiers": [
+            639107840
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 1,
+      "profession": 3,
+      "items": [
+        {
+          "file_id": 2147483879,
+          "item_type": 7,
+          "dye_tint": 1,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 743,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            8847
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147483881,
+          "item_type": 19,
+          "dye_tint": 1,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 2359,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            9470
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147483878,
+          "item_type": 4,
+          "dye_tint": 1,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 276,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            8666
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147483880,
+          "item_type": 13,
+          "dye_tint": 1,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 1518,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            9236
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147483893,
+          "item_type": 16,
+          "dye_tint": 10,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 6126,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            9360
+          ],
+          "modifiers": [
+            2747794688
+          ]
+        },
+        {
+          "file_id": 2147578552,
+          "item_type": 22,
+          "dye_tint": 0,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 570429440,
+          "value": 0,
+          "model_id": 2787,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            9762
+          ],
+          "modifiers": [
+            616039680
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 1,
+      "profession": 4,
+      "items": [
+        {
+          "file_id": 2147483968,
+          "item_type": 7,
+          "dye_tint": 20,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 630,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            8827
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147483970,
+          "item_type": 19,
+          "dye_tint": 20,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 2247,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            9451
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147483967,
+          "item_type": 4,
+          "dye_tint": 20,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 163,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            8644
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147483969,
+          "item_type": 13,
+          "dye_tint": 20,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 1405,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            9215
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147483992,
+          "item_type": 16,
+          "dye_tint": 20,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 6072,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            9330
+          ],
+          "modifiers": [
+            2747794688
+          ]
+        },
+        {
+          "file_id": 2147578584,
+          "item_type": 22,
+          "dye_tint": 0,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 570429440,
+          "value": 0,
+          "model_id": 2694,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            9687
+          ],
+          "modifiers": [
+            616040192
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 1,
+      "profession": 5,
+      "items": [
+        {
+          "file_id": 2147484059,
+          "item_type": 7,
+          "dye_tint": 33,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 562,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            8813
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484061,
+          "item_type": 19,
+          "dye_tint": 33,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 2184,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            9438
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484058,
+          "item_type": 4,
+          "dye_tint": 33,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 95,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            8631
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484060,
+          "item_type": 13,
+          "dye_tint": 33,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 1341,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            9202
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484054,
+          "item_type": 16,
+          "dye_tint": 33,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 6062,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            9318
+          ],
+          "modifiers": [
+            2747794688
+          ]
+        },
+        {
+          "file_id": 2147577189,
+          "item_type": 22,
+          "dye_tint": 0,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 570429440,
+          "value": 0,
+          "model_id": 2652,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            9651
+          ],
+          "modifiers": [
+            616039936
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 1,
+      "profession": 6,
+      "items": [
+        {
+          "file_id": 2147484145,
+          "item_type": 7,
+          "dye_tint": 8,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 688,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            8839
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484147,
+          "item_type": 19,
+          "dye_tint": 8,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 2305,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            9462
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484144,
+          "item_type": 4,
+          "dye_tint": 8,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 221,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            8657
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484146,
+          "item_type": 13,
+          "dye_tint": 8,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 1463,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            9227
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147537287,
+          "item_type": 16,
+          "dye_tint": 8,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875522,
+          "value": 0,
+          "model_id": 6110,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            33026
+          ],
+          "modifiers": [
+            2747794688
+          ]
+        },
+        {
+          "file_id": 2147578585,
+          "item_type": 22,
+          "dye_tint": 0,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 570429440,
+          "value": 0,
+          "model_id": 2742,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            9725
+          ],
+          "modifiers": [
+            616039680
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 2,
+      "profession": 1,
+      "items": [
+        {
+          "file_id": 2147483826,
+          "item_type": 7,
+          "dye_tint": 3,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 10172,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            21842
+          ],
+          "modifiers": [
+            2747799808
+          ]
+        },
+        {
+          "file_id": 2147483829,
+          "item_type": 19,
+          "dye_tint": 3,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 10175,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            21845
+          ],
+          "modifiers": [
+            2747799808
+          ]
+        },
+        {
+          "file_id": 2147483825,
+          "item_type": 4,
+          "dye_tint": 3,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 10171,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            21841
+          ],
+          "modifiers": [
+            2747799808
+          ]
+        },
+        {
+          "file_id": 2147483827,
+          "item_type": 13,
+          "dye_tint": 3,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 10173,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            21843
+          ],
+          "modifiers": [
+            2747799808
+          ]
+        },
+        {
+          "file_id": 2147483828,
+          "item_type": 16,
+          "dye_tint": 3,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 10174,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            21844
+          ],
+          "modifiers": [
+            2747799808
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 2,
+      "profession": 2,
+      "items": [
+        {
+          "file_id": 2147484016,
+          "item_type": 7,
+          "dye_tint": 22,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 10621,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            21878
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484087,
+          "item_type": 19,
+          "dye_tint": 22,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 10624,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            21881
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484015,
+          "item_type": 4,
+          "dye_tint": 22,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 10620,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            21877
+          ],
+          "modifiers": [
+            2747795968
+          ]
+        },
+        {
+          "file_id": 2147484086,
+          "item_type": 13,
+          "dye_tint": 22,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 10622,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            21879
+          ],
+          "modifiers": [
+            2747795968
+          ]
+        },
+        {
+          "file_id": 2147484760,
+          "item_type": 16,
+          "dye_tint": 22,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 10623,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            21880
+          ],
+          "modifiers": [
+            2747795968
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 2,
+      "profession": 3,
+      "items": [
+        {
+          "file_id": 2147484430,
+          "item_type": 7,
+          "dye_tint": 16,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 9723,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            21807
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484432,
+          "item_type": 19,
+          "dye_tint": 16,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 9726,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            21810
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484429,
+          "item_type": 4,
+          "dye_tint": 16,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 9722,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            21806
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484431,
+          "item_type": 13,
+          "dye_tint": 16,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 9724,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            21808
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484795,
+          "item_type": 16,
+          "dye_tint": 10,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 9725,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            21809
+          ],
+          "modifiers": [
+            2747794688
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 2,
+      "profession": 4,
+      "items": [
+        {
+          "file_id": 2147484465,
+          "item_type": 7,
+          "dye_tint": 20,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 8861,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            21736
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484467,
+          "item_type": 19,
+          "dye_tint": 20,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 8864,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            21739
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484464,
+          "item_type": 4,
+          "dye_tint": 20,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 8860,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            21735
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484466,
+          "item_type": 13,
+          "dye_tint": 20,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 8862,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            21737
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484828,
+          "item_type": 16,
+          "dye_tint": 20,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 8863,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            21738
+          ],
+          "modifiers": [
+            2747794688
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 2,
+      "profession": 5,
+      "items": [
+        {
+          "file_id": 2147484501,
+          "item_type": 7,
+          "dye_tint": 32,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 8024,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            21705
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484503,
+          "item_type": 19,
+          "dye_tint": 32,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 8054,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            21708
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484500,
+          "item_type": 4,
+          "dye_tint": 32,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 8023,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            21704
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484502,
+          "item_type": 13,
+          "dye_tint": 32,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 8025,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            21706
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484856,
+          "item_type": 16,
+          "dye_tint": 32,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 8026,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            21707
+          ],
+          "modifiers": [
+            2747794688
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 2,
+      "profession": 6,
+      "items": [
+        {
+          "file_id": 2147484536,
+          "item_type": 7,
+          "dye_tint": 29,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 9322,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            21759
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484538,
+          "item_type": 19,
+          "dye_tint": 29,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 9325,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            21762
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484535,
+          "item_type": 4,
+          "dye_tint": 29,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 9321,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            21758
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484537,
+          "item_type": 13,
+          "dye_tint": 29,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 9323,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            21760
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147659256,
+          "item_type": 16,
+          "dye_tint": 29,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875522,
+          "value": 0,
+          "model_id": 9324,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            21761
+          ],
+          "modifiers": [
+            2747794688
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 2,
+      "profession": 7,
+      "items": [
+        {
+          "file_id": 2147484594,
+          "item_type": 7,
+          "dye_tint": 11,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 7249,
+          "quantity": 1,
+          "profession": 7,
+          "name": [
+            21666
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484596,
+          "item_type": 19,
+          "dye_tint": 11,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 7252,
+          "quantity": 1,
+          "profession": 7,
+          "name": [
+            21669
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484593,
+          "item_type": 4,
+          "dye_tint": 11,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 7248,
+          "quantity": 1,
+          "profession": 7,
+          "name": [
+            21665
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484595,
+          "item_type": 13,
+          "dye_tint": 11,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 7250,
+          "quantity": 1,
+          "profession": 7,
+          "name": [
+            21667
+          ],
+          "modifiers": [
+            2747795968
+          ]
+        },
+        {
+          "file_id": 2147484592,
+          "item_type": 16,
+          "dye_tint": 11,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 7251,
+          "quantity": 1,
+          "profession": 7,
+          "name": [
+            21668
+          ],
+          "modifiers": [
+            2747795968
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 2,
+      "profession": 8,
+      "items": [
+        {
+          "file_id": 2147484677,
+          "item_type": 7,
+          "dye_tint": 12,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 11330,
+          "quantity": 1,
+          "profession": 8,
+          "name": [
+            21926
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484679,
+          "item_type": 19,
+          "dye_tint": 12,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 11333,
+          "quantity": 1,
+          "profession": 8,
+          "name": [
+            21929
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484676,
+          "item_type": 4,
+          "dye_tint": 12,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 11329,
+          "quantity": 1,
+          "profession": 8,
+          "name": [
+            21925
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147484678,
+          "item_type": 13,
+          "dye_tint": 12,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 11331,
+          "quantity": 1,
+          "profession": 8,
+          "name": [
+            21927
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147484675,
+          "item_type": 16,
+          "dye_tint": 12,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536875014,
+          "value": 0,
+          "model_id": 11332,
+          "quantity": 1,
+          "profession": 8,
+          "name": [
+            21928
+          ],
+          "modifiers": [
+            2747794688
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 3,
+      "profession": 1,
+      "items": [
+        {
+          "file_id": 2147484993,
+          "item_type": 7,
+          "dye_tint": 19,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15700,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747799808
+          ]
+        },
+        {
+          "file_id": 2147484995,
+          "item_type": 19,
+          "dye_tint": 19,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15703,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747799808
+          ]
+        },
+        {
+          "file_id": 2147484992,
+          "item_type": 4,
+          "dye_tint": 19,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15699,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747799808
+          ]
+        },
+        {
+          "file_id": 2147484994,
+          "item_type": 13,
+          "dye_tint": 19,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15701,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747799808
+          ]
+        },
+        {
+          "file_id": 2147484991,
+          "item_type": 16,
+          "dye_tint": 19,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15702,
+          "quantity": 1,
+          "profession": 1,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747799808
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 3,
+      "profession": 2,
+      "items": [
+        {
+          "file_id": 2147485042,
+          "item_type": 7,
+          "dye_tint": 23,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15705,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147485044,
+          "item_type": 19,
+          "dye_tint": 23,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15708,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147485041,
+          "item_type": 4,
+          "dye_tint": 23,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15704,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747795968
+          ]
+        },
+        {
+          "file_id": 2147485043,
+          "item_type": 13,
+          "dye_tint": 23,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15706,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747795968
+          ]
+        },
+        {
+          "file_id": 2147485040,
+          "item_type": 16,
+          "dye_tint": 23,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15707,
+          "quantity": 1,
+          "profession": 2,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747795968
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 3,
+      "profession": 3,
+      "items": [
+        {
+          "file_id": 2147485088,
+          "item_type": 7,
+          "dye_tint": 5,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15695,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147485090,
+          "item_type": 19,
+          "dye_tint": 5,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15698,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147485087,
+          "item_type": 4,
+          "dye_tint": 5,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15694,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147485089,
+          "item_type": 13,
+          "dye_tint": 5,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15696,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147485086,
+          "item_type": 16,
+          "dye_tint": 10,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15697,
+          "quantity": 1,
+          "profession": 3,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747794688
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 3,
+      "profession": 4,
+      "items": [
+        {
+          "file_id": 2147485135,
+          "item_type": 7,
+          "dye_tint": 6,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15685,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147485137,
+          "item_type": 19,
+          "dye_tint": 6,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15688,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147485134,
+          "item_type": 4,
+          "dye_tint": 6,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15684,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147485136,
+          "item_type": 13,
+          "dye_tint": 6,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15686,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147485133,
+          "item_type": 16,
+          "dye_tint": 6,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15687,
+          "quantity": 1,
+          "profession": 4,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747794688
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 3,
+      "profession": 5,
+      "items": [
+        {
+          "file_id": 2147485387,
+          "item_type": 7,
+          "dye_tint": 9,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15680,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147485389,
+          "item_type": 19,
+          "dye_tint": 9,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15683,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147485386,
+          "item_type": 4,
+          "dye_tint": 9,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15679,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147485388,
+          "item_type": 13,
+          "dye_tint": 9,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15681,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147485385,
+          "item_type": 16,
+          "dye_tint": 9,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15682,
+          "quantity": 1,
+          "profession": 5,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747794688
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 3,
+      "profession": 6,
+      "items": [
+        {
+          "file_id": 2147485201,
+          "item_type": 7,
+          "dye_tint": 8,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15690,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147485203,
+          "item_type": 19,
+          "dye_tint": 8,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15693,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147485200,
+          "item_type": 4,
+          "dye_tint": 8,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15689,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147485202,
+          "item_type": 13,
+          "dye_tint": 8,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15691,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147537287,
+          "item_type": 16,
+          "dye_tint": 8,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876546,
+          "value": 0,
+          "model_id": 15692,
+          "quantity": 1,
+          "profession": 6,
+          "name": [
+            9340
+          ],
+          "modifiers": [
+            2747794688
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 3,
+      "profession": 9,
+      "items": [
+        {
+          "file_id": 2147485248,
+          "item_type": 7,
+          "dye_tint": 13,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15715,
+          "quantity": 1,
+          "profession": 9,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147485250,
+          "item_type": 19,
+          "dye_tint": 13,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15718,
+          "quantity": 1,
+          "profession": 9,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747798528
+          ]
+        },
+        {
+          "file_id": 2147485247,
+          "item_type": 4,
+          "dye_tint": 13,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15714,
+          "quantity": 1,
+          "profession": 9,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747798528
+          ]
+        },
+        {
+          "file_id": 2147485249,
+          "item_type": 13,
+          "dye_tint": 13,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15716,
+          "quantity": 1,
+          "profession": 9,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147714094,
+          "item_type": 16,
+          "dye_tint": 13,
+          "dye_colors": 0,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876546,
+          "value": 0,
+          "model_id": 15717,
+          "quantity": 1,
+          "profession": 9,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747798528
+          ]
+        }
+      ]
+    },
+    {
+      "campaign": 3,
+      "profession": 10,
+      "items": [
+        {
+          "file_id": 2147485301,
+          "item_type": 7,
+          "dye_tint": 14,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15710,
+          "quantity": 1,
+          "profession": 10,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1754791961
+          ]
+        },
+        {
+          "file_id": 2147485303,
+          "item_type": 19,
+          "dye_tint": 14,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15713,
+          "quantity": 1,
+          "profession": 10,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147485300,
+          "item_type": 4,
+          "dye_tint": 14,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15709,
+          "quantity": 1,
+          "profession": 10,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1659371776
+          ]
+        },
+        {
+          "file_id": 2147485302,
+          "item_type": 13,
+          "dye_tint": 14,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15711,
+          "quantity": 1,
+          "profession": 10,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            1657275648
+          ]
+        },
+        {
+          "file_id": 2147485299,
+          "item_type": 16,
+          "dye_tint": 14,
+          "dye_colors": 11,
+          "materials": 0,
+          "unk1": 0,
+          "flags": 536876038,
+          "value": 0,
+          "model_id": 15712,
+          "quantity": 1,
+          "profession": 10,
+          "name": [
+            33025
+          ],
+          "modifiers": [
+            2747795968
+          ]
+        }
+      ]
+    }
+  ]
+}

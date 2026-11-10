@@ -32,6 +32,16 @@
     "doc": "The maps this world can put a client in - a record list, read at start-up."
   },
 
+  "InventoryFile": {
+    "value": "data/inventory.json",
+    "doc": "The bags and items a character-creation screen is given - a record list, read at start-up. A client with no items has no inventory model to draw."
+  },
+
+  "EquipmentFile": {
+    "value": "data/equipment.json",
+    "doc": "What a new character wears per campaign and profession - a record list of sets, read at start-up."
+  },
+
   "Log": {
     "EffectiveConfig": {
       "value": false,

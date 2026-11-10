@@ -115,6 +115,7 @@ added, and a field the file does not state keeps the table's value.
 | the character database: connection string, worker and synchronous connections | `authserver.json`, `worldserver.json`, under `CharacterDatabaseInfo` and `CharacterDatabase` |
 | the world list: every field of every world, including a world the table does not hold | `data/realms.json`, merged over `realmlist` |
 | the intervals this program reports and refreshes at | `authserver.json` |
+| the creation screen's content: the bags and items a client is given, and what a new character wears per campaign and profession | `worldserver.json`, `InventoryFile` and `EquipmentFile`, naming `data/inventory.json` and `data/equipment.json` |
 | logging: directory, appenders, logger levels | `authserver.json`, `worldserver.json` |
 | the PID file, the effective-config dump | `authserver.json`, `worldserver.json` |
 | everything the world program will need - its port, its thread pool, its map threads, the console, SOAP, its data directory | `worldserver.json`, arriving with the stage that reads them |

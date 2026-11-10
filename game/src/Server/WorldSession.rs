@@ -22,7 +22,7 @@ use shared::cryptography::AuthCrypt;
 use shared::network::socket::{Session, SessionFuture, SessionIo};
 
 use crate::server::packets::{
-    agent_packets, character_packets, creation_load_block, instance_packets, misc_packets,
+    character_packets, creation_load_block, misc_packets,
 };
 use crate::server::protocol::GameVersion;
 use database::database::Param;
@@ -33,7 +33,7 @@ use crate::world::World;
 /// A creation screen shows one body - the character being made - and a world here has no agent
 /// registry yet, so the first id is the one it gets. The reference allocates from its own pool; the
 /// number is the world's to give, and nothing else reads it until a map exists.
-const CREATION_AGENT: u32 = 1;
+pub(crate) const CREATION_AGENT: u32 = 1;
 
 /// The client's asks on a gameplay connection, as the reference's dispatch reads them.
 ///
@@ -98,65 +98,19 @@ impl Creation {
 
 /// The player-data block a creation screen is drawn from, in the reference's order.
 ///
-/// Reference: `GameSrv_HandleCharCreationRequestPlayer`, which is `instance_player_data_start`, the
-/// inventory stream, the faction caps, the attribute and profession state, the skillbar, the faction
-/// record and the agent's properties, then `instance_player_data_done`. **What is missing here is the
-/// inventory**: this tree has no item framing or starting equipment yet, so the screen draws a
-/// character with no equipment rather than not drawing one at all.
-fn creation_player_block(creation: &Creation) -> Vec<Vec<u8>> {
-    let agent = CREATION_AGENT;
-    let mut frames = vec![instance_packets::instance_player_data_start()];
-
-    for header in [
-        character_packets::FACTION_MAX_KURZICK,
-        character_packets::FACTION_MAX_LUXON,
-        character_packets::FACTION_MAX_BALTHAZAR,
-        character_packets::FACTION_MAX_IMPERIAL,
-    ] {
-        frames.push(character_packets::faction_max(header, 10_000));
+/// Reference: `GameSrv_HandleCharCreationRequestPlayer` - the player-data start, the inventory stream,
+/// the four weapon sets and the gold, the faction caps, the attribute and profession state, the
+/// skillbar, the faction record and the agent's properties, then the player-data end. The block is
+/// `crate::creation::player_data_block`, because the inventory it carries is content.
+fn creation_player_block(tables: Option<&crate::creation::Tables>, creation: &Creation) -> Vec<Vec<u8>> {
+    match tables {
+        Some(tables) => {
+            crate::creation::player_data_block(tables, creation.campaign, creation.profession)
+        }
+        // A session with no creation data still answers: the block without the inventory, which is
+        // what says a profession's equipment is missing rather than that the screen failed.
+        None => crate::creation::player_data_block(&crate::creation::Tables::default(), creation.campaign, creation.profession),
     }
-
-    frames.push(agent_packets::agent_update_attribute_points(agent, 50, 50));
-    frames.push(character_packets::player_update_profession(
-        agent,
-        creation.profession,
-        0,
-        0,
-    ));
-    frames.push(character_packets::player_update_unlocked_professions(
-        agent,
-        character_packets::CREATION_UNLOCKED_PROFESSIONS,
-    ));
-    frames.push(character_packets::skillbar_update(
-        agent,
-        &[0u32; 8],
-        &[0u32; 8],
-        1,
-    ));
-    frames.push(character_packets::update_unlocked_skills(&[]));
-    frames.push(character_packets::character_update_factions(&[0u32; 13]));
-    frames.push(agent_packets::agent_update_attributes(agent, &[0u32; 42]));
-
-    // The creation path's own numbers: `GameSrv_SendPlayerHealthEnergy` sends energy 20, health 100
-    // and a zero for the third property. A map load's numbers differ, and mixing them is a mismatch.
-    frames.push(agent_packets::agent_property_update_int(
-        agent_packets::AGENT_PROPERTY_ENERGY,
-        agent,
-        20,
-    ));
-    frames.push(agent_packets::agent_property_update_int(
-        agent_packets::AGENT_PROPERTY_HEALTH,
-        agent,
-        100,
-    ));
-    frames.push(agent_packets::agent_property_update_int(
-        agent_packets::AGENT_PROPERTY_VALUE64,
-        agent,
-        0,
-    ));
-
-    frames.push(instance_packets::instance_player_data_done());
-    frames
 }
 
 
@@ -170,6 +124,8 @@ pub struct WorldSession {
     /// The character database, when the program opened one: a creation screen's confirm writes a row
     /// there. A session without it can draw the screen but cannot finish it.
     characters: Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
+    /// The bags, items and profession sets a creation screen is built from, when the program read them.
+    creation: Option<crate::creation::Tables>,
     /// The master secret to draw the exchange from, when the caller wants a known one. A program
     /// leaves it empty and every connection draws its own.
     master: Option<[u8; shared::cryptography::handshake::MASTER_SECRET_LEN]>,
@@ -183,6 +139,7 @@ impl WorldSession {
             realm: world.realm(),
             maps: world.maps().to_vec(),
             characters: None,
+            creation: Some(world.creation().clone()),
             master: None,
         }
     }
@@ -209,6 +166,15 @@ impl WorldSession {
     ) -> Self {
         Self {
             master: Some(master),
+            ..Self::new(log, world)
+        }
+    }
+
+    /// A session whose creation screen has no inventory: the shape a test uses when it wants the
+    /// frames without the content files.
+    pub fn without_creation_data(log: Log, world: &World) -> Self {
+        Self {
+            creation: None,
             ..Self::new(log, world)
         }
     }
@@ -502,7 +468,7 @@ impl WorldSession {
                     creation.campaign = message[2];
                     creation.profession = message[3];
                 }
-                let frames = creation_player_block(creation);
+                let frames = creation_player_block(self.creation.as_ref(), creation);
                 self.send(io, peer, crypt, &frames, "the creation screen's player data")
                     .await;
                 Some(true)
@@ -829,6 +795,13 @@ mod tests {
 
         world.load_maps(&path, &Log::new()).unwrap();
         assert_eq!(world.maps(), &[MapEntry { id: 0, kind: map_kind::CREATION }]);
+
+        // And the creation content, which the same start-up pass reads: a screen with no items has no
+        // inventory model to draw.
+        let (bags, items, sets) = world
+            .load_creation("../data/inventory.json", "../data/equipment.json", &Log::new())
+            .expect("the creation data");
+        assert_eq!((bags, items, sets), (6, 9, 32), "the reference's own counts");
         world
     }
 
@@ -900,7 +873,7 @@ mod tests {
         assert_eq!(block, vec![0x7C, 0x01, 0x3F, 0x3F, 0x00, 0x00, 0x89, 0x01]);
 
         // 5. The creation screen's first ask: the player-data block, whole and in order.
-        let expected = creation_player_block(&Creation::start());
+        let expected = creation_player_block(world.creation().into(), &Creation::start());
         let expected_bytes: usize = expected.iter().map(Vec::len).sum();
         let mut ask = vec![0x89, 0x80];
         let mut sending = common::cryptography::Arc4::new(&key);
@@ -927,22 +900,27 @@ mod tests {
             at += frame.len();
         }
         assert_eq!(at, answered.len(), "every byte is accounted for");
+        // The order the reference sends: the player-data start, the item stream (a bag's own item,
+        // the bag, then each item and its slot), the weapon sets and the gold, then the player's own
+        // state, and finally the player-data end.
+        assert_eq!(headers[0], 0x0186, "instance_player_data_start");
+        assert_eq!(headers[1], 0x0144, "the item stream opens");
         assert_eq!(
-            headers,
-            vec![
-                0x0186, // instance_player_data_start
-                0x00EA, 0x00EB, 0x00EC, 0x00ED, // the four faction caps
-                0x0037, // attribute points
-                0x00B7, // profession
-                0x00B6, // unlocked professions
-                0x00DA, // skillbar
-                0x00DB, // unlocked skills
-                0x00E9, // faction record
-                0x003A, // attributes
-                0x009F, 0x009F, 0x009F, // energy, health, and the third property
-                0x018A, // instance_player_data_done
-            ]
+            *headers.last().unwrap(),
+            0x018A,
+            "instance_player_data_done"
         );
+        for header in [
+            0x013F, 0x0161, 0x013E, // a bag, its items, and where each sits
+            0x0148, 0x0147, 0x0141, // the active weapon set, four weapon sets, the gold
+            0x00EA, 0x00EB, 0x00EC, 0x00ED, // the four faction caps
+            0x0037, 0x00B7, 0x00B6, 0x00DA, 0x00DB, 0x00E9, 0x003A,
+            0x009F, // energy, health, and the third property
+        ] {
+            assert!(headers.contains(&header), "header 0x{header:04X} is in the block");
+        }
+        let item_count = headers.iter().filter(|header| **header == 0x0161).count();
+        assert!(item_count > 9, "the screen is sent the profession's equipment too");
 
         manager.stop_network();
         log.shutdown();

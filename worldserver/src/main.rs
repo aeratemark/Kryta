@@ -246,6 +246,29 @@ fn run(args: &[String]) -> Result<(), String> {
                 .join(", ")
         ),
     );
+    // The creation screen's own content: the bags and items a client is given, and what a new
+    // character wears per campaign and profession. Reference: the same `SetInitialWorldSettings`
+    // pass that loads a world's maps; a creation screen's equipment is content like any other.
+    let (inventory_file, notes) = config
+        .value_string("InventoryFile", "data/inventory.json")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let (equipment_file, notes) = config
+        .value_string("EquipmentFile", "data/equipment.json")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let (bags, items, sets) = world.load_creation(&inventory_file, &equipment_file, &log)?;
+    log.out(
+        LogLevel::Info,
+        "server.worldserver",
+        format!(
+            "Creation screen: {bags} bag(s) and {items} item(s) from {inventory_file}, {sets} profession set(s) from {equipment_file}."
+        ),
+    );
     let world = std::sync::Arc::new(world);
 
     // Stage 9. Reference: `sWorldSocketMgr.StartWorldNetwork(*ioContext, worldListener, worldPort,

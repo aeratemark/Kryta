@@ -10,6 +10,8 @@ pub mod agent_packets;
 pub mod character_packets;
 #[path = "InstancePackets.rs"]
 pub mod instance_packets;
+#[path = "ItemPackets.rs"]
+pub mod item_packets;
 #[path = "MiscPackets.rs"]
 pub mod misc_packets;
 

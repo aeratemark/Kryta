@@ -36,6 +36,8 @@ pub mod chat;
 pub mod cinematics;
 #[path = "Combat/mod.rs"]
 pub mod combat;
+#[path = "Creation/mod.rs"]
+pub mod creation;
 #[path = "Conditions/mod.rs"]
 pub mod conditions;
 #[path = "DataStores/mod.rs"]

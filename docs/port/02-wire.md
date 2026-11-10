@@ -53,7 +53,12 @@ The frames, with the reference's own wire sizes:
 | 1 | server -> client | `0x017C` | 6 | the load begins: `7C 01 3F 3F 00 00` |
 | 2 | server -> client | `0x0189` | 2 | the creation screen may show |
 | 3 | client -> server | `0x8089` | 2 | it asks for its player's data |
-| 4 | server -> client | `0x0186` | 2 | the player-data stream opens, then the player's messages |
+| 4 | server -> client | `0x0186` | 2 | the player-data stream opens |
+| 4a | server -> client | `0x0144` | 5 | the item stream opens on stream 1 |
+| 4b | server -> client | `0x013F` | 13 | one bag: kind, model, id, slot count, the item that is the bag |
+| 4c | server -> client | `0x0161` | 31 + 2 + 2n + 1 + 4m | one item: its ids, kind, dyes, flags, name (`n` units), modifiers (`m`, counted by a **byte**) |
+| 4d | server -> client | `0x013E` | 11 | where that item sits: stream, item, bag, slot |
+| 4e | server -> client | `0x0148`, `0x0147`, `0x0141` | 5, 13, 8 | the active weapon set, four empty weapon sets, the gold |
 | 5 | client -> server | `0x8060` | 4 | campaign and profession, chosen |
 | 6 | server -> client | `0x00B7` | 9 | the agent, the professions and the PvP flag |
 | 7 | server -> client | `0x00B6` | 10 | the agent and the unlocked-profession bitmap |
@@ -63,8 +68,9 @@ The frames, with the reference's own wire sizes:
 
 - The two answers whose length follows a counted field (`0x0188`'s name and settings) are sized from
   what they carry; the rest are fixed by the reference's table.
-- **Not in this tree**: the profession's equipment, about 180 item messages that a creation screen is
-  sent. Without the item stream the client draws an undressed character.
+- The inventory is the reference's own: six bags, the items it creates before a profession is chosen, and the chosen profession's starting set, imported from its rows by `tools/import-creation-inventory.py` into `data/inventory.json` and `data/equipment.json`. A creation screen is sent about 180 item messages in all for a profession's set; what this tree sends
+  today is the reference's six bags, its pre-choice items and the chosen set, which is enough for the
+  client to have an inventory model to draw.
 - In this tree: `game/src/Server/Packets/`, the size table in `WorldSession`, and the row the confirm
   writes (`docs/decisions/0007-character-schema.md`).
 
