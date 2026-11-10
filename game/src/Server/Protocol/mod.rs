@@ -6,9 +6,21 @@
 //! per family - and it fills in as this client's messages are measured
 //! (`docs/port/02-wire.md`).
 //!
-//! Here now: `GAME_CMSG_VERSION`, the 64-byte message a client sends when it opens its gameplay
-//! connection. It is the message the front door reads to learn which world a client was sent to, and
-//! the first one the world program will read itself (`docs/decisions/0004`).
+//! Here now:
+//!
+//! - [`tables`] - the whole client protocol, ported: 782 rows of header, direction, index, declared
+//!   size, name and field layout, both families. It is the table a session asked for
+//!   (`tools/adapt-protocol-table.py` records how it was moved into place).
+//! - `GAME_CMSG_VERSION`, the 64-byte message a client sends when it opens its gameplay connection.
+//!   It is the message the front door reads to learn which world a client was sent to, and the first
+//!   one the world program reads itself (`docs/decisions/0004`).
+
+#[path = "Frame.rs"]
+pub mod frame;
+#[path = "Tables.rs"]
+pub mod tables;
+
+pub use frame::{Frame, FrameError, HEADER_LEN};
 
 /// The four bytes that name a gameplay connection, as a bare little-endian `u32`.
 ///

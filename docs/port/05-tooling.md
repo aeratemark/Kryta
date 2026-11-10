@@ -27,6 +27,7 @@ Two consequences:
 | `tools/client/patch-gw.py` | patches a `Gw.exe` into `Gw.custom.exe`: the handshake's DH keys, the `CreateMutexA` patch, the mutex name, and optionally the baked-in ArenaNet hostnames | `pip install pefile` | ASURA `client-patcher/patch-gw.py` |
 | `tools/client/keys.txt` | the key material the patch writes: `generator`, `prime`, `server_private`, `server_public` | - | ASURA `client-patcher/keys.txt`; the prime and `server_private` are the same values as `shared/src/Cryptography/Handshake.rs` |
 | `tools/client/hosts-redirect.py` | sends the client's seven baked-in names to this machine, or puts them back; recognises a block an earlier tool left | an elevated shell to write the hosts file | ASURA `client-patcher/hosts-redirect.py`, itself from GWPS `tools/hosts-gwps.ps1` |
+| `tools/adapt-protocol-table.py` | moved the ported message table into `game/src/Server/Protocol/Tables.rs`, once | nothing; it is the record of the move | ASURA `crates/asura-protocol/src/packets.rs` |
 | `tools/import-creation-inventory.py` | imported the bags, items and profession sets into `data/*.json`, once | a checkout of ASURA to read | ASURA `state/inventory/seed.rs` and `default_equipment.rs` |
 
 ## Building and running the client

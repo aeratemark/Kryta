@@ -48,10 +48,25 @@ file it came from and every capture says its own layer in its header (`layer`, `
   tree did exactly that, broke a layer that was right, and undid it the next commit (`d9f0849`). The
   fact belongs to the project, not to the sniffer's docstring.
 
-Not written: the opcode table itself. This tree has the headers the messages it sends and splits use,
-each a constant beside the builder that writes it; the rest of the table - 194 client-to-server and
-488 server-to-client, with field layouts per message - is in `client-protocol.md` section 11.7 and
-`packets.rs`.
+## The table, and the walk that splits a stream
+
+**The whole protocol is in this tree now.** `game/src/Server/Protocol/Tables.rs` is the client's
+message table, ported row for row from `ASURA/crates/asura-protocol/src/packets.rs`: 782 rows of
+header, connection, index, declared size, name and field layout - 60 + 40 for the login connection and
+194 + 488 for a world connection.
+
+A message carries no length, so the table is what says where one ends: `Protocol/Frame.rs` walks a
+message's field layout and stops where the layout stops. A counted field (`String16`, `Array8`,
+`Array16`, `Array32`) carries its own `u16` count and consumes exactly that many units, and a nested
+struct is the same idea one level down (a `u8` count and that many repeats of the fields after it).
+The table's `size` column is an upper bound, never a length.
+
+- Proved against the wire: `the_wire_recordings_frame_to_their_own_sizes` in `Frame.rs` frames every
+  client message of a recorded session (`recordings/asura/world/live-client-session-20261027-223528.jsonl`)
+  and holds it to the size that session recorded.
+- One row is short and the framer says so: `0x808B`'s row lists fields that account for 22 bytes less
+  than the one capture of a confirm shows, so that header takes the larger of walk and measurement
+  (`CONFIRM_TAIL_LEN`, cited there), and the session logs a disagreement.
 
 ## The creation screen's conversation
 

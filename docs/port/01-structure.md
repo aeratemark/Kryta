@@ -99,7 +99,8 @@ Updated as stages land, because this is a statement of today and not of intent.
 | `database/` the character schema | done for `characters` - applied by the world program from `data/sql/base/db_characters/characters.sql` and read by both programs; the table is this tree's own design, `docs/decisions/0007-character-schema.md`. A login before the world's first start finds no table, says so, and lists no character |
 | `database/` the world schema | not started - nothing in the world database is read or written yet |
 | `shared/src/Network/` | done as a library - a client is accepted, answered and counted; `4596b27` |
-| `shared/src/Packets/` | started - the byte buffer; the opcode table and the message families are not written; `9f456f1` |
+| `shared/src/Packets/` | started - the byte buffer; the message families are written one file per family under `game/src/Server/Packets/`; `9f456f1` |
+| the protocol table | **ported whole** - `game/src/Server/Protocol/Tables.rs`: 782 rows, both connections, each with its header, direction, index, declared size, name and field layout, and `Protocol/Frame.rs` walks a field layout to frame a message. Proved by framing every client message of a recorded session to the size that session recorded |
 | `shared/src/Worlds/` | done - the world list is read from `realmlist`, a login refuses to start on an empty one, and `data/realms.json` merges over it so an operator can state a world in a file; `7adbe37` |
 | `shared/src/Secrets/` | not started - the reference's only secret is WoW's TOTP master key, so what this game's secret is has not been decided |
 | `common/` Configuration | done - the reference's lookup, severity policy, environment override and masking, over **JSON** instead of the reference's `Key = value`: one handler (`Json.rs`), one hexadecimal decoder, and record lists read as rows rather than keys; `docs/decisions/0005-json-configuration.md` |
