@@ -12,13 +12,7 @@ pub const PVP_UPDATE_UNLOCKED_HEROES: u16 = 0x0018;
 /// `GAME_SMSG_PVP_ITEM_STREAM_END`: the PvP item stream is over.
 pub const PVP_ITEM_STREAM_END: u16 = 0x001B;
 
-/// A frame: the `u16` header and then the body.
-fn frame(header: u16, body: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(2 + body.len());
-    out.extend_from_slice(&header.to_le_bytes());
-    out.extend_from_slice(body);
-    out
-}
+use crate::server::protocol::frame;
 
 /// A `u16` count followed by that many dwords.
 fn dwords(values: &[u32]) -> Vec<u8> {
@@ -51,8 +45,8 @@ mod tests {
 
     #[test]
     fn an_empty_pvp_half_is_a_header_and_a_zero_count() {
-        assert_eq!(pvp_update_unlocked_skills(&[]), vec![0x1D, 0x00, 0, 0]);
-        assert_eq!(pvp_update_unlocked_heroes(&[]), vec![0x18, 0x00, 0, 0]);
-        assert_eq!(pvp_item_stream_end(), vec![0x1B, 0x00]);
+        assert_eq!(pvp_update_unlocked_skills(&[]), vec![0x1D, 0x00, 0, 0, 0, 0]);
+        assert_eq!(pvp_update_unlocked_heroes(&[]), vec![0x18, 0x00, 0, 0, 0, 0]);
+        assert_eq!(pvp_item_stream_end(), vec![0x1B, 0x00, 0, 0]);
     }
 }

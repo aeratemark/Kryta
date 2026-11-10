@@ -28,6 +28,8 @@ pub mod behaviour;
 pub mod cache;
 #[path = "Calendar/mod.rs"]
 pub mod calendar;
+#[path = "Characters/mod.rs"]
+pub mod characters;
 #[path = "Chat/mod.rs"]
 pub mod chat;
 #[path = "Cinematics/mod.rs"]

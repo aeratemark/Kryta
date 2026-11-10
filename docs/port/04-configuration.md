@@ -112,6 +112,7 @@ added, and a field the file does not state keeps the table's value.
 | the login listener: port, bind address, thread count, trace | `authserver.json` |
 | the portal: enabled, where it answers | `authserver.json` |
 | the login database: connection string, worker and synchronous connections, trace | `authserver.json` |
+| the character database: connection string, worker and synchronous connections | `authserver.json`, `worldserver.json`, under `CharacterDatabaseInfo` and `CharacterDatabase` |
 | the world list: every field of every world, including a world the table does not hold | `data/realms.json`, merged over `realmlist` |
 | the intervals this program reports and refreshes at | `authserver.json` |
 | logging: directory, appenders, logger levels | `authserver.json`, `worldserver.json` |
@@ -121,9 +122,9 @@ added, and a field the file does not state keeps the table's value.
 Two consequences of taking that seriously, both now in the code:
 
 - **The connection string is critical.** A program cannot fall back to a compiled-in host and open a
-  database nobody named, so a file without `LoginDatabaseInfo` is a fatal configuration error rather
-  than a silent default (`main.rs`, `mark_critical`). The reference's parser still tolerates a short
-  string and fills the rest; no shipped file is short.
+  database nobody named, so a file without `LoginDatabaseInfo` or `CharacterDatabaseInfo` is a fatal
+  configuration error rather than a silent default (`main.rs`, `mark_critical`). The reference's parser
+  still tolerates a short string and fills the rest; no shipped file is short.
 - **A setting arrives with the stage that reads it.** `Network.Threads` is read because the listeners
   exist; `WorldServerPort` is not in `worldserver.json` yet because nothing binds it. A key in a file
   is therefore a key the program uses, never a promise.

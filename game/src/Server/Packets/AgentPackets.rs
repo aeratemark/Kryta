@@ -24,13 +24,7 @@ pub const AGENT_PROPERTY_HEALTH: u32 = 42;
 /// The third property the creation screen is sent, always zero there.
 pub const AGENT_PROPERTY_VALUE64: u32 = 64;
 
-/// A frame: the `u16` header and then the body.
-fn frame(header: u16, body: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(2 + body.len());
-    out.extend_from_slice(&header.to_le_bytes());
-    out.extend_from_slice(body);
-    out
-}
+use crate::server::protocol::frame;
 
 /// A `u16` count followed by that many dwords - the counted field a list is sent as.
 fn dwords(values: &[u32]) -> Vec<u8> {
@@ -42,7 +36,10 @@ fn dwords(values: &[u32]) -> Vec<u8> {
     out
 }
 
-/// `0x009F`: property id, agent id, value - three dwords, fourteen bytes.
+/// `0x009F`: property id, agent id, value - three dwords, sixteen bytes.
+///
+/// Evidence: ASURA/recordings/client/feature/character_creation/character_creation-live-necro_factions.jsonl''s
+/// seq 668 - `9f 00 00 00 24 00 00 00 08 00 00 00 01 00 00 00`.
 pub fn agent_property_update_int(property: u32, agent: u32, value: u32) -> Vec<u8> {
     let mut body = Vec::with_capacity(12);
     body.extend_from_slice(&property.to_le_bytes());
@@ -51,12 +48,14 @@ pub fn agent_property_update_int(property: u32, agent: u32, value: u32) -> Vec<u
     frame(AGENT_PROPERTY_UPDATE_INT, &body)
 }
 
-/// `0x0037`: the agent, then the unspent and the spent points, one byte each.
-pub fn agent_update_attribute_points(agent: u32, unused: u8, used: u8) -> Vec<u8> {
-    let mut body = Vec::with_capacity(6);
+/// `0x0037`: the agent, then the unspent and the spent points, one dword each - sixteen bytes.
+///
+/// Evidence: the same recording''s seq 1048 - `37 00 00 00 09 00 00 00 00 00 00 00 00 00 00 00`.
+pub fn agent_update_attribute_points(agent: u32, unused: u32, used: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(12);
     body.extend_from_slice(&agent.to_le_bytes());
-    body.push(unused);
-    body.push(used);
+    body.extend_from_slice(&unused.to_le_bytes());
+    body.extend_from_slice(&used.to_le_bytes());
     frame(AGENT_UPDATE_ATTRIBUTE_POINTS, &body)
 }
 
@@ -77,7 +76,7 @@ mod tests {
         // `property`, `agent`, `value` - the order the reference's own builder writes them.
         assert_eq!(
             agent_property_update_int(AGENT_PROPERTY_HEALTH, 1, 100),
-            vec![0x9F, 0x00, 42, 0, 0, 0, 1, 0, 0, 0, 100, 0, 0, 0]
+            vec![0x9F, 0x00, 0, 0, 42, 0, 0, 0, 1, 0, 0, 0, 100, 0, 0, 0]
         );
     }
 
@@ -85,15 +84,15 @@ mod tests {
     fn the_attribute_points_are_two_bytes_after_the_agent() {
         assert_eq!(
             agent_update_attribute_points(1, 50, 50),
-            vec![0x37, 0x00, 1, 0, 0, 0, 50, 50]
+            vec![0x37, 0x00, 0, 0, 1, 0, 0, 0, 50, 0, 0, 0, 50, 0, 0, 0]
         );
     }
 
     #[test]
     fn the_attributes_are_a_counted_list() {
         let frame = agent_update_attributes(1, &[0u32; 42]);
-        assert_eq!(frame.len(), 2 + 4 + 2 + 42 * 4);
-        assert_eq!(&frame[..6], &[0x3A, 0x00, 1, 0, 0, 0]);
-        assert_eq!(&frame[6..8], &42u16.to_le_bytes());
+        assert_eq!(frame.len(), 4 + 4 + 2 + 42 * 4);
+        assert_eq!(&frame[..8], &[0x3A, 0x00, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(&frame[8..10], &42u16.to_le_bytes());
     }
 }

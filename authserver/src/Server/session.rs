@@ -69,6 +69,9 @@ pub struct AuthSession {
     /// The front door: the worlds a travel request is answered from, and where a gameplay connection
     /// that arrives on this port is copied to (`docs/decisions/0004`).
     front_door: Option<std::sync::Arc<crate::server::FrontDoor>>,
+    /// The character database, when the program opened one: the login's answer lists its account's
+    /// characters from it (docs/decisions/0007-character-schema.md).
+    characters: Option<std::sync::Arc<crate::server::DatabaseCharacters>>,
 }
 
 impl AuthSession {
@@ -81,6 +84,7 @@ impl AuthSession {
         file_check: FileCheck,
         account_settings: Vec<u8>,
         front_door: Option<std::sync::Arc<crate::server::FrontDoor>>,
+        characters: Option<std::sync::Arc<crate::server::DatabaseCharacters>>,
     ) -> Self {
         Self {
             log,
@@ -88,6 +92,7 @@ impl AuthSession {
             file_check,
             account_settings,
             front_door,
+            characters,
         }
     }
 
@@ -97,6 +102,7 @@ impl AuthSession {
         file_check: FileCheck,
         account_settings: Vec<u8>,
         front_door: Option<std::sync::Arc<crate::server::FrontDoor>>,
+        characters: Option<std::sync::Arc<crate::server::DatabaseCharacters>>,
     ) -> Self {
         let mut master = [0u8; MASTER_SECRET_LEN];
         if getrandom::getrandom(&mut master).is_err() {
@@ -108,7 +114,7 @@ impl AuthSession {
                 "no entropy available for the master secret; the exchange will use zeros",
             );
         }
-        Self::new(log, master, file_check, account_settings, front_door)
+        Self::new(log, master, file_check, account_settings, front_door, characters)
     }
 
     fn say(&self, level: LogLevel, text: impl Into<String>) {
@@ -589,12 +595,39 @@ impl AuthSession {
         );
 
         // The answer: the messages a client needs before it shows a character, in the order and at
-        // the sizes the records give. No characters yet, so the client is owed an empty list rather
-        // than a refusal.
+        // the sizes the records give. The characters are the account's own rows, read from the
+        // character database; an account with none is owed an empty list rather than a refusal.
+        let characters: Vec<crate::server::login_reply::ReplyCharacter> = match &self.characters {
+            Some(source) => source
+                .for_account(&game::characters::uuid_text(&login.user_id))
+                .into_iter()
+                .map(|character| crate::server::login_reply::ReplyCharacter {
+                    id: character.uuid,
+                    name: character.name,
+                    settings: character.settings.to_blob(),
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        if !characters.is_empty() {
+            self.say(
+                LogLevel::Info,
+                format!(
+                    "Connection from {peer}: {} character(s) listed: {}.",
+                    characters.len(),
+                    characters
+                        .iter()
+                        .map(|character| character.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
+        }
+
         let frames = crate::server::login_reply::reply_frames(
             login.request,
             login.user_id,
-            &[],
+            &characters,
             0,
             &self.account_settings,
         );
@@ -886,6 +919,7 @@ mod tests {
                 file_check.clone(),
                 crate::server::account_settings::block(),
                 None,
+                None,
             )) as Box<dyn Session>
         })
     }
@@ -1113,6 +1147,7 @@ mod tests {
                     file_check.clone(),
                     settings.clone(),
                     None,
+                    None,
                 )) as Box<dyn Session>
             })
         };
@@ -1213,6 +1248,7 @@ mod tests {
                     file_check.clone(),
                     settings.clone(),
                     front_door.clone(),
+                    None,
                 )) as Box<dyn Session>
             })
         };

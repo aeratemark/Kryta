@@ -8,9 +8,10 @@
 //! Reference: `WorldSocketMgr::StartWorldNetwork(ioContext, bindIp, port, networkThreads)`.
 
 use common::logging::Log;
+use database::database::DatabaseWorkerPool;
 use shared::network::socket::{Session, SessionFactory};
 use shared::network::socket_mgr::SocketMgr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::server::world_session::WorldSession;
 use crate::world::World;
@@ -24,9 +25,11 @@ impl WorldSocketMgr {
     /// Bind and start serving gameplay connections.
     ///
     /// The world is shared with every session: each connection needs the world's id and its maps,
-    /// and neither changes while the listener runs.
+    /// and neither changes while the listener runs. The character pool is shared too, because a
+    /// creation screen's confirm writes a character row and nothing else may open a second one.
     pub fn start(
         world: Arc<World>,
+        characters: Option<Arc<Mutex<DatabaseWorkerPool>>>,
         log: Log,
         bind_ip: &str,
         port: u16,
@@ -36,8 +39,17 @@ impl WorldSocketMgr {
         let factory: SessionFactory = {
             let log = log.clone();
             let world = Arc::clone(&world);
+            let characters = characters.clone();
             Arc::new(move || {
-                Box::new(WorldSession::new(log.clone(), &world)) as Box<dyn Session>
+                let session = match characters.as_ref() {
+                    Some(characters) => WorldSession::with_characters(
+                        log.clone(),
+                        &world,
+                        Arc::clone(characters),
+                    ),
+                    None => WorldSession::new(log.clone(), &world),
+                };
+                Box::new(session) as Box<dyn Session>
             })
         };
 

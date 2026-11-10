@@ -16,6 +16,46 @@
 /// connection headers, this one with a 64-byte first message.
 pub const GAME_CMSG_VERSION: u32 = 0x000C_0500;
 
+/// How long a gameplay message's header is: the `u16` opcode and a zero `u16`.
+///
+/// **Measured, and it is four bytes, not two.** Evidence:
+/// `ASURA/recordings/client/feature/character_creation/character_creation-live-necro_factions.jsonl`,
+/// a sniff of a live client and the server it played on, both directions. Every game message in it
+/// begins with the opcode and a zero word:
+///
+/// | seq | direction | bytes | is |
+/// |---|---|---|---|
+/// | 3 | server -> client | `7c 01 00 00 3f 00 00 00 3f 00 00 00 00 00 00 00 00 00 00 00` | `0x017C`, 20 bytes |
+/// | 4 | server -> client | `89 01 00 00` | `0x0189`, 4 bytes |
+/// | 5 | client -> server | `89 00 00 00` | `0x0089`, 4 bytes |
+/// | 196 | client -> server | `60 00 00 00 02 00 00 00 01 00 00 00` | `0x0060`, 12 bytes |
+///
+/// `ASURA/docs/reference/client-protocol.md` section 11.4 counts the same way from the other end:
+/// `MAP_INIT_START` is 16 bytes = this header and three dwords, and `CARTOGRAPHY_DATA` is 132 = this
+/// header, a count and a 124-byte payload. A two-byte header cannot produce either sum.
+pub const GAME_HEADER_LEN: usize = 4;
+
+/// A frame's header: the opcode and the zero word.
+pub fn header(opcode: u16) -> [u8; GAME_HEADER_LEN] {
+    let mut bytes = [0u8; GAME_HEADER_LEN];
+    bytes[0..2].copy_from_slice(&opcode.to_le_bytes());
+    bytes
+}
+
+/// A whole wire frame: the header and then its fields.
+pub fn frame(opcode: u16, body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(GAME_HEADER_LEN + body.len());
+    out.extend_from_slice(&header(opcode));
+    out.extend_from_slice(body);
+    out
+}
+
+/// The opcode at the front of a frame, or `None` when there are not even two bytes of it.
+pub fn opcode_of(bytes: &[u8]) -> Option<u16> {
+    let first = bytes.first_chunk::<2>()?;
+    Some(u16::from_le_bytes(*first))
+}
+
 /// How many bytes the message is.
 ///
 /// Evidence: the same section, and the reference's own packed struct: a four-byte header, five

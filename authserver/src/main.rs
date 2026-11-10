@@ -451,17 +451,44 @@ fn run(args: &[String]) -> Result<(), String> {
         ),
     }
 
+    // The characters of the account a login resolves: read from the character database, which is the
+    // second database this program opens now that a login's answer lists them
+    // (`docs/decisions/0007-character-schema.md`). Its connection string is critical for the same
+    // reason as the login's: the answer a client is given is read from a database an operator named.
+    config.mark_critical("CharacterDatabaseInfo");
+    let character_settings = read_settings(&config, DatabaseKind::Character)?;
+    let mut character_pool = DatabaseWorkerPool::open_with_trace(
+        DatabaseKind::Character,
+        &character_settings,
+        &log,
+        sql_trace,
+    )?;
+    character_pool
+        .ping()
+        .map_err(|error| format!("the character database does not answer: {error}"))?;
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        "Started character database connection pool.",
+    );
+    let characters_store = std::sync::Arc::new(crate::server::DatabaseCharacters::new(
+        std::sync::Arc::new(std::sync::Mutex::new(character_pool)),
+        log.clone(),
+    ));
+
     let factory: SessionFactory = {
         let log = log.clone();
         let file_check = file_check.clone();
         let account_settings = account_settings.clone();
         let front_door = std::sync::Arc::clone(&front_door);
+        let characters = std::sync::Arc::clone(&characters_store);
         std::sync::Arc::new(move || {
             Box::new(AuthSession::with_random_master(
                 log.clone(),
                 file_check.clone(),
                 account_settings.clone(),
                 Some(std::sync::Arc::clone(&front_door)),
+                Some(std::sync::Arc::clone(&characters)),
             )) as Box<dyn Session>
         })
     };

@@ -7,6 +7,8 @@
 pub mod account_settings;
 #[path = "accounts.rs"]
 pub mod accounts;
+#[path = "characters.rs"]
+pub mod characters;
 #[path = "file_check.rs"]
 pub mod file_check;
 #[path = "front_door.rs"]
@@ -21,6 +23,7 @@ pub mod session;
 pub mod stream;
 
 pub use accounts::DatabaseAccounts;
+pub use characters::DatabaseCharacters;
 pub use file_check::FileCheck;
 pub use front_door::FrontDoor;
 pub use session::AuthSession;

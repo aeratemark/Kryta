@@ -14,7 +14,7 @@
 //! | 5 | `0x0003` request response | 10 |
 //!
 //! The sizes are the reference's own wire trace (`ASURA/recordings/gwps/world/load-stream.log`, one
-//! login): `0x0007` 102 bytes for a four-character name, `0x0016` 599, `0x0014` 10, `0x0011` 81,
+//! login): `0x0007` 102 bytes for a five-unit name, `0x0016` 599, `0x0014` 10, `0x0011` 81,
 //! `0x0003` 10. With no characters it is 700, and the client shows an empty character list rather than
 //! failing.
 //!
@@ -58,8 +58,13 @@ pub struct ReplyCharacter {
     pub id: [u8; 16],
     /// The name the client shows.
     pub name: String,
-    /// The 64-byte settings block that belongs to this character.
-    pub settings: [u8; 64],
+    /// The character's settings block, which the list carries as a counted byte string.
+    ///
+    /// It is `CharacterSettings`' own 62 bytes (`game/characters`), not this module's: the reference's
+    /// `CharacterSettings_FromDbCharacter` builds the same record, and a character list is what reads
+    /// it. The reference's own output settles the size - `05 00 "Appok" | 3e 00 <62 bytes>`, ninety
+    /// of its 102 bytes - which is why this is a slice and not a fixed width.
+    pub settings: Vec<u8>,
 }
 
 /// The five messages, each a whole wire frame: a `u16` header and then its body.
@@ -302,13 +307,14 @@ mod tests {
     }
 
     #[test]
-    fn a_character_with_a_four_unit_name_is_the_recorded_hundred_and_two_bytes() {
-        // The trace's character info is 102 bytes, and the name in it is four units long:
-        // header 2 + request 4 + id 16 + zero 4 + count and units (2 + 8) + settings count 2 + 64.
+    fn a_character_with_a_five_unit_name_is_the_recorded_hundred_and_two_bytes() {
+        // The reference's own output settles both widths: its character info for a five-unit name
+        // and a 62-byte settings block is 102 bytes - header 2, request 4, id 16, zero 4, name
+        // count 2 + 10, settings count 2 + 62.
         let character = ReplyCharacter {
             id: [0x22; 16],
-            name: "Asur".to_string(),
-            settings: [0u8; 64],
+            name: "Asura".to_string(),
+            settings: vec![0u8; game::characters::CHARACTER_SETTINGS_LEN],
         };
         let frames = reply_frames(7, account(), &[character], 0, &settings());
         assert_eq!(frames.len(), 5);
@@ -324,7 +330,7 @@ mod tests {
         let character = ReplyCharacter {
             id: [0x22; 16],
             name: "A".to_string(),
-            settings: [0u8; 64],
+            settings: vec![0u8; game::characters::CHARACTER_SETTINGS_LEN],
         };
         for frame in reply_frames(0xDEAD_BEEF, account(), &[character], 0, &settings()) {
             let request = u32::from_le_bytes([frame[2], frame[3], frame[4], frame[5]]);
@@ -425,10 +431,11 @@ mod tests {
             // 07 00 | 01 00 00 00 | the character id | 00 00 ...
             let character = ReplyCharacter {
                 id: TRACED_CHARACTER,
-                name: "Asur".to_string(),
-                settings: [0u8; 64],
+                name: "Asura".to_string(),
+                settings: vec![0u8; game::characters::CHARACTER_SETTINGS_LEN],
             };
             let frame = character_info(REQUEST, &character);
+            // Five units of name and a 62-byte settings block: the reference's own 102 bytes.
             assert_eq!(frame.len(), 102);
             assert_eq!(
                 hex(&frame[..24]),

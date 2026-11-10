@@ -18,6 +18,8 @@ path = "src/main.rs"
 [dependencies]
 shared = { path = "../shared" }
 database = { path = "../database" }
+# A query's rows are read as postgres::Row, which is the type the pool answers with.
+postgres = "0.19"
 common = { path = "../common" }
 # The portal lives in the game library (game/src/Portal/), and this program serves it -
 # docs/decisions/0003-portal-host.md.

@@ -177,6 +177,7 @@ fn run(args: &[String]) -> Result<(), String> {
     }
 
     let mut opened = Vec::new();
+    let mut character_pool: Option<std::sync::Arc<std::sync::Mutex<DatabaseWorkerPool>>> = None;
     for (kind, label, schema) in [
         (DatabaseKind::World, "World", "data/sql/base/db_world"),
         (DatabaseKind::Character, "Character", "data/sql/base/db_characters"),
@@ -203,7 +204,14 @@ fn run(args: &[String]) -> Result<(), String> {
                 summary.updated, summary.skipped
             ),
         );
-        opened.push(pool);
+
+        if kind == DatabaseKind::Character {
+            // A creation confirm writes a character from a session thread, so the character pool is
+            // shared with the listener the way the login program shares its own with the portal.
+            character_pool = Some(std::sync::Arc::new(std::sync::Mutex::new(pool)));
+        } else {
+            opened.push(pool);
+        }
     }
 
     // Stage 8. Reference: `sWorld->SetInitialWorldSettings()` - everything the game is made of,
@@ -269,7 +277,15 @@ fn run(args: &[String]) -> Result<(), String> {
     }
 
     let sockets =
-        game::server::WorldSocketMgr::start(std::sync::Arc::clone(&world), log.clone(), &bind, port, network_threads, trace)
+        game::server::WorldSocketMgr::start(
+            std::sync::Arc::clone(&world),
+            character_pool.clone(),
+            log.clone(),
+            &bind,
+            port,
+            network_threads,
+            trace,
+        )
             .map_err(|error| format!("the world listener could not start: {error}"))?;
     let bound = sockets.port().unwrap_or(port);
 
@@ -297,6 +313,16 @@ fn run(args: &[String]) -> Result<(), String> {
     sockets.stop();
     for pool in &mut opened {
         pool.close();
+    }
+    if let Some(pool) = character_pool {
+        match pool.lock() {
+            Ok(mut pool) => pool.close(),
+            Err(_) => log.out(
+                LogLevel::Error,
+                "server.worldserver",
+                "the character database pool was poisoned; it closes when the process ends",
+            ),
+        }
     }
     log.out(
         LogLevel::Info,

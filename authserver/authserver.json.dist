@@ -83,6 +83,22 @@
     }
   },
 
+  "CharacterDatabaseInfo": {
+    "value": "127.0.0.1;5432;kryta;change-me;kryta_characters",
+    "doc": "host;port;user;password;database - a login's answer lists the account's characters, and those are rows in this database. The fourth field is a password, masked in every log line."
+  },
+
+  "CharacterDatabase": {
+    "WorkerThreads": {
+      "value": 2,
+      "doc": "Asynchronous connections to the character database."
+    },
+    "SynchThreads": {
+      "value": 1,
+      "doc": "Synchronous connections to it."
+    }
+  },
+
   "LogsDir": {
     "value": "",
     "doc": "Where file appenders write. Empty means the working directory."

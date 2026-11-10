@@ -21,10 +21,32 @@ a header whose bit 15 is set came from the client, and the header selects the fi
 - Why it matters: a port that writes a length the client does not expect gets error `007` and
   nothing else.
 
+**On a gameplay connection the header is four bytes: the `u16` opcode and a zero `u16`.** The two
+connections do not share a framing, and reading one as the other is off by two for every message
+after the first:
+
+| connection | header | measured |
+|---|---|---|
+| login | the `u16` opcode | `ASURA/docs/reference/client-protocol.md` section 1 |
+| gameplay | the opcode, then `00 00` | `ASURA/recordings/client/feature/character_creation/character_creation-live-necro_factions.jsonl`, both directions |
+
+- Evidence, from that recording: the server's first message `7c 01 00 00 3f 00 00 00 3f 00 00 00 00 00
+  00 00 00 00 00 00` (`0x017C`, 20 bytes), its `89 01 00 00` (`0x0189`, 4 bytes), the client's
+  `89 00 00 00` (`0x0089`, 4 bytes) and `60 00 00 00 02 00 00 00 01 00 00 00` (`0x0060`, 12 bytes).
+  Section 11.4 of the same document counts from the other end and lands on the same arithmetic:
+  `MAP_INIT_START` is 16 bytes = this header and three dwords, `CARTOGRAPHY_DATA` is 132 = this
+  header, a count and 124 bytes.
+- In this tree: `game/src/Server/Protocol/`, `GAME_HEADER_LEN` and `frame()`, which every builder in
+  `game/src/Server/Packets/` writes through, and the size table in `WorldSession`, whose numbers are
+  the recording's totals.
+- **The client's gameplay opcodes are the `0x00` family**, not the `0x8000` family the login
+  connection uses: it sent `0x0089`, `0x0060`, `0x0084`, `0x0088`, `0x008B`, `0x0090`, `0x0091` and
+  `0x000D` in the recording above. A world that dispatches on `0x8089` answers nothing at all.
+
 Not written: the opcode table itself. The reference keeps it in `game/Server/Protocol/Opcodes` and
 the record of this client's headers reports 194 client-to-server and 488 server-to-client, with the
-field layouts measured per message (`client-protocol.md` section 11.7). None of them is in this tree
-yet, because the conversation that uses them is not written either.
+field layouts measured per message (`client-protocol.md` section 11.7). This tree has the eight this
+document names, and each is a constant beside the builder that writes it.
 
 ## The file check
 
@@ -85,7 +107,7 @@ whatever the account holds:
 
 | # | message | size |
 |---|---|---|
-| 1 | `0x0007` character info, once per character | 102 for a four-unit name |
+| 1 | `0x0007` character info, once per character | 102 for a five-unit name |
 | 2 | `0x0016` account settings | 599 |
 | 3 | `0x0014` friend stream end | 10 |
 | 4 | `0x0011` account info | 81 |
@@ -207,6 +229,38 @@ The first thing a client sends on a gameplay connection, and the whole of what t
   the offsets spelled out in a test so a reordering fails a test rather than a client.
 - Not yet used for anything but routing: the token pair is what the world will compare against the
   travel the login recorded, and the login does not record a travel yet.
+
+## The creation screen's conversation
+
+Measured once, from a live client on a server that worked with it:
+`ASURA/recordings/client/feature/character_creation/character_creation-live-necro_factions.jsonl`.
+Sizes are whole frames, the four-byte header included.
+
+| # | direction | message | size | is |
+|---|---|---|---|---|
+| 1 | server -> client | `0x017C` | 20 | the load begins: `3F`, `3F`, two zero dwords |
+| 2 | server -> client | `0x0189` | 4 | the creation screen may show |
+| 3 | client -> server | `0x0089` | 4 | it asks for its player's data |
+| 4 | server -> client | `0x0186` | 4 | the player-data stream opens, then the player's own messages |
+| 5 | client -> server | `0x0084` | 12 | a dye slot and a colour - 35 of them while colours are picked |
+| 6 | client -> server | `0x0060` | 12 | campaign and profession, chosen |
+| 7 | server -> client | `0x00B7` | 20 | the agent, the primary and secondary profession, the PvP flag |
+| 8 | server -> client | `0x00B6` | 12 | the agent and the unlocked-profession bitmap |
+| 9 | client -> server | `0x008B` | 56 for a name of eight units | the confirm: the header, a counted name, thirty-four bytes |
+| 10 | server -> client | `0x0188` | 64 for that name | written: the header, a sixteen-byte id, a counted name, twenty-six bytes |
+| 11 | server -> client | `0x018B` | 8 | refused: the header and the error code |
+| 12 | client -> server | `0x0088`, `0x0090`, `0x0091` | 4, 24, 12 | the map is asked for, once the character exists |
+
+- `0x008B` and `0x0188` are the two messages whose length depends on the name: a counted string and
+  then a fixed tail, so the size is read out of the message rather than looked up.
+- The twenty-six bytes after `0x0188`'s name, and the thirty-four after the confirm's, are reproduced
+  as measured. No source this tree has names their fields; the recording is what a client accepted.
+- **Not measured, and not in this tree**: the profession's equipment. A creation screen is sent about
+  180 item messages for the chosen profession (the recording's `0x0161`/`0x013F`/`0x013E` runs), and
+  this world has no item stream - so it answers the player block with the reference's own attributes,
+  factions and skillbar, and a client sees an undressed character.
+- In this tree: the sizes are `WorldSession`'s table, the frames are `game/src/Server/Packets/`, and
+  the confirm writes a row (`docs/decisions/0007-character-schema.md`).
 
 ## The first four bytes of a connection
 
