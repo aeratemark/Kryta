@@ -5,9 +5,9 @@ a session.
 
 The one sentence: **AzerothCore's server, in Rust, serving Guild Wars.**
 
-A new session starts here, then reads `docs/port/01-structure.md` for what runs today and what proves
-it, then the document for the area it is touching. Every claim in that table is a statement of today,
-updated in the same commit as the change that moves it.
+A new session starts here, then reads `docs/port/01-structure.md`: what runs today, what proves it, and
+what the next piece is. Every claim there is a statement of today, updated in the same commit as the
+change that moves it.
 
 ## The task
 
