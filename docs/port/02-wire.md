@@ -165,17 +165,17 @@ connect timeout with no message.
 - In this tree: `authserver/src/Server/login_reply.rs` (`game_server_info`, `host_blob`,
   `GM_ERROR_NETWORK_ERROR`) and `authserver/src/Server/session.rs`, which answers six dwords with an
   address taken from the realm list's own row.
-- **Open, and this is why the answer is written before it is proved: which address the client dials
-  for its gameplay connection.** The reference names its own auth address (6112 in that trace) and
-  hands the connection to a game server over its control channel, so it never had to know. The only
-  measurement of this client - build 39112, in ASURA - says it dials the address it was *launched*
-  with, whatever `0x0009` named. This server names the world program's own port instead, and both
-  ports are instrumented, so the next client run answers it:
-
-| what the log shows | what it means |
-|---|---|
-| a `00 05 0C 00` connection on the **auth** port, logged as a gameplay connection with nothing to answer it | the client dials the launch address: gameplay connections arrive at the front door, and this program must hand them on |
-| nothing on the auth port, and a refused connection where the world program would listen | the client honoured the address: the world program's own listener is where they belong, and no front door is needed |
+- **Measured, 2026-11-10, build 39167: the client dials the address it was launched with, not the
+  one it is handed.** This server named `127.0.0.1:6113` - the world program's own port, a port no
+  program is listening on - and a listener on 6113 accepted nothing at all. The gameplay connection
+  (`00 05 0C 00`, the 64-byte version message) arrived on **6112**, the auth port the client was
+  launched against, 35 ms after the `0x0009` naming 6113 was sent. The client's own request, in the
+  same session, was for `map 0` with `map_type 11` - the character-creation instance.
+- What that settles: the address in `0x0009` is not how a client finds its game server here. The
+  reference never had to know because its `0x0009` names its own auth address and it hands the
+  connection to a game server over its control channel; this port must do the same, which is
+  `docs/decisions/0004-gameplay-connections-arrive-at-the-front-door.md`. Naming the launch address
+  instead and answering the game protocol on the auth port was rejected: it fuses the two halves.
 ## The first four bytes of a connection
 
 The client's very first bytes are a bare little-endian `u32`, not a framed message. Decoding them as
