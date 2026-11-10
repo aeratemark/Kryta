@@ -117,6 +117,7 @@ added, and a field the file does not state keeps the table's value.
 | the world list: every field of every world, including a world the table does not hold | `data/realms.json`, merged over `realmlist` |
 | the intervals this program reports and refreshes at | `authserver.json` |
 | the creation screen's content: the bags and items a client is given, and what a new character wears per campaign and profession | `worldserver.json`, `InventoryFile` and `EquipmentFile`, naming `data/inventory.json` and `data/equipment.json` |
+| loot tables: what a source drops and how often - a setting, not a row | a JSON file under `data/loot/`, arriving with the drop stage |
 | logging: directory, appenders, logger levels | `authserver.json`, `worldserver.json` |
 | the PID file, the effective-config dump | `authserver.json`, `worldserver.json` |
 | everything the world program will need - its port, its thread pool, its map threads, the console, SOAP, its data directory | `worldserver.json`, arriving with the stage that reads them |
@@ -130,6 +131,27 @@ Two consequences of taking that seriously, both now in the code:
 - **A setting arrives with the stage that reads it.** `Network.Threads` is read because the listeners
   exist; `WorldServerPort` is not in `worldserver.json` yet because nothing binds it. A key in a file
   is therefore a key the program uses, never a promise.
+
+## Three kinds of data, and the test for each
+
+Every piece of data in this tree is one of three things. The test is not the source project's file
+layout and not a judgement per feature: it is what the thing **is**.
+
+| kind | is | lives in | examples |
+|---|---|---|---|
+| **game data** | the world's state: what exists, what a character has, where it stands | **database rows**, through the noun's repository | accounts, characters and their settings, item definitions (`item_template`), a character's bags and items, map records, spawns, portals, travel |
+| **a setting** | a choice an operator makes and may share | **a JSON file** | a program's configuration, the world list, the profession sets a new character starts wearing, loot tables |
+| **what the client dictates** | a value the client decides and the server can only obey | **a constant in the code that answers with it**, citing the capture | message headers and sizes, the file check's bytes, the account settings block |
+
+Two consequences:
+
+- **A port never decides this per piece.** A feature arriving from another tree is placed by asking which
+  of the three it is - not by where the other tree happened to keep it. Items are the worked example: a
+  player's inventory is state (rows), an item's definition is world data (rows), a loot table is a setting
+  (a file), and none of them is code.
+- **A row is never a file, and a setting is never a row.** An account is not a setting; a loot table is not
+  a row. When the two are confused, an operator shares a file that should have been one person's data, or
+  edits a row that should have been a setting.
 
 Nothing else in the tree is a setting: what the client dictates is a constant in the code that answers
 with it, and what a player does is a row.

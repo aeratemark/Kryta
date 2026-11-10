@@ -59,24 +59,32 @@ into the archive. **Needs:** nothing from the schema; the archive path is a sett
 The message family already exists (`game/Server/Packets/AgentPackets.rs`); what is missing is the state
 behind it.
 
-### 5. `game/Items/` - what a character wears and carries
+### 5. items - rows in the database, like every other piece of game data
 
-There is no `Items` noun in the reference's naming, so this is the one placement still to be decided by
-the owner. Three readings, in the reference's own terms:
+An item is game data, so it is **rows**: what a definition is lives with the world, and what a
+character holds lives with the character. That is this tree's rule, not a reading of another project's
+layout (`docs/port/04-configuration.md`, "three kinds of data").
 
-| reading | where |
-|---|---|
-| item templates are content, a character's items are rows | templates in `game/DataStores/` (the reference's `ItemTemplate` lives there), rows in `game/Characters/` through a repository |
-| everything about an item is a noun | a new `game/Items/`, which the naming rules out |
-| a character's inventory belongs to the character | `game/Characters/` for the rows, `game/DataStores/` for the templates |
+| piece | where | why |
+|---|---|---|
+| an item definition - kind, model, dyes, value, flags, name | **`item_template`** in `kryta_world` | it is content the world holds, and an operator changes it by changing a row |
+| a bag, and an item a character holds (which bag, which slot, quantity, the state a player changed) | **`bag`** and **`item_instance`** in `kryta_characters` | it is state: a player's, changed by playing |
+| a loot table - what a source drops and how often | **a JSON file** (`data/loot/*.json`) | it is a setting: an operator tunes it, and two servers may want different ones |
+
+In code the reference's arrangement: the item type beside the entity it belongs to (its `Entities/Item`),
+the template store in `game/DataStores/` (its `ItemTemplate`), the message builders in
+`game/Server/Packets/ItemPackets.rs` (written), the handlers in `game/Handlers/` (stub). The noun that
+gains behaviour is `game/DataStores/` for definitions and `game/Characters/` for what a character holds;
+no new directory is invented, and no item lives in a file.
 
 | ASURA | lines | is |
 |---|---|---|
-| `item.rs` | 525 | the inventory: bags, items, where each sits, the streams that send them |
-| `default_equipment.rs` | 2957 | the profession table - **already imported** into `data/equipment.json` |
+| `item.rs` | 525 | the streams and the in-memory inventory - read for the message shapes, ported into `ItemPackets.rs` and the repositories |
+| `default_equipment.rs` | 2957 | the profession table, which is content: imported into `data/equipment.json` (a setting an operator may change) |
 
-**Needs:** a **`bag`** and an **`item`** table in the character database (ASURA's `0006`), which the
-creation confirm will then write; the creation screen already sends the same streams from memory.
+**Needs:** `item_template` in the world schema, `bag` and `item_instance` in the character schema, and
+the creation confirm writing them instead of only the character row. The creation screen already sends
+the same item streams from memory, so the streams are proven before the rows arrive.
 
 ### 6. `game/Districts/` - instances and how a client enters one
 
@@ -112,9 +120,11 @@ Everything above fits inside one noun. These three cross a boundary and each has
 2. **Characters and their parts.** The character row is written at the creation confirm and read by the
    login's list today (`docs/decisions/0007-character-schema.md`). Every stage above that adds a part - a
    bag, a setting, a last outpost - adds a table or a column, never a second repository.
-3. **Content.** Maps, spawns, portals and the profession sets are **data files** where a server reads
-   them and **rows** where they are world state. The creation sets are files already
-   (`data/equipment.json`); a map's spawns are rows, because a spawn moves.
+3. **What is a row and what is a file.** The test is fixed and it is not the source project's: **game data
+   is rows, a setting is a file** (`docs/port/04-configuration.md`, "three kinds of data"). So a map, its
+   spawns, its portals, an item definition and a character's items are rows; a loot table, the profession
+   sets an operator may retune, the world list and every program setting are files. A port never decides
+   this per piece - it asks which of the three kinds the data is.
 
 ## The order, and what each stage proves
 
@@ -141,6 +151,6 @@ Everything above fits inside one noun. These three cross a boundary and each has
 
 ## What this plan does not decide
 
-- The `Items` placement above.
-- Whether a map's spawns are rows or a file, beyond "rows where a spawn moves".
-- The world schema's exact columns: those arrive with `docs/decisions/0009-world-schema.md` and stage 2.
+- The world schema's exact table and column names: those arrive with `docs/decisions/0009-world-schema.md`
+  and stage 2, and follow from the messages that read them. The **kinds** are settled and are not open:
+  the world's data is rows, a setting is a file, and what the client dictates is a constant.

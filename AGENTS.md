@@ -46,7 +46,10 @@ content.
    judgement wherever the client can see it. Not when the tests pass, and not when the log looks
    right.
 7. **Settings live in a JSON file.** A setting is read from the file, never compiled in; a program's
-   file and what belongs in it are `docs/port/04-configuration.md`.
+   file and what belongs in it are `docs/port/04-configuration.md`. That file also holds the test for
+   where any piece of data belongs at all - the world's data is rows, a setting is a file, what the client
+   dictates is a constant - and a port is placed by that test, never by the file layout of the tree it
+   came from.
 8. **A fact names where it came from.** A number or a byte string that came from the client cites the
    recording or document it came from, where it is used. A reference decision cites `file:line`.
 9. **What the program does, it says.** Every stage reports itself in the log, and a trace can show
