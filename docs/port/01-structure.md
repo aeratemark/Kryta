@@ -159,6 +159,7 @@ conversation. In order:
 |---|---|---|
 | the front door (done) - `00 05 0C 00` on 6112 is copied to the world it names | measured: this client ignores the address it is handed, so the gameplay connection arrives where the login did (`docs/decisions/0004`) | nothing; it landed |
 | the world's listener and the creation block (done) - `WorldSocketMgr`, `WorldSession`, `0x017C` + `0x0189` | the creation screen cannot show without them | nothing; it landed |
-| the creation screen's conversation: the client's asks (`0x8089` player, `0x808A` armors, `0x8060` profession, `0x808B` confirm) and the player-data block they are answered with | the screen is drawn, then asks what to draw: professions, campaign, the starting equipment | the block is content - a profession's default equipment and the inventory framing - and none of it exists in this tree |
+| the creation screen's conversation (partly done) - the player-data block (`0x8089`: fourteen messages in the reference's order) and the PvP half (`0x808A`) are answered, and a profession change (`0x8060`) re-announces the choice | the screen is drawn, then asks what to draw | the inventory (a profession's starting equipment) needs the item framing, and the confirm (`0x808B`) needs a character schema - neither exists |
+| the character schema: a character's rows, written at the confirm and read back for the character list | a confirmed character has to be listed, and later entered as | the schema is Tyria's and has not been designed |
 | a real map: an outpost with its map blob, spawns and the instance table | the creation screen's confirm needs somewhere to put the character, and nothing else can be entered without it | `Gw.dat` reading (`game/Pack/`) is unbuilt |
 

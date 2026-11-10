@@ -71,6 +71,24 @@ A gameplay connection is not a login, so it says different things. Both are on b
 | `... names world W, which is not in the world list; closing it` | the client named a world this program never offered - a stale client, or a world removed from `data/realms.json` and the `realmlist` table |
 | `... ended inside its version message` / `... 0x... is not a gameplay connection` | the connection broke before its 64 bytes, or the bytes are not the message |
 
+## The world's side of a gameplay connection
+
+The login program's own lines are above; these are the world's, and they are what says how far a
+client got inside the game:
+
+| line | means |
+|---|---|
+| `Gameplay connection from ADDRESS: build N, world W, map M, player token 0xTTTTTTTT.` | the world read the version message the front door forwarded |
+| `... names world W and this world is R; closing it.` | the client asked for another world; nothing else happens |
+| `... the exchange is answered. Everything after it is scrambled.` | the seed exchange completed on this socket |
+| `... the character-creation instance is opened, 8 bytes (load head and creation start).` | the unasked block went out and the creation screen may appear |
+| `... the creation screen's player data answered with N message(s), M bytes.` | the client asked for `0x8089` and got the block it is drawn from |
+| `... the creation screen's PvP half answered with 3 message(s), 6 bytes.` | `0x808A`, answered empty |
+| `... the creation screen chose campaign C and profession P.` | `0x8060`, and the choice was re-announced |
+| `... message 0xXXXX with N bytes, which this world does not answer yet.` | the ask that is next to build: its header and size are in the line |
+| `... a message with header 0xXXXX has no size this world knows` | the stream cannot be split further; every byte is printed beside it |
+| `... the creation screen confirmed a character (N bytes), and this world cannot write one yet ...` | `0x808B`: the character schema is not built, and the connection is closed rather than left hanging |
+
 ## Reading a failure
 
 | what you see | what it means | where to look |
@@ -81,7 +99,8 @@ A gameplay connection is not a login, so it says different things. Both are on b
 | `started like the file check but is not it` | the first four bytes matched and the rest did not | the trace's bytes against the constant's 21 |
 | `sent a seed with header 0xXXXX` | the client's seed is not the shape expected | the exchange's sizes |
 | `first encrypted message reads as 0xXXXX ... the login message is 0x8038` | the derivation, or the framing after it, is wrong | the trace's bytes for the first scrambled message |
-| `Gameplay connection ... did not answer` | the login is fine and the front door is fine; there is no world program listening yet | the world list's port, and `docs/port/01-structure.md` for what is next |
+| `Gameplay connection ... did not answer` | the login is fine and the front door is fine; the world is not running (or not on the named port) | the world list's port, and its own log for `READY: listening` |
+| A screen that stops responding after `the character-creation instance is opened` | the world sent the block and the client is waiting on an ask the world has no answer for | the `message 0xXXXX ... does not answer yet` line names it |
 
 ## Where it goes
 

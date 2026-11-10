@@ -4,7 +4,17 @@
 //! One file holding every message in every direction is the arrangement this project exists to
 //! avoid, so a family arrives as its own file and its own subject.
 
+#[path = "AgentPackets.rs"]
+pub mod agent_packets;
+#[path = "CharacterPackets.rs"]
+pub mod character_packets;
 #[path = "InstancePackets.rs"]
 pub mod instance_packets;
+#[path = "MiscPackets.rs"]
+pub mod misc_packets;
 
-pub use instance_packets::{creation_load_block, char_creation_start, instance_load_head};
+pub use instance_packets::{
+    CHAR_CREATION_START, INSTANCE_LOAD_HEAD, INSTANCE_PLAYER_DATA_DONE, INSTANCE_PLAYER_DATA_START,
+    char_creation_start, creation_load_block, instance_load_head, instance_player_data_done,
+    instance_player_data_start,
+};

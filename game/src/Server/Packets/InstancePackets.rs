@@ -15,6 +15,15 @@
 /// those four bytes after the header (`instance_load_head(0x3F, 0x3F)`).
 pub const INSTANCE_LOAD_HEAD: u16 = 0x017C;
 
+/// `GAME_SMSG_INSTANCE_PLAYER_DATA_START`: the player-data stream opens.
+pub const INSTANCE_PLAYER_DATA_START: u16 = 0x0186;
+
+/// `GAME_SMSG_INSTANCE_PLAYER_DATA_DONE`: the player-data stream is over.
+///
+/// Two bytes, the header only. Its only caller is the character-creation flow - a map load never
+/// carries it - which is why it sits beside the creation start here.
+pub const INSTANCE_PLAYER_DATA_DONE: u16 = 0x018A;
+
 /// `GAME_SMSG_CHAR_CREATION_START`: the creation instance may show its screen.
 ///
 /// Evidence: the reference's own send log; two bytes, the header only. A creation connection is
@@ -38,6 +47,17 @@ pub fn instance_load_head() -> Vec<u8> {
 /// `0x0189`: the header and nothing else.
 pub fn char_creation_start() -> Vec<u8> {
     frame(CHAR_CREATION_START, &[])
+}
+
+/// `0x0186`: the header and nothing else. It opens the block a creation screen's player is drawn
+/// from, and `instance_player_data_done` closes it.
+pub fn instance_player_data_start() -> Vec<u8> {
+    frame(INSTANCE_PLAYER_DATA_START, &[])
+}
+
+/// `0x018A`: the header and nothing else.
+pub fn instance_player_data_done() -> Vec<u8> {
+    frame(INSTANCE_PLAYER_DATA_DONE, &[])
 }
 
 /// What a character-creation connection is answered with, in the reference's order.
