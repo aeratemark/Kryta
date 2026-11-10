@@ -41,7 +41,7 @@ fatal.
   section 7. The reference server has no equivalent - its client does not ask this - which is why
   `game/FileCheck/` exists in this tree's naming.
 - In this tree: both byte strings are constants in `authserver/src/Server/file_check.rs`, because they
-  are a **payload** rather than a configuration option - nobody chooses them and the client compares
+  are a **payload** rather than a setting - nobody chooses them and the client compares
   them exactly (`docs/port/04-configuration.md`). Refreshing them is a new build: capture the reply a
   live client accepts and replace the literal.
 - Proved by: the constants' lengths (21 and 32) and header; a real socket sending the question
@@ -99,7 +99,7 @@ A refusal sends only `0x0003`, with status `11`.
   authority for the sizes, and it is what settles a disagreement in the older notes: their arithmetic
   sums an extra leading 10-byte message that the trace does not carry.
 - In this tree: the builders are `authserver/src/Server/login_reply.rs`, and the 591-byte block is a
-  constant in `authserver/src/Server/account_settings.rs` - a payload, not a configuration option, so
+  constant in `authserver/src/Server/account_settings.rs` - a payload, not a setting, so
   refreshing it is a new build rather than an edit.
 - **Checked byte for byte against that trace**, without a client: five tests compare each builder's
   output - all ten bytes of `0x0003` and `0x0014`, and the first 24 of `0x0016`, `0x0011` and `0x0007`

@@ -9,7 +9,7 @@ The reference's configuration format is `Key = value` in a `.conf` file, parsed 
 `src/common/Configuration/Config.cpp`. This tree ported that parser and every quirk in it, and both
 programs read a `authserver.conf` / `worldserver.conf`.
 
-The owner's requirement: **every hardcoded number and every configuration value is handled from JSON
+The owner's requirement, as it reads today: **a configuration file holds settings - the values that differ per operator**. It was first taken as **every hardcoded number and every configuration value is handled from JSON
 configuration files**, so that users can configure and share their setups; and **no datum may live
 only in code or only in the database**. A JSON file is a thing two people can diff, a web page can
 show, and another program can read; a `.conf` with `Key = value` is nearly that, and a constant
@@ -17,7 +17,7 @@ inside a Rust function is not.
 
 ## The decision
 
-1. **The format is JSON, for configuration options only.** `authserver/authserver.json` and
+1. **The format is JSON, for settings only.** `authserver/authserver.json` and
    `worldserver/worldserver.json` are the programs' own files; the `.dist` files are committed and the
    live ones are not, because they hold credentials. A configuration file holds what an operator
    *chooses and shares*. It holds no payload the client dictates and no row a person lives in - a
