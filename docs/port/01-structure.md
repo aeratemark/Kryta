@@ -104,6 +104,7 @@ Updated as stages land, because this is a statement of today and not of intent.
 | the rest of the login | the EULA (answered with nothing, as the reference does), the ask-response, the player status, and the request for a map, which is answered with the world's own address in `0x0009` and an `0x0003` behind it |
 | which address a client dials | **measured, 2026-11-10, build 39167**: the launch address, not the one it is handed. A listener on the named port accepted nothing and the gameplay connection arrived on the auth port 35 ms later. The auth program is therefore the front door and hands it to the world; `docs/decisions/0004-gameplay-connections-arrive-at-the-front-door.md` |
 | the portal | the four endpoints served over HTTP on 6601 by the auth program, answering from the login database's `account` table; `game/src/Portal/`, `authserver/src/Server/accounts.rs`, `docs/decisions/0003-portal-host.md`, `0006-accounts-are-rows.md` |
+| the front door | a gameplay connection that arrives on the auth port is read for the world it names (`game/src/Server/Protocol/`), copied to that world's address from the world list (`shared/src/Network/Relay.rs`), and the world's answer carried back. A world that does not answer closes the client within 3 s rather than leaving it waiting; `authserver/src/Server/front_door.rs` |
 | the account table | `account` in `kryta_login`: the login name the client types, and the pair the portal issued for it. A name it does not hold is the reference's own `400 who are you?`. Rows are inserted by an operator - creating an account is not built yet |
 | `worldserver/` | stages 1 to 4 - config, log, PID file; stops at its databases; `b604814` |
 | `game/`, `scripts/`, `modules/` | not started |
@@ -152,7 +153,7 @@ with, and nothing can answer it. In order:
 
 | next | why it is next | what stops it |
 |---|---|---|
-| the front door - the auth program accepts a `00 05 0C 00` connection on 6112 and copies it to the world's address | measured: this client ignores the address it is handed, so the gameplay connection arrives where the login did (`docs/decisions/0004`) | nothing; it is the next build |
+| the front door (done) - `00 05 0C 00` on 6112 is copied to the world it names | measured: this client ignores the address it is handed, so the gameplay connection arrives where the login did (`docs/decisions/0004`) | nothing; it landed |
 | the world program's listener (`game/Server/`: `WorldSocketMgr`, `WorldSocket`, `WorldSession`) | it is the only thing that can answer a gameplay connection | the reference starts `StartWorldNetwork` after `sWorld->SetInitialWorldSettings`, and the world program still stops at its databases - stages 5 to 8 must land first, with an empty content tree that reports zero maps |
 | the gameplay connection's protocol: the 64-byte version message, the token pair the front door issued, the seed exchange, then the creation instance's load block | the creation screen cannot progress without it | a travel has to be recorded for the world to check, which the front door brings |
 | content: the creation instance first (no geometry), then one outpost with a map blob, then spawns and the `Gw.dat` reader (`game/Pack/`) | the world serves maps, and has none | `Gw.dat` reading is unbuilt |

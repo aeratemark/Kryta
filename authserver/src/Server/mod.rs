@@ -9,6 +9,8 @@ pub mod account_settings;
 pub mod accounts;
 #[path = "file_check.rs"]
 pub mod file_check;
+#[path = "front_door.rs"]
+pub mod front_door;
 #[path = "handshake.rs"]
 pub mod handshake;
 #[path = "login_reply.rs"]
@@ -20,4 +22,5 @@ pub mod stream;
 
 pub use accounts::DatabaseAccounts;
 pub use file_check::FileCheck;
-pub use session::{AuthSession, GameServer};
+pub use front_door::FrontDoor;
+pub use session::AuthSession;

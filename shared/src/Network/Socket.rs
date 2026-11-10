@@ -73,6 +73,12 @@ impl SessionIo {
         self.peer
     }
 
+    /// The stream itself, for the socket layer's own use: a relay copies between two of them, and
+    /// nothing outside this crate sees the transport.
+    pub(crate) fn stream_mut(&mut self) -> &mut TcpStream {
+        &mut self.stream
+    }
+
     /// Bytes received on this connection so far.
     pub fn received(&self) -> usize {
         self.received

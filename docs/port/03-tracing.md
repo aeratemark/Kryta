@@ -59,6 +59,18 @@ including traffic this server does not understand, appears byte for byte with it
 statement trace is the same idea for the database: a startup that applied the wrong file looks like
 a startup that worked until the statements are visible.
 
+## The front door
+
+A gameplay connection is not a login, so it says different things. Both are on by default:
+
+| line | means |
+|---|---|
+| `Gameplay connection from ADDRESS: build N, world W, map M, player token 0xTTTTTTTT` | a client arrived for world W. This is the line that answers "did the client reach us and what did it ask for" without watching a socket |
+| `Gameplay connection from ADDRESS: world W at HOST:PORT, X byte(s) in, Y out, until the client left` | the copy ran to the end: the world answered and both sides closed |
+| `... world W at HOST:PORT did not answer (...) ; the client is closed rather than left waiting` | the world's port refused or timed out. With no world running yet this is the expected line, not a fault |
+| `... names world W, which is not in the world list; closing it` | the client named a world this program never offered - a stale client, or a world removed from `data/realms.json` and the `realmlist` table |
+| `... ended inside its version message` / `... 0x... is not a gameplay connection` | the connection broke before its 64 bytes, or the bytes are not the message |
+
 ## Reading a failure
 
 | what you see | what it means | where to look |
@@ -69,6 +81,7 @@ a startup that worked until the statements are visible.
 | `started like the file check but is not it` | the first four bytes matched and the rest did not | the trace's bytes against the constant's 21 |
 | `sent a seed with header 0xXXXX` | the client's seed is not the shape expected | the exchange's sizes |
 | `first encrypted message reads as 0xXXXX ... the login message is 0x8038` | the derivation, or the framing after it, is wrong | the trace's bytes for the first scrambled message |
+| `Gameplay connection ... did not answer` | the login is fine and the front door is fine; there is no world program listening yet | the world list's port, and `docs/port/01-structure.md` for what is next |
 
 ## Where it goes
 

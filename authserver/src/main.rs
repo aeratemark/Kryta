@@ -427,32 +427,27 @@ fn run(args: &[String]) -> Result<(), String> {
         format!("Account settings: {} bytes.", account_settings.len()),
     );
 
-    // Where a client that asks for a map is sent: the first world in the list that is not marked
-    // offline, at the address the row gives for clients. The row's id is the `map_token` the client
-    // carries back on its gameplay connection, and its port is the world program's own listener -
-    // which is why the line below names the address the client will be told to dial, and why
-    // whether it dials it is the open question `docs/port/02-wire.md` records.
-    let game_server = worlds
-        .worlds()
-        .values()
-        .find(|world| !world.is_offline())
-        .map(|world| crate::server::GameServer {
-            token: world.id,
-            address: world.endpoint(),
-        });
-    match game_server {
+    // The front door: the worlds a travel is answered from, and where a gameplay connection that
+    // arrives on this port is copied to. It is the same world list in both roles, so the address a
+    // client is told and the address this program dials for it cannot disagree
+    // (`docs/decisions/0004-gameplay-connections-arrive-at-the-front-door.md`).
+    let front_door = std::sync::Arc::new(crate::server::FrontDoor::new(
+        std::sync::Arc::new(worlds),
+        log.clone(),
+    ));
+    match front_door.pick() {
         Some(server) => log.out(
             LogLevel::Info,
             "server.authserver",
             format!(
-                "Travel: a client asking for a map is told to dial {} as world {}.",
+                "Front door: a client asking for a map is told to dial {} as world {}, and its gameplay connection is copied there.",
                 server.address, server.token
             ),
         ),
         None => log.out(
             LogLevel::Warn,
             "server.authserver",
-            "Travel: every world in the list is offline, so a client asking for a map will be refused.",
+            "Front door: every world in the list is offline, so a client asking for a map will be refused.",
         ),
     }
 
@@ -460,12 +455,13 @@ fn run(args: &[String]) -> Result<(), String> {
         let log = log.clone();
         let file_check = file_check.clone();
         let account_settings = account_settings.clone();
+        let front_door = std::sync::Arc::clone(&front_door);
         std::sync::Arc::new(move || {
             Box::new(AuthSession::with_random_master(
                 log.clone(),
                 file_check.clone(),
                 account_settings.clone(),
-                game_server,
+                Some(std::sync::Arc::clone(&front_door)),
             )) as Box<dyn Session>
         })
     };

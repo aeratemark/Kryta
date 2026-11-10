@@ -13,6 +13,8 @@
 pub mod async_acceptor;
 #[path = "NetworkThread.rs"]
 pub mod network_thread;
+#[path = "Relay.rs"]
+pub mod relay;
 #[path = "Socket.rs"]
 pub mod socket;
 #[path = "SocketMgr.rs"]
@@ -20,5 +22,6 @@ pub mod socket_mgr;
 
 pub use async_acceptor::AsyncAcceptor;
 pub use network_thread::{NetworkThread, NetworkThreadHandle};
+pub use relay::{RelayError, Relayed};
 pub use socket::{Session, SessionFactory, SessionFuture, SessionIo};
 pub use socket_mgr::{select_thread_with_min_connections, SocketMgr};

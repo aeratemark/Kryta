@@ -109,6 +109,11 @@ impl WorldList {
         &self.worlds
     }
 
+    /// Put one world in the list, replacing any world with the same id.
+    pub fn insert(&mut self, realm: Realm) {
+        self.worlds.insert(realm.id, realm);
+    }
+
     /// Read a world list from a settings file and merge it over the table.
     ///
     /// A world's address is the operator's choice, so it can be set in `data/realms.json` as well as

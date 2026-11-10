@@ -1,7 +1,8 @@
 # 0004 - Gameplay connections arrive at the front door
 
-Status: accepted, taken on a measurement. The owner may overrule it; if he does, this record is
-corrected rather than extended.
+Status: accepted, taken on a measurement, and landed: `authserver/src/Server/front_door.rs` and
+`shared/src/Network/Relay.rs`. The owner may overrule it; if he does, this record is corrected rather
+than extended.
 
 ## The question
 

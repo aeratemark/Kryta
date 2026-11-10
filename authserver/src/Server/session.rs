@@ -65,8 +65,9 @@ pub struct AuthSession {
     file_check: FileCheck,
     /// The 591-byte block every login is answered with, from the account settings payload.
     account_settings: Vec<u8>,
-    /// The world a travel request is sent to, when one is configured.
-    game_server: Option<GameServer>,
+    /// The front door: the worlds a travel request is answered from, and where a gameplay connection
+    /// that arrives on this port is copied to (`docs/decisions/0004`).
+    front_door: Option<std::sync::Arc<crate::server::FrontDoor>>,
 }
 
 impl AuthSession {
@@ -78,14 +79,14 @@ impl AuthSession {
         master: [u8; MASTER_SECRET_LEN],
         file_check: FileCheck,
         account_settings: Vec<u8>,
-        game_server: Option<GameServer>,
+        front_door: Option<std::sync::Arc<crate::server::FrontDoor>>,
     ) -> Self {
         Self {
             log,
             master,
             file_check,
             account_settings,
-            game_server,
+            front_door,
         }
     }
 
@@ -94,7 +95,7 @@ impl AuthSession {
         log: Log,
         file_check: FileCheck,
         account_settings: Vec<u8>,
-        game_server: Option<GameServer>,
+        front_door: Option<std::sync::Arc<crate::server::FrontDoor>>,
     ) -> Self {
         let mut master = [0u8; MASTER_SECRET_LEN];
         if getrandom::getrandom(&mut master).is_err() {
@@ -106,7 +107,7 @@ impl AuthSession {
                 "no entropy available for the master secret; the exchange will use zeros",
             );
         }
-        Self::new(log, master, file_check, account_settings, game_server)
+        Self::new(log, master, file_check, account_settings, front_door)
     }
 
     fn say(&self, level: LogLevel, text: impl Into<String>) {
@@ -157,22 +158,31 @@ impl AuthSession {
                     return;
                 }
                 Some(other) => {
-                    // This branch is evidence, not a refusal of a wrong client. The client is supposed
-                    // to open its gameplay connection to the world's address; the only measurement of
-                    // this client says it dials the address it was *launched* with instead, which is
-                    // this one. So which port the connection arrived on answers which of those is
-                    // true, and the line says what it means rather than assuming.
+                    // A gameplay connection arrives on this port because this client dials the
+                    // address it was launched with, not the one `0x0009` named - measured, see
+                    // `docs/port/02-wire.md`. The front door copies it to the world it names.
+                    if other == ConnectionKind::Game {
+                        match self.front_door.as_ref() {
+                            Some(door) => door.route(io, first_four).await,
+                            None => {
+                                self.say(
+                                    LogLevel::Warn,
+                                    format!(
+                                        "Connection from {peer}: a gameplay connection arrived, and this program has no front door (no world is configured), so it is closed."
+                                    ),
+                                );
+                                let _ = io.close().await;
+                            }
+                        }
+                        return;
+                    }
+
                     self.say(
                         LogLevel::Warn,
                         format!(
-                            "Connection from {peer}: a {} connection arrived on the auth port (its first four bytes are {}). {}",
+                            "Connection from {peer}: a {} connection arrived on the auth port (its first four bytes are {}). The control channel is not ported yet; the reference serves it from a game server, not from here.",
                             other.as_str(),
-                            shared::network::socket::hex(&first_four),
-                            if other == ConnectionKind::Game {
-                                "That means the client dials the address it was launched with, not the one it was handed: this program is its front door for gameplay connections too, and this port has nothing that can answer one."
-                            } else {
-                                "The control channel is not ported yet; the reference serves it from a game server, not from here."
-                            }
+                            shared::network::socket::hex(&first_four)
                         ),
                     );
                     let _ = io.close().await;
@@ -619,7 +629,8 @@ impl AuthSession {
             ),
         );
 
-        let Some(server) = self.game_server else {
+        let world = self.front_door.as_ref().and_then(|door| door.pick());
+        let Some(server) = world else {
             self.say(
                 LogLevel::Warn,
                 format!(
@@ -664,7 +675,7 @@ impl AuthSession {
         self.say(
             LogLevel::Info,
             format!(
-                "Connection from {peer}: told to dial {} as world {} (map token), carrying player token 0x{player_token:08X} - and whether it dials that address rather than the one it was launched with is the open question.",
+                "Connection from {peer}: told to dial {} as world {} (map token), carrying player token 0x{player_token:08X}. This client will dial the address it was launched with instead, and the front door will copy that connection here.",
                 server.address, server.token
             ),
         );
@@ -831,6 +842,30 @@ mod tests {
 
     fn shipped_file_check() -> FileCheck {
         FileCheck::shipped().unwrap()
+    }
+
+    /// A front door onto one world, which is what a program with one running server has.
+    fn one_world(id: u32, port: u16) -> Arc<crate::server::FrontDoor> {
+        let mut worlds = shared::worlds::WorldList::new();
+        worlds.insert(shared::worlds::Realm {
+            id,
+            name: format!("World {id}"),
+            address: "127.0.0.1".parse().unwrap(),
+            address_text: "127.0.0.1".to_string(),
+            local_address: "127.0.0.1".parse().unwrap(),
+            local_subnet_mask: "255.255.255.0".to_string(),
+            port,
+            icon: 0,
+            flags: 0,
+            timezone: 0,
+            allowed_security_level: 0,
+            population: 0.0,
+            build: 39167,
+        });
+        Arc::new(crate::server::FrontDoor::new(
+            Arc::new(worlds),
+            Log::new(),
+        ))
     }
 
     fn factory(log: Log, file_check: FileCheck) -> SessionFactory {
@@ -1154,7 +1189,7 @@ mod tests {
     fn connected(
         log: &Log,
         master: [u8; MASTER_SECRET_LEN],
-        game_server: Option<GameServer>,
+        front_door: Option<std::sync::Arc<crate::server::FrontDoor>>,
     ) -> (SocketMgr, std::net::TcpStream, [u8; crate::server::handshake::KEY_LEN]) {
         let factory: SessionFactory = {
             let log = log.clone();
@@ -1167,7 +1202,7 @@ mod tests {
                     master,
                     file_check.clone(),
                     settings.clone(),
-                    game_server,
+                    front_door.clone(),
                 )) as Box<dyn Session>
             })
         };
@@ -1206,11 +1241,7 @@ mod tests {
 
         let log = Log::new();
         let master = [0x5Cu8; MASTER_SECRET_LEN];
-        let world = GameServer {
-            token: 7,
-            address: "127.0.0.1:6113".parse().unwrap(),
-        };
-        let (mut manager, mut client, key) = connected(&log, master, Some(world));
+        let (mut manager, mut client, key) = connected(&log, master, Some(one_world(7, 6113)));
 
         // One outbound keystream for the whole conversation. The greeting's sixteen bytes came off
         // it first, so the cipher is advanced past them before the answer is read.
@@ -1302,9 +1333,9 @@ mod tests {
     }
 
     #[test]
-    fn a_game_connection_on_the_auth_port_is_closed_without_a_word() {
-        // The measurement the log line exists for: a client that dials this port for gameplay is
-        // seen here, and nothing this port can do answers it.
+    fn a_game_connection_on_the_auth_port_is_closed_without_a_word_when_there_is_no_front_door() {
+        // With no world configured there is nowhere to send it, and a client waiting on a port
+        // that cannot answer is worse served by a closed socket than by silence.
         let log = Log::new();
         let (mut manager, mut client, _key) = connected(&log, [0x5Eu8; MASTER_SECRET_LEN], None);
 
@@ -1324,6 +1355,80 @@ mod tests {
         assert_eq!(total, 0, "a gameplay connection is not answered on the auth port");
 
         manager.stop_network();
+        log.shutdown();
+    }
+
+    #[test]
+    fn a_gameplay_connection_arriving_here_reaches_the_world_it_names() {
+        // The stage's proof, without the client: a client's *second* connection to the auth port,
+        // carrying a version message that names world 7, arrives at that world byte for byte, and
+        // the world's answer comes back to the client. This is what the front door exists for
+        // (`docs/decisions/0004-gameplay-connections-arrive-at-the-front-door.md`).
+        use game::server::protocol::GameVersion;
+        use std::sync::Mutex;
+
+        // The world: it reads the version message, answers, and reports what it was sent.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let world_address = listener.local_addr().unwrap();
+        let seen: std::sync::Arc<Mutex<Vec<u8>>> = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let world = {
+            let seen = std::sync::Arc::clone(&seen);
+            std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut message = vec![0u8; game::server::protocol::GAME_CMSG_VERSION_LEN];
+                stream.read_exact(&mut message).unwrap();
+                *seen.lock().unwrap() = message;
+                stream.write_all(b"the world answers").unwrap();
+                let mut sink = [0u8; 64];
+                while let Ok(read) = stream.read(&mut sink) {
+                    if read == 0 {
+                        break;
+                    }
+                }
+            })
+        };
+
+        let log = Log::new();
+        let (mut manager, _client, _key) = connected(
+            &log,
+            [0x5Fu8; MASTER_SECRET_LEN],
+            Some(one_world(7, world_address.port())),
+        );
+        let auth_port = manager.port().unwrap();
+
+        // The client's gameplay connection, to the port it was launched against.
+        let mut gameplay = std::net::TcpStream::connect(("127.0.0.1", auth_port)).unwrap();
+        gameplay
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let version = GameVersion {
+            version: 39167,
+            h0008: 1,
+            map_token: 7,
+            map_id: 0,
+            player_token: 0xA2E3_DB8C,
+            account: [0xAA; 16],
+            character: [0xBB; 16],
+            h0038: 0,
+            h003c: 0,
+        };
+        let message = version.encode();
+        gameplay.write_all(&message).unwrap();
+
+        // The world's answer arrives on the gameplay connection, not on the login one.
+        let mut answer = [0u8; 17];
+        gameplay.read_exact(&mut answer).unwrap();
+        assert_eq!(&answer, b"the world answers");
+
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            &message[..],
+            "the world received the version message whole and unmodified"
+        );
+
+        drop(gameplay);
+        manager.stop_network();
+        let _ = world.join();
         log.shutdown();
     }
 }

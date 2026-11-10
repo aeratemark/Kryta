@@ -178,6 +178,36 @@ connect timeout with no message.
   connection to a game server over its control channel; this port must do the same, which is
   `docs/decisions/0004-gameplay-connections-arrive-at-the-front-door.md`. Naming the launch address
   instead and answering the game protocol on the auth port was rejected: it fuses the two halves.
+- In this tree: `authserver/src/Server/front_door.rs`. It reads the client's 64 bytes only for
+  `map_token` (offset 12), forwards those bytes whole and unmodified to the world the id names, and
+  copies bytes both ways until either side ends. It does not decode the game protocol and does not
+  decide who may play: the world reads the same 64 bytes, compares the token pair against the travel
+  the login recorded, and closes the connection on a mismatch. A world that does not answer closes
+  the client in 3 s.
+
+## The gameplay connection's 64-byte version message
+
+The first thing a client sends on a gameplay connection, and the whole of what the front door reads:
+
+| off | size | field |
+|---|---|---|
+| 0 | 4 | the header, `0x000C0500` |
+| 4 | 4 | the client's build - never compared |
+| 8 | 4 | `h0008`, observed 1 |
+| 12 | 4 | `map_token` - the world's id from the answer to `0x8029` |
+| 16 | 4 | `map_id` - the map that answer named |
+| 20 | 4 | `player_token` - drawn per travel by the login |
+| 24 | 16 | the account, little-endian UUID |
+| 40 | 16 | the character, the same |
+| 56 | 8 | `h0038`, `h003C`, both observed 0 |
+
+- Source: `ASURA/docs/reference/client-protocol.md` section 11.1, which records the reference reading
+  the same fields in the same order (`Connection_ReadVersion`).
+- In this tree: `game/src/Server/Protocol/` - the first message of the game library's protocol, with
+  the offsets spelled out in a test so a reordering fails a test rather than a client.
+- Not yet used for anything but routing: the token pair is what the world will compare against the
+  travel the login recorded, and the login does not record a travel yet.
+
 ## The first four bytes of a connection
 
 The client's very first bytes are a bare little-endian `u32`, not a framed message. Decoding them as
