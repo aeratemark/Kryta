@@ -157,16 +157,16 @@ every message in both directions is the arrangement this project exists to avoid
 
 ## What is next, and what stops it
 
-A client today logs in, is shown an empty character list, accepts the EULA, and asks for the
-character-creation instance. Its gameplay connection now reaches the world: the version message, the
-seed exchange and the two-message creation block all land. What is left is the creation screen's own
-conversation. In order:
+A client today logs in, is listed its characters, accepts the EULA, and asks for the
+character-creation instance. Its gameplay connection reaches the world, and the creation screen is
+answered: the load block, the player-data block with the inventory stream, the PvP half, a profession
+change, and the confirm that writes a character. What is left is a character worth entering. In order:
 
 | next | why it is next | what stops it |
 |---|---|---|
 | the front door (done) - `00 05 0C 00` on 6112 is copied to the world it names | measured: this client ignores the address it is handed, so the gameplay connection arrives where the login did (`docs/decisions/0004`) | nothing; it landed |
 | the world's listener and the creation block (done) - `WorldSocketMgr`, `WorldSession`, `0x017C` + `0x0189` | the creation screen cannot show without them | nothing; it landed |
-| the creation screen's conversation (partly done) - the player-data block (`0x8089`: fourteen messages in the reference's order) and the PvP half (`0x808A`) are answered, and a profession change (`0x8060`) re-announces the choice | the screen is drawn, then asks what to draw | the inventory (a profession's starting equipment) needs the item framing, and the confirm (`0x808B`) needs a character schema - neither exists |
+| the creation screen's conversation (answered) - the player-data block (`0x8089`) now carries the inventory stream, the six bags, the profession's starting set and the player's own state; the PvP half (`0x808A`), a profession change (`0x8060`) and the confirm (`0x808B`) are answered | the screen is drawn, then asks what to draw | a profession change does not swap the equipped set: the reference takes the old pieces off (`0x014D`) and sends the new profession's set, and this world sends neither, so a client that switches profession keeps the first set on screen |
 | the character schema and the confirm (done) - `characters`, written at `0x808B`, and the list read back through the login's answer | a confirmed character has to be listed, and later entered as | nothing; it landed |
 | a real map: an outpost with its map blob, spawns and the instance table | the creation screen's confirm needs somewhere to put the character, and nothing else can be entered without it | `Gw.dat` reading (`game/Pack/`) is unbuilt |
 
