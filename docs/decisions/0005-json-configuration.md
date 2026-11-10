@@ -29,9 +29,10 @@ inside a Rust function is not.
    `LoginDatabaseInfo` mean what they meant in the `.conf`. The change is the file format, not the
    vocabulary, so every document and call site still says the same word.
 4. **Every value carries its reason where it is stated.** JSON has no comments, so `doc` states
-   where a number came from and `note` says what a file is for; both are read past, never treated as
-   keys. A number the client decides rather than the server is marked `immutable`, and one marked
-   immutable without a `doc` is a complaint.
+   where a number came from, `note` says what a file is for, and `information` holds commentary of
+   any shape - an object, an array, prose - for the explanation that will not fit in one line; all
+   three are read past, never treated as keys. A number the client decides rather than the server is
+   marked `immutable`, and one marked immutable without a `doc` is a complaint.
 5. **The reference's parser stays, and no shipped file uses it.** `Config::parse` is the
    reference's translation with its measured quirks; it is kept because it is the reference's, and
    a `.conf` handed to this server still loads. Nothing in `data/` or in a program's directory is

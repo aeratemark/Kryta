@@ -16,6 +16,12 @@ a `hex`.
 {
   "note": "what this whole file is for",
 
+  "information": {
+    "what": "this client asks which game files it should have before anything else",
+    "measured": "a live client on 2026-10-26, build 39112",
+    "how to replace the bytes": "capture the reply a client accepts, never compute one"
+  },
+
   "RealmServerPort": 6112,
 
   "StatusInterval": {
@@ -44,10 +50,19 @@ That file's keys are `RealmServerPort`, `StatusInterval`, `Network.Trace`, `Netw
 | `null` | the key is absent - how a file says "not set" |
 | `{"value": 0, "immutable": true, "doc": "..."}` | `0`, described |
 
-Three names are read past rather than configured: **`doc`** says where a value came from, **`note`**
-says what a file is for, **`immutable`** marks a number the *client* decides rather than the server.
-An `immutable` number without a `doc` is reported: a label with no reason is a rumour.
+Four names are read past rather than configured, at every level of a file - the root, a section, a
+leaf, a row - so no configuration key here is called one of them:
 
+| name | is |
+|---|---|
+| `doc` | where a value came from, in one line |
+| `note` | what a whole file is for, in one line |
+| `immutable` | a number the *client* decides rather than the server: editing it does not change the client. One without a `doc` is reported, because a label with no reason is a rumour |
+| `information` | commentary of any shape - an object, an array, nested trees, prose - for the explanation that will not fit in one line. Its contents are never keys and are never read |
+
+`information` is where a file writes down what it is for, how it was measured, what would replace
+it and what it links to. `data/file_check.json` is the worked example: an `information` block naming
+the capture the bytes came from and the way to replace them, then the two byte strings themselves.
 Two more rules, both enforced with a message rather than silence:
 
 - A key stated twice - which needs two spellings of one path - is reported and the first wins.

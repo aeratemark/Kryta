@@ -28,11 +28,34 @@
 //! | `"data": {"hex": "08 00 66 21"}` | `08 00 66 21`, and [`super::Config::bytes`] decodes it |
 //! | `"PidFile": null` | the key is absent, which is how a file says "not set" |
 //!
-//! Three names are **not** keys, because JSON has no comments and a shared file has to explain
-//! itself: `doc` says where a value came from, `note` says what a whole file is for, and
-//! `immutable` marks a number the client decides rather than the server - changing it does not
-//! change the client, and the field is a warning label for whoever edits the file. An `immutable`
-//! number without a `doc` is a complaint, because a label with no reason is a rumour.
+//! Four names are **not** keys, because JSON has no comments and a shared file has to explain
+//! itself: `doc` says where a value came from, `note` says what a whole file is for, `immutable`
+//! marks a number the client decides rather than the server - changing it does not change the
+//! client - and `information` is a container for anything else the file's author wants to write
+//! down. An `immutable` number without a `doc` is a complaint, because a label with no reason is a
+//! rumour.
+//!
+//! # `information`, the commentary that has no shape
+//!
+//! `doc` and `note` are one line each. When the explanation is a measurement, a list of captures, a
+//! worked example or a paragraph of history, it goes in `information`, and its contents are the
+//! author's business: an object, an array, a nested tree, or a string, at the root of a file, inside
+//! a section, or beside a `value`. The reader walks past it and never treats a name inside it as a
+//! configuration key, so this costs nothing and cannot break a program:
+//!
+//! ```json
+//! {
+//!   "information": {
+//!     "what": "the file check is this client's, not the reference's",
+//!     "measured": "captured from a live client on 2026-10-26, build 39112",
+//!     "replacing it": "capture the reply a client accepts; never arithmetic on these ids"
+//!   },
+//!   "request": { "hex": "01 00 ...", "doc": "what the client sends first" }
+//! }
+//! ```
+//!
+//! The four names are reserved at every level, which is why no configuration key in this tree is
+//! called `doc`, `note`, `immutable` or `information`.
 //!
 //! # And what is not a bag
 //!
@@ -53,13 +76,21 @@ pub const DOC: &str = "doc";
 pub const NOTE: &str = "note";
 /// The key that marks a number as the client's rather than the server's.
 pub const IMMUTABLE: &str = "immutable";
+/// The key that holds commentary of any shape: the place for an explanation that is not one line.
+///
+/// Whatever a file puts behind this name is walked past - objects, arrays, numbers, prose - so an
+/// author can write down a measurement, a list of captures or a paragraph of history without the
+/// reader mistaking any of it for a setting. It is reserved at every level of a file.
+pub const INFORMATION: &str = "information";
 /// A leaf's scalar, in the envelope form.
 const VALUE: &str = "value";
 /// A leaf's bytes, as hexadecimal text.
 const HEX: &str = "hex";
 
 /// The names that describe a file rather than configure something.
-const METADATA: [&str; 3] = [DOC, NOTE, IMMUTABLE];
+///
+/// Reserved at every level of a file, which is why no configuration key here is called one of them.
+const METADATA: [&str; 4] = [DOC, NOTE, IMMUTABLE, INFORMATION];
 
 /// One JSON configuration file, parsed and kept as it was written.
 #[derive(Debug, Clone)]
@@ -184,7 +215,14 @@ impl Record<'_> {
     }
 
     /// A field's text, or `None` when the row does not state it.
+    ///
+    /// A reserved name is not a field: `doc`, `note`, `immutable` and `information` are commentary
+    /// wherever they appear, so a row that carries them answers `None` for them as a set of settings
+    /// would refuse to make them keys.
     pub fn text(&self, field: &str) -> Result<Option<String>, String> {
+        if METADATA.contains(&field) {
+            return Ok(None);
+        }
         let Some(value) = self.value.get(field) else {
             return Ok(None);
         };
@@ -217,6 +255,9 @@ impl Record<'_> {
 
     /// A field's bytes, from `<field>: {"hex": "..."}`.
     pub fn bytes(&self, field: &str) -> Result<Option<Vec<u8>>, String> {
+        if METADATA.contains(&field) {
+            return Ok(None);
+        }
         let Some(value) = self.value.get(field) else {
             return Ok(None);
         };
@@ -304,7 +345,8 @@ fn flatten(
 
     for (key, child) in section {
         // The names that describe a file rather than configure something. `doc` and `note` are
-        // comments; `immutable` belongs inside a leaf and means nothing on a section.
+        // comments, `information` is a container for commentary of any shape, and `immutable`
+        // belongs inside a leaf and means nothing on a section.
         if METADATA.contains(&key.as_str()) {
             if key == IMMUTABLE {
                 complaints.push(Complaint {
@@ -553,6 +595,63 @@ mod tests {
         .settings();
         assert_eq!(settings.len(), 1);
         assert_eq!(settings["tick_interval_ms"], "100");
+    }
+
+    #[test]
+    fn information_holds_commentary_of_any_shape_and_none_of_it_is_a_key() {
+        let (settings, complaints) = document(
+            r#"{
+                "information": {
+                    "what": "the file check is this client's, not the reference's",
+                    "measured": "a live client, 2026-10-26, build 39112",
+                    "captures": ["gwps/world/load-stream.log", "client/feature/travel"],
+                    "how_many": 2,
+                    "nested": {"deeper": {"still": "not a key"}}
+                },
+                "request": {"hex": "01 00"}
+            }"#,
+        )
+        .settings();
+
+        assert!(complaints.is_empty(), "{complaints:?}");
+        assert_eq!(settings.len(), 1, "only 'request' is a key");
+        assert_eq!(settings["request"], "01 00");
+        assert!(!settings.keys().any(|key| key.starts_with("information")));
+    }
+
+    #[test]
+    fn information_sits_inside_a_section_and_beside_a_value_too() {
+        let (settings, complaints) = document(
+            r#"{
+                "Portal": {
+                    "information": "the client speaks plain HTTP to localhost:6601",
+                    "Enable": true
+                },
+                "RealmServerPort": {
+                    "value": 6112,
+                    "information": {"not": ["a", "key"]}
+                }
+            }"#,
+        )
+        .settings();
+
+        assert!(complaints.is_empty(), "{complaints:?}");
+        assert_eq!(settings["Portal.Enable"], "1");
+        assert_eq!(settings["RealmServerPort"], "6112");
+        assert_eq!(settings.len(), 2);
+    }
+
+    #[test]
+    fn a_record_may_carry_commentary_and_it_is_not_a_field() {
+        let document = document(
+            r#"{"accounts": [
+                 {"user": "one@example.com", "user_id": "U", "token": "T",
+                  "information": {"who": "the name this machine types"}}
+               ]}"#,
+        );
+        let records = document.records("accounts").unwrap();
+        assert_eq!(records[0].required("user").unwrap(), "one@example.com");
+        assert_eq!(records[0].text("information").unwrap(), None, "not a field");
     }
 
     #[test]
