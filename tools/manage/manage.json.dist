@@ -1,0 +1,75 @@
+{
+  "note": "manage.json - the administration tool's own configuration. The tool reads and writes the login and character databases and the content files; it is not a server and no client talks to it.",
+
+  "information": {
+    "what this program is for": "everything an operator changes without playing: accounts (create, delete, the EULA version), characters and their settings, the world list, the content files, and what schema has been applied.",
+    "why it is not part of a server program": "the two server programs serve clients, and a client-facing listener must not carry operator power. This is a third binary in tools/, and neither server knows it exists.",
+    "where it writes": "rows in kryta_login and kryta_characters, and the JSON content files. A program's own settings file is shown and validated, never rewritten."
+  },
+
+  "Bind": {
+    "value": "127.0.0.1",
+    "doc": "The address the page is served on. Loopback by default: the tool has no authorisation model beyond the token below, and nothing outside this machine should reach it."
+  },
+
+  "Port": {
+    "value": 6602,
+    "doc": "The port the page is served on. Beside the portal's 6601 and away from the two server ports."
+  },
+
+  "Token": {
+    "value": "",
+    "doc": "Empty allows every request from this machine, which is the default for a local tool. A token makes the tool require it: ?token=<value> on the first request, kept in a cookie after that."
+  },
+
+  "LoginDatabaseInfo": {
+    "value": "",
+    "doc": "The login database, in the reference's shape: host;port;user;password;database. Empty refuses to start - a tool that cannot say which database it changes changes nothing."
+  },
+
+  "LoginDatabase": {
+    "WorkerThreads": {
+      "value": 1,
+      "doc": "Asynchronous connections in the pool."
+    },
+    "SynchThreads": {
+      "value": 1,
+      "doc": "Synchronous connections in the pool."
+    }
+  },
+
+  "CharacterDatabaseInfo": {
+    "value": "",
+    "doc": "The character database, in the same shape. Empty leaves the character pages switched off rather than failing every request."
+  },
+
+  "CharacterDatabase": {
+    "WorkerThreads": {
+      "value": 1,
+      "doc": "Asynchronous connections in the pool."
+    },
+    "SynchThreads": {
+      "value": 1,
+      "doc": "Synchronous connections in the pool."
+    }
+  },
+
+  "LogsDir": {
+    "value": "",
+    "doc": "Where the appender writes. Empty means the working directory."
+  },
+
+  "Appender": {
+    "Console": {
+      "value": [1, 4, 0, "1 9 3 6 5 8"],
+      "doc": "Type, level, flags, then the type's own fields. Type 1 is the console and its last field is the colour list for fatal, error, warn, info, debug, trace."
+    }
+  },
+
+  "Logger": {
+    "root": {
+      "value": [4, "Console"],
+      "doc": "Level, then appender names."
+    }
+  }
+}

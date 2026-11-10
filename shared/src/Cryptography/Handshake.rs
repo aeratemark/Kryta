@@ -152,6 +152,14 @@ pub fn server_seed(master: &[u8; MASTER_SECRET_LEN], shared: &[u8; PUBLIC_LEN]) 
 /// Both conversations draw one per connection. A machine with no entropy gets zeros and a complaint
 /// from the caller: the protocol cannot tell a zero master from a real one, so it is spoken aloud
 /// rather than hidden.
+/// Fill a buffer from the operating system's entropy.
+///
+/// One call, so every caller that needs a random identifier or secret draws from the same place.
+pub fn random_into(bytes: &mut [u8]) -> Result<(), String> {
+    getrandom::getrandom(bytes).map_err(|error| format!("no entropy: {error}"))
+}
+
+/// The 20-byte master secret one connection draws, from the operating system's entropy.
 pub fn random_master() -> Result<[u8; MASTER_SECRET_LEN], String> {
     let mut master = [0u8; MASTER_SECRET_LEN];
     getrandom::getrandom(&mut master).map_err(|error| format!("no entropy: {error}"))?;

@@ -1,0 +1,365 @@
+//! `kryta-manage`: the administration tool - every piece of game data an operator changes, on one page.
+//!
+//! It is not a server. No client talks to it, it serves no game protocol, and neither server program
+//! knows it exists. What it does is read and write the state the two programs already keep: rows in the
+//! login and character databases, and the JSON content files. The data access is the nouns' own code
+//! (`game::accounts`, `game::characters`), so what this page changes is exactly what the server reads.
+//!
+//! Why a page rather than SQL by hand: the state is spread over two databases and four content files,
+//! and a wrong `UPDATE` against a live account is not something a person should be doing from memory.
+//!
+//! Settings are in `manage.json` (`docs/port/05-tooling.md`); the tool refuses to start without a
+//! database to point at.
+
+mod pages;
+
+use std::sync::{Arc, Mutex};
+
+use common::configuration::{Config, Policy};
+use common::logging::{Log, LogLevel};
+use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
+use shared::network::http::{HttpError, Request, Response, read_request, write_response};
+use shared::network::socket::{Session, SessionFuture, SessionIo};
+use tokio::net::TcpListener;
+
+/// What the tool serves from: the account table, and the token a request must carry when one is set.
+pub struct Manage {
+    accounts: Arc<game::accounts::DatabaseAccounts>,
+    token: Option<String>,
+    log: Log,
+}
+
+impl Manage {
+    /// One page, answered.
+    fn answer(&self, request: &Request) -> Response {
+        if !self.authorised(request) {
+            return Response::html(401, pages::unauthorised());
+        }
+
+        match (request.method.as_str(), request.path.as_str()) {
+            ("GET", "/") => pages::dashboard(self),
+            ("GET", "/accounts") => pages::accounts(self),
+            ("POST", "/accounts/eula") => self.set_eula(request),
+            ("POST", "/accounts/create") => self.create(request),
+            ("POST", "/accounts/delete") => self.delete(request),
+            ("GET", "/health") => Response::text(200, "ok\n"),
+            (_, path) => Response::html(404, pages::missing(path)),
+        }
+    }
+
+    /// Whether a request may be answered.
+    ///
+    /// With no token configured, every request from this machine is allowed and nothing else: the page
+    /// binds loopback, and a tool an operator starts is meant to be usable. With a token, the request
+    /// carries it as `?token=` or as the `auth` cookie.
+    fn authorised(&self, request: &Request) -> bool {
+        let Some(expected) = self.token.as_deref() else {
+            return true;
+        };
+        if expected.is_empty() {
+            return true;
+        }
+        if request.query("token") == Some(expected) {
+            return true;
+        }
+        request
+            .header("cookie")
+            .map(|cookies| {
+                cookies
+                    .split(';')
+                    .any(|cookie| cookie.trim() == format!("auth={expected}"))
+            })
+            .unwrap_or(false)
+    }
+
+    fn set_eula(&self, request: &Request) -> Response {
+        let form = form_fields(&request.body_text());
+        let Some(username) = form.get("username") else {
+            return Response::html(400, pages::message("A request with no account name."));
+        };
+        let version: i64 = match form.get("version").map(|value| value.parse()) {
+            Some(Ok(version)) => version,
+            _ => 0,
+        };
+        match self.accounts.set_eula(username, version) {
+            Ok(true) => {
+                self.say(format!("{username}: the EULA version is now {version}"));
+                pages::redirect("/accounts")
+            }
+            Ok(false) => Response::html(
+                404,
+                pages::message(&format!("No account is called {username}.")),
+            ),
+            Err(error) => Response::html(500, pages::message(&format!("The account table said: {error}"))),
+        }
+    }
+
+    fn create(&self, request: &Request) -> Response {
+        let form = form_fields(&request.body_text());
+        let Some(username) = form.get("username") else {
+            return Response::html(400, pages::message("A request with no account name."));
+        };
+        let user_id = form
+            .get("user_id")
+            .cloned()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| format!("00000000-0000-0000-0000-{:012}", random_u64() % 1_000_000_000_000));
+        let token = form
+            .get("token")
+            .cloned()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| format!("00000000-0000-0000-0000-{:012}", random_u64() % 1_000_000_000_000));
+        match self.accounts.create(username, &user_id, &token) {
+            Ok(true) => {
+                self.say(format!("{username}: created"));
+                pages::redirect("/accounts")
+            }
+            Ok(false) => Response::html(
+                409,
+                pages::message(&format!("An account is already called {username}.")),
+            ),
+            Err(error) => Response::html(500, pages::message(&format!("The account table said: {error}"))),
+        }
+    }
+
+    fn delete(&self, request: &Request) -> Response {
+        let form = form_fields(&request.body_text());
+        let Some(username) = form.get("username") else {
+            return Response::html(400, pages::message("A request with no account name."));
+        };
+        match self.accounts.delete(username) {
+            Ok(true) => {
+                self.say(format!("{username}: removed (its characters are untouched)"));
+                pages::redirect("/accounts")
+            }
+            Ok(false) => Response::html(
+                404,
+                pages::message(&format!("No account is called {username}.")),
+            ),
+            Err(error) => Response::html(500, pages::message(&format!("The account table said: {error}"))),
+        }
+    }
+
+    /// The accounts, for a page that lists them.
+    pub fn list_accounts(&self) -> Result<Vec<game::accounts::Account>, String> {
+        self.accounts.list()
+    }
+
+    fn say(&self, text: impl Into<String>) {
+        self.log.out(LogLevel::Info, "manage", text);
+    }
+}
+
+/// One connection to the tool.
+pub struct ManageSession {
+    manage: Arc<Manage>,
+}
+
+impl ManageSession {
+    /// Answer one connection: read a request, answer it, close.
+    pub async fn run(self, mut io: SessionIo) {
+        let request = match read_request(&mut io).await {
+            Ok(request) => request,
+            Err(HttpError::Incomplete) => {
+                let _ = io.close().await;
+                return;
+            }
+            Err(error) => {
+                let _ = write_response(
+                    &mut io,
+                    &Response::text(400, format!("a request was expected: {error}\\n")),
+                )
+                .await;
+                let _ = io.close().await;
+                return;
+            }
+        };
+
+        self.manage.say(format!("{} {}", request.method, request.path));
+        let response = self.manage.answer(&request);
+        let _ = write_response(&mut io, &response).await;
+        let _ = io.close().await;
+    }
+}
+
+impl Session for ManageSession {
+    fn run(self: Box<Self>, mut io: SessionIo) -> SessionFuture {
+        Box::pin(async move {
+            let request = match read_request(&mut io).await {
+                Ok(request) => request,
+                Err(HttpError::Incomplete) => {
+                    let _ = io.close().await;
+                    return;
+                }
+                Err(error) => {
+                    let _ = write_response(
+                        &mut io,
+                        &Response::text(400, format!("a request was expected: {error}\n")),
+                    )
+                    .await;
+                    let _ = io.close().await;
+                    return;
+                }
+            };
+
+            self.manage.say(format!("{} {} ->", request.method, request.path));
+            let response = self.manage.answer(&request);
+            let _ = write_response(&mut io, &response).await;
+            let _ = io.close().await;
+        })
+    }
+}
+
+/// The fields of a URL-encoded form body.
+fn form_fields(body: &str) -> std::collections::HashMap<String, String> {
+    body.split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .map(|(key, value)| (unescape(key), unescape(value)))
+        .collect()
+}
+
+/// Decode one URL-encoded field: `+` is a space, and `%XX` is a byte.
+fn unescape(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                out.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).unwrap_or("");
+                match u8::from_str_radix(hex, 16) {
+                    Ok(byte) => {
+                        out.push(byte);
+                        index += 3;
+                    }
+                    Err(_) => {
+                        out.push(bytes[index]);
+                        index += 1;
+                    }
+                }
+            }
+            byte => {
+                out.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Some entropy for an identifier a request did not state.
+fn random_u64() -> u64 {
+    let mut bytes = [0u8; 8];
+    if getrandom(&mut bytes).is_err() {
+        return 1;
+    }
+    u64::from_le_bytes(bytes)
+}
+
+/// The operating system's entropy, through the same call the servers use.
+fn getrandom(bytes: &mut [u8]) -> Result<(), ()> {
+    shared::cryptography::handshake::random_into(bytes).map_err(|_| ())
+}
+
+fn main() -> std::process::ExitCode {
+    let mut config_path = std::path::PathBuf::from("tools/manage/manage.json");
+    let mut arguments = std::env::args().skip(1);
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "-c" | "--config" => match arguments.next() {
+                Some(path) => config_path = std::path::PathBuf::from(path),
+                None => {
+                    eprintln!("-c needs a path");
+                    return std::process::ExitCode::FAILURE;
+                }
+            },
+            other => {
+                eprintln!("unknown argument: {other}");
+                return std::process::ExitCode::FAILURE;
+            }
+        }
+    }
+
+    match run(&config_path) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("kryta-manage: {error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run(config_path: &std::path::Path) -> Result<(), String> {
+    let mut config = Config::load_json(config_path, false, Policy::default())
+        .map_err(|error| error.to_string())?;
+
+    let log = Log::new();
+    log.initialize(&config).map_err(|error| error.to_string())?;
+    log.out(
+        LogLevel::Info,
+        "manage",
+        format!("kryta-manage reading {}", config_path.display()),
+    );
+
+    let (bind, _) = config.value_string("Bind", "127.0.0.1").map_err(|error| error.to_string())?;
+    let (port, _) = config.value::<u16>("Port", 6602).map_err(|error| error.to_string())?;
+    let (token, _) = config.value_string("Token", "").map_err(|error| error.to_string())?;
+    config.mark_critical("LoginDatabaseInfo");
+    let settings = read_settings(&config, DatabaseKind::Login)?;
+    let mut pool = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log)?;
+    pool.ping()
+        .map_err(|error| format!("the login database does not answer: {error}"))?;
+    let accounts = Arc::new(game::accounts::DatabaseAccounts::new(
+        Arc::new(Mutex::new(pool)),
+        log.clone(),
+    ));
+
+    let manage = Arc::new(Manage {
+        accounts,
+        token: Some(token),
+        log: log.clone(),
+    });
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    runtime.block_on(async move {
+        let listener = TcpListener::bind(format!("{bind}:{port}"))
+            .await
+            .map_err(|error| format!("cannot listen on {bind}:{port}: {error}"))?;
+        log.out(
+            LogLevel::Info,
+            "manage",
+            format!("READY: http://{bind}:{port}/ - the administration tool"),
+        );
+
+        loop {
+            let (stream, peer) = match listener.accept().await {
+                Ok(accepted) => accepted,
+                Err(error) => {
+                    log.out(
+                        LogLevel::Warn,
+                        "manage",
+                        format!("a connection could not be accepted: {error}"),
+                    );
+                    continue;
+                }
+            };
+            let manage = Arc::clone(&manage);
+            let log = log.clone();
+            // One connection at a time, on the current thread: an operator's page is not a load.
+            let session = ManageSession {
+                manage: Arc::clone(&manage),
+            };
+            let io = SessionIo::new(stream);
+            session.run(io).await;
+            log.out(LogLevel::Debug, "manage", format!("{peer} closed"));
+        }
+    })
+}

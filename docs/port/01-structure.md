@@ -117,6 +117,7 @@ Updated as stages land, because this is a statement of today and not of intent.
 | `scripts/` | the hook registry content is written against: a loader, `Initialize`, and the count of what was registered. Nothing is registered yet, and the log says so - that is the result, not a placeholder |
 | `game/World/` | the world a program represents: its id, and the maps it can put a client in, loaded from `data/maps.json` at `SetInitialWorldSettings` |
 | `game/Server/` | the gameplay connection: the 64-byte version message (`Protocol/`), the instance and item families (`Packets/`), `WorldSession` (the exchange, the creation block and the confirm) and `WorldSocketMgr` (the listener) |
+| `tools/manage/` | the administration tool: one page over the accounts, the characters, the worlds and the content files, served on loopback - a third binary, not a third server (`docs/decisions/0008-administration-tool.md`) |
 | `game/Creation/` | the creation screen's content: the reference's six bags, the items it creates before a choice, the 32 (campaign, profession) sets, and the player-data block built from them; the data is `data/inventory.json` and `data/equipment.json`, imported from its rows by `tools/import-creation-inventory.py` |
 | `modules/`, the rest of `game/` | not started |
 

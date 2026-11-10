@@ -30,6 +30,34 @@ Two consequences:
 | `tools/adapt-protocol-table.py` | moved the ported message table into `game/src/Server/Protocol/Tables.rs`, once | nothing; it is the record of the move | ASURA `crates/asura-protocol/src/packets.rs` |
 | `tools/import-creation-inventory.py` | imported the bags, items and profession sets into `data/*.json`, once | a checkout of ASURA to read | ASURA `state/inventory/seed.rs` and `default_equipment.rs` |
 
+## The administration tool
+
+```powershell
+copy tools\manage\manage.json.dist tools\manage\manage.json   # then state the two database strings
+cargo run -p kryta-manage -- -c tools\manage\manage.json       # http://127.0.0.1:6602/
+```
+
+`tools/manage/` is the third binary: one page over every piece of game data an operator changes. It is
+not a server - no client talks to it, it serves no game protocol, and neither server program knows it
+exists (`docs/decisions/0008-administration-tool.md`). It links the same libraries the servers link and
+reaches the data through the nouns' own repositories, so what a page writes is what a server reads.
+
+| page | is | state |
+|---|---|---|
+| `/` | what exists, and how much of it | accounts, with how many accepted the EULA |
+| `/accounts` | the rows the login reads: create, remove, and set the EULA version | done |
+| `/characters` | a character's settings, the columns the client sees | next |
+| `/worlds` | the realm list and `data/realms.json` | next |
+| `/content` | the maps, inventories and profession sets, validated before a write | next |
+| `/schema` | what the updater has applied | next |
+
+Proved end to end on this machine: the page lists both accounts, `POST /accounts/eula` set a version and
+the row read back as `version 26`, `POST /accounts/create` wrote a row and `POST /accounts/delete` removed
+it, each answering a redirect to the list.
+
+The EULA itself is a column now (`data/sql/base/db_auth/account_eula.sql`): the version an account
+accepted, or 0 for none. The auth program's answer reports it, so a client that has accepted stops asking.
+
 ## Building and running the client
 
 ```powershell

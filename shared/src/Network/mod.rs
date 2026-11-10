@@ -11,6 +11,8 @@
 
 #[path = "AsyncAcceptor.rs"]
 pub mod async_acceptor;
+#[path = "Http.rs"]
+pub mod http;
 #[path = "NetworkThread.rs"]
 pub mod network_thread;
 #[path = "Relay.rs"]
@@ -21,6 +23,7 @@ pub mod socket;
 pub mod socket_mgr;
 
 pub use async_acceptor::AsyncAcceptor;
+pub use http::{HttpError, MAX_REQUEST_BYTES, Request, Response, read_request, write_response};
 pub use network_thread::{NetworkThread, NetworkThreadHandle};
 pub use relay::{RelayError, Relayed};
 pub use socket::{Session, SessionFactory, SessionFuture, SessionIo};

@@ -83,6 +83,7 @@ Configuration, and nothing else:
 | `authserver/authserver.json` | the auth program's own configuration | `authserver`, `-c` |
 | `worldserver/worldserver.json` | the game program's own configuration | `worldserver`, `-c` |
 | `data/realms.json` | the worlds a login may send a player to, merged over the `realmlist` table | `authserver`, `WorldsFile` |
+| `tools/manage/manage.json` | the administration tool's own configuration: bind, port, token, the two database strings | `kryta-manage`, `-c` |
 
 The `.dist` files are committed; the live ones are not, because they hold a database password. Copy
 one, edit it, keep it.

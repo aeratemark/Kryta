@@ -18,3 +18,4 @@
 
 # The reference's client archive is never committed
 *.dat
+tools/manage/manage.json

@@ -21,6 +21,9 @@ members = [
   "scripts",
   "authserver",
   "worldserver",
+  # The administration tool: an operator's page, not a server. It links the same libraries the two
+  # programs do, so what it writes is what they read.
+  "tools/manage",
 ]
 
 [workspace.package]

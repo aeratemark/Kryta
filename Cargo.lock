@@ -331,6 +331,7 @@ dependencies = [
  "common",
  "database",
  "getrandom 0.2.17",
+ "postgres",
  "serde_json",
  "shared",
 ]
@@ -425,6 +426,17 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "kryta-manage"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "database",
+ "game",
+ "shared",
+ "tokio",
 ]
 
 [[package]]
@@ -883,7 +895,19 @@ dependencies = [
  "mio",
  "pin-project-lite",
  "socket2",
+ "tokio-macros",
  "windows-sys",
+]
+
+[[package]]
+name = "tokio-macros"
+version = "2.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
 ]
 
 [[package]]

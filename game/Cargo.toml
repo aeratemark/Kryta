@@ -14,6 +14,9 @@ database = { path = "../database" }
 shared = { path = "../shared" }
 # The portal's session and token identifiers come from the operating system's entropy.
 getrandom = "0.2"
+# A query's rows are read as postgres::Row, which is the type the pool answers with: the
+# account repository beside this crate's other nouns reads rows the same way the programs do.
+postgres = "0.19"
 
 [dev-dependencies]
 # The framing test reads a recorded wire session, which is JSONL.

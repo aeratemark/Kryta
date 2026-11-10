@@ -1,0 +1,22 @@
+[package]
+name = "kryta-manage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "kryta-manage"
+path = "src/main.rs"
+
+[dependencies]
+# The same libraries the programs link: the tool reads the same rows through the same pool and the
+# same nouns, so there is one implementation of "what an account is" in the tree, not two.
+common = { path = "../../common" }
+database = { path = "../../database" }
+game = { path = "../../game" }
+shared = { path = "../../shared" }
+tokio = { version = "1", features = ["rt", "net", "macros"] }
