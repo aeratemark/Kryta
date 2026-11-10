@@ -106,8 +106,11 @@ Updated as stages land, because this is a statement of today and not of intent.
 | the portal | the four endpoints served over HTTP on 6601 by the auth program, answering from the login database's `account` table; `game/src/Portal/`, `authserver/src/Server/accounts.rs`, `docs/decisions/0003-portal-host.md`, `0006-accounts-are-rows.md` |
 | the front door | a gameplay connection that arrives on the auth port is read for the world it names (`game/src/Server/Protocol/`), copied to that world's address from the world list (`shared/src/Network/Relay.rs`), and the world's answer carried back. A world that does not answer closes the client within 3 s rather than leaving it waiting; `authserver/src/Server/front_door.rs` |
 | the account table | `account` in `kryta_login`: the login name the client types, and the pair the portal issued for it. A name it does not hold is the reference's own `400 who are you?`. Rows are inserted by an operator - creating an account is not built yet |
-| `worldserver/` | stages 1 to 5 - config, log, PID file, and its two databases opened, pinged and brought to their (still empty) schema with their pools reported; stops at the worker threads |
-| `game/`, `scripts/`, `modules/` | not started |
+| `worldserver/` | stages 1 to 9 - config, log, PID file, the script manager (0 scripts, 0 hooks registered), its two databases opened and pinged, the map catalogue loaded (one map: the creation instance), and its listener on `BindIP`:`WorldServerPort` as world `RealmID` |
+| `scripts/` | the hook registry content is written against: a loader, `Initialize`, and the count of what was registered. Nothing is registered yet, and the log says so - that is the result, not a placeholder |
+| `game/World/` | the world a program represents: its id, and the maps it can put a client in, loaded from `data/maps.json` at `SetInitialWorldSettings` |
+| `game/Server/` | the gameplay connection: the 64-byte version message (`Protocol/`), the instance family (`Packets/`), `WorldSession` (the exchange and the creation block) and `WorldSocketMgr` (the listener) |
+| `modules/`, the rest of `game/` | not started |
 
 What "done" means here is narrower than a finished server: it means the stage behaves as the
 reference behaves and this tree's own tests or a real run prove it. `docs/port/02-wire.md` says what
@@ -148,12 +151,14 @@ every message in both directions is the arrangement this project exists to avoid
 ## What is next, and what stops it
 
 A client today logs in, is shown an empty character list, accepts the EULA, and asks for the
-character-creation instance; then it dials the gameplay connection at the address it was launched
-with, and nothing can answer it. In order:
+character-creation instance. Its gameplay connection now reaches the world: the version message, the
+seed exchange and the two-message creation block all land. What is left is the creation screen's own
+conversation. In order:
 
 | next | why it is next | what stops it |
 |---|---|---|
 | the front door (done) - `00 05 0C 00` on 6112 is copied to the world it names | measured: this client ignores the address it is handed, so the gameplay connection arrives where the login did (`docs/decisions/0004`) | nothing; it landed |
-| the world program's listener (`game/Server/`: `WorldSocketMgr`, `WorldSocket`, `WorldSession`) | it is the only thing that can answer a gameplay connection | the reference starts `StartWorldNetwork` after `sWorld->SetInitialWorldSettings`, and the world program still stops at its databases - stages 5 to 8 must land first, with an empty content tree that reports zero maps |
-| the gameplay connection's protocol: the 64-byte version message, the token pair the front door issued, the seed exchange, then the creation instance's load block | the creation screen cannot progress without it | a travel has to be recorded for the world to check, which the front door brings |
-| content: the creation instance first (no geometry), then one outpost with a map blob, then spawns and the `Gw.dat` reader (`game/Pack/`) | the world serves maps, and has none | `Gw.dat` reading is unbuilt |
+| the world's listener and the creation block (done) - `WorldSocketMgr`, `WorldSession`, `0x017C` + `0x0189` | the creation screen cannot show without them | nothing; it landed |
+| the creation screen's conversation: the client's asks (`0x8089` player, `0x808A` armors, `0x8060` profession, `0x808B` confirm) and the player-data block they are answered with | the screen is drawn, then asks what to draw: professions, campaign, the starting equipment | the block is content - a profession's default equipment and the inventory framing - and none of it exists in this tree |
+| a real map: an outpost with its map blob, spawns and the instance table | the creation screen's confirm needs somewhere to put the character, and nothing else can be entered without it | `Gw.dat` reading (`game/Pack/`) is unbuilt |
+

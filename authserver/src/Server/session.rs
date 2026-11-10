@@ -24,9 +24,8 @@
 //! measurement of it says the client dials the address it was launched with instead.
 
 use common::logging::{Log, LogLevel};
+use shared::cryptography::AuthCrypt;
 use shared::network::socket::{Session, SessionFuture, SessionIo};
-
-use common::cryptography::Arc4;
 
 use crate::authentication::{ConnectionKind, PORTAL_ACCOUNT_LOGIN};
 use crate::server::file_check::FileCheck;
@@ -331,12 +330,10 @@ impl AuthSession {
         );
 
         // Everything from here is scrambled with a key both sides derive from the master, and the
-        // cipher's position carries across reads: a running stream, not one per message.
+        // cipher's position carries across reads: a running stream, not one per message. One cipher
+        // per direction, which is what `AuthCrypt` is.
         let key = handshake::derive_key(&self.master);
-        let mut decrypt = Arc4::new(&key);
-        // The outbound stream starts at its own position zero, keyed the same way: one cipher per
-        // direction, not one cipher shared.
-        let mut encrypt = Arc4::new(&key);
+        let mut crypt = AuthCrypt::new(&key);
 
         // The reference answers the seed with two messages before the client asks for anything: the
         // session info and a heartbeat. A client that does not get them waits and then gives up -
@@ -349,7 +346,7 @@ impl AuthSession {
             );
         }
         let mut greeting = crate::server::login_reply::greeting(u32::from_le_bytes(salt));
-        encrypt.apply(&mut greeting);
+        crypt.encrypt(&mut greeting);
         match io.write_all(&greeting).await {
             Ok(()) => self.say(
                 LogLevel::Info,
@@ -407,7 +404,7 @@ impl AuthSession {
                         }
 
                         if !self
-                            .answer(io, peer, header, body.as_slice(), messages, &mut encrypt)
+                            .answer(io, peer, header, body.as_slice(), messages, &mut crypt)
                             .await
                         {
                             return;
@@ -437,7 +434,7 @@ impl AuthSession {
             };
 
             let mut plain = buffer[..count].to_vec();
-            decrypt.apply(&mut plain);
+            crypt.decrypt(&mut plain);
             pending.extend_from_slice(&plain);
         }
     }
@@ -450,10 +447,10 @@ impl AuthSession {
         header: u16,
         body: &[u8],
         number: usize,
-        encrypt: &mut Arc4,
+        crypt: &mut AuthCrypt,
     ) -> bool {
         match header {
-            PORTAL_ACCOUNT_LOGIN => self.answer_login(io, peer, body, encrypt).await,
+            PORTAL_ACCOUNT_LOGIN => self.answer_login(io, peer, body, crypt).await,
 
             ACCEPT_EULA => {
                 // Reference: the EULA handler records the version and sends nothing at all
@@ -474,7 +471,7 @@ impl AuthSession {
                 let request = request_id(body);
                 let answer =
                     crate::server::login_reply::request_response(request, crate::server::login_reply::GM_ERROR_NONE);
-                self.send(io, peer, encrypt, &[answer], "ask server response")
+                self.send(io, peer, crypt, &[answer], "ask server response")
                     .await
             }
 
@@ -492,7 +489,7 @@ impl AuthSession {
                 true
             }
 
-            REQUEST_GAME_INSTANCE => self.answer_game_instance(io, peer, body, encrypt).await,
+            REQUEST_GAME_INSTANCE => self.answer_game_instance(io, peer, body, crypt).await,
 
             DISCONNECT => {
                 // Reference: the disconnect handler ends the session. Seen in this tree's own log
@@ -527,7 +524,7 @@ impl AuthSession {
         &self,
         io: &mut SessionIo,
         peer: &str,
-        encrypt: &mut Arc4,
+        crypt: &mut AuthCrypt,
         frames: &[Vec<u8>],
         what: &str,
     ) -> bool {
@@ -535,7 +532,7 @@ impl AuthSession {
         for frame in frames {
             answer.extend_from_slice(frame);
         }
-        encrypt.apply(&mut answer);
+        crypt.encrypt(&mut answer);
 
         match io.write_all(&answer).await {
             Ok(()) => {
@@ -566,7 +563,7 @@ impl AuthSession {
         io: &mut SessionIo,
         peer: &str,
         body: &[u8],
-        encrypt: &mut Arc4,
+        crypt: &mut AuthCrypt,
     ) -> bool {
         let Some(login) = decode_portal_login(body) else {
             self.say(
@@ -601,7 +598,7 @@ impl AuthSession {
             0,
             &self.account_settings,
         );
-        self.send(io, peer, encrypt, &frames, "the login").await
+        self.send(io, peer, crypt, &frames, "the login").await
     }
 
     /// `AUTH_CMSG_REQUEST_GAME_INSTANCE` (`0x8029`): the client asks for a map, and this program
@@ -616,7 +613,7 @@ impl AuthSession {
         io: &mut SessionIo,
         peer: &str,
         body: &[u8],
-        encrypt: &mut Arc4,
+        crypt: &mut AuthCrypt,
     ) -> bool {
         let Some(request) = decode_game_instance(body) else {
             self.say(
@@ -657,7 +654,7 @@ impl AuthSession {
                 crate::server::login_reply::GM_ERROR_NETWORK_ERROR,
             );
             return self
-                .send(io, peer, encrypt, &[refusal], "the refusal")
+                .send(io, peer, crypt, &[refusal], "the refusal")
                 .await;
         };
 
@@ -693,7 +690,7 @@ impl AuthSession {
             ),
         );
 
-        self.send(io, peer, encrypt, &[info, response], "the game server info")
+        self.send(io, peer, crypt, &[info, response], "the game server info")
             .await
     }
 }

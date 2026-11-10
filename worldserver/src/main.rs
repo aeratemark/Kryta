@@ -143,6 +143,25 @@ fn run(args: &[String]) -> Result<(), String> {
         }
     }
 
+    // Stage 7. Reference: `sScriptMgr->SetScriptLoader(AddScripts)`, `SetModulesLoader`, then
+    // `sScriptMgr->Initialize()` with `Initializing Scripts...` printed before it. The reference
+    // starts its io-context threads (its `ThreadPool`) before this; that pool is this tree's socket
+    // layer, which owns its runtimes and is created with the listener, so the thread stage lands
+    // there and not as a stage of its own (`docs/port/01-structure.md`).
+    let mut scripts = scripts::ScriptMgr::new();
+    scripts.set_script_loader(scripts::add_scripts);
+    scripts.set_modules_loader(scripts::add_modules_scripts);
+    log.out(LogLevel::Info, "server.loading", "Initializing Scripts...");
+    let registered = scripts.initialize().map_err(|error| error.to_string())?;
+    log.out(
+        LogLevel::Info,
+        "server.worldserver",
+        format!(
+            "Scripts: {} script(s), {} hook(s) registered.",
+            registered.scripts, registered.hooks
+        ),
+    );
+
     // Stage 5. Reference: `StartDB()`, which opens the World and Character pools and runs the schema
     // updater on each - the stage the auth program has, twice.
     //
@@ -187,26 +206,121 @@ fn run(args: &[String]) -> Result<(), String> {
         opened.push(pool);
     }
 
+    // Stage 8. Reference: `sWorld->SetInitialWorldSettings()` - everything the game is made of,
+    // loaded before the listener opens. Here that is the map catalogue, and the log says how many
+    // maps it holds; zero would be a statement, and the block below only serves what is listed.
+    let (realm, notes) = config
+        .value::<u32>("RealmID", 1)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+
+    let mut world = game::world::World::new(realm);
+    let (maps_file, notes) = config
+        .value_string("MapsFile", "data/maps.json")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let maps = world.load_maps(&maps_file, &log)?;
+    log.out(
+        LogLevel::Info,
+        "server.worldserver",
+        format!(
+            "World of {} map(s) loaded from {maps_file}: {}.",
+            maps,
+            world
+                .maps()
+                .iter()
+                .map(|map| format!("{} (type {})", map.id, map.kind))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    );
+    let world = std::sync::Arc::new(world);
+
+    // Stage 9. Reference: `sWorldSocketMgr.StartWorldNetwork(*ioContext, worldListener, worldPort,
+    // networkThreads)` - the listener, on the address and port its own configuration names, with the
+    // number of network threads `Network.Threads` asks for.
+    let (bind, notes) = config
+        .value_string("BindIP", "0.0.0.0")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let (port, notes) = config
+        .value::<u16>("WorldServerPort", 8085)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let (network_threads, notes) = config
+        .value::<usize>("Network.Threads", 1)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let (trace, notes) = config
+        .value_bool("Network.Trace", false)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+
+    let sockets =
+        game::server::WorldSocketMgr::start(std::sync::Arc::clone(&world), log.clone(), &bind, port, network_threads, trace)
+            .map_err(|error| format!("the world listener could not start: {error}"))?;
+    let bound = sockets.port().unwrap_or(port);
+
+    log.out(
+        LogLevel::Info,
+        "server.worldserver",
+        format!(
+            "READY: listening on {bind}:{bound} as world {realm}; a client's gameplay connection is copied here by the login program."
+        ),
+    );
+
     // Stages after this one, in the reference's order, and none exists yet:
-    //   ThreadPool                    the worker threads, `ThreadPool` (2)
-    //   SetScriptLoader(AddScripts)   the script hooks, and the modules loader beside them
-    //   sScriptMgr->Initialize
-    //   sWorld->SetInitialWorldSettings
-    //   StartWorldNetwork             the listener, `BindIP` + `WorldServerPort` (8085),
-    //                                 `Network.Threads` (1)
     //   CliRunnable                   the console, when `Console.Enable`
     //   ACSoapThread                  the SOAP endpoint, when `SOAP.Enabled`, port 7878
     //   sScriptMgr->OnStartup
     // On shutdown: `sWorldSessionMgr->KickAll`, `sMapMgr->UnloadAll`,
     // `sScriptMgr->OnAfterUnloadAllMaps`, `sScriptMgr->OnShutdown`.
+    wait_for_shutdown();
+    log.out(
+        LogLevel::Info,
+        "server.worldserver",
+        "Stopping: the listener is closing.",
+    );
+    let accepted = sockets.accepted_count();
+    sockets.stop();
     for pool in &mut opened {
         pool.close();
     }
+    log.out(
+        LogLevel::Info,
+        "server.worldserver",
+        format!("Stopped. {accepted} connection(s) were accepted while it ran."),
+    );
     log.shutdown();
-    Err(format!(
-        "stage 6 'the worker threads' is not ported (reference: ThreadPool); dry run: {}",
-        config.is_dry_run()
-    ))
+    Ok(())
+}
+
+/// Block until the operator stops the program.
+///
+/// Reference: `ioContext->run()` returning when the signal handler stopped it. A Ctrl-C is that
+/// signal here, the same as the auth program's.
+fn wait_for_shutdown() {
+    let (sender, receiver) = std::sync::mpsc::channel::<()>();
+    if ctrlc::set_handler(move || {
+        let _ = sender.send(());
+    })
+    .is_err()
+    {
+        return;
+    }
+    let _ = receiver.recv();
 }
 
 /// Print a complaint at the severity the policy gave it.

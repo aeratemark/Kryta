@@ -5,9 +5,19 @@
 //! a program - `worldserver` starts it - which is why one process owns one listener and still keeps
 //! the network as a subsystem (`AGENTS.md`).
 //!
-//! Here now: `Protocol/`, with the first message this client sends on a gameplay connection. The
-//! world socket, session and manager arrive with the front door that hands them a connection
-//! (`docs/decisions/0004-gameplay-connections-arrive-at-the-front-door.md`).
+//! Here now: `Protocol/` (the gameplay connection's version message), `Packets/` (one file per
+//! message family - the instance family first), `WorldSession` (the conversation) and
+//! `WorldSocketMgr` (the listener). The world socket object itself, with its socket options and its
+//! packet queue, arrives with the map that needs them.
 
+#[path = "Packets/mod.rs"]
+pub mod packets;
 #[path = "Protocol/mod.rs"]
 pub mod protocol;
+#[path = "WorldSession.rs"]
+pub mod world_session;
+#[path = "WorldSocketMgr.rs"]
+pub mod world_socket_mgr;
+
+pub use world_session::WorldSession;
+pub use world_socket_mgr::WorldSocketMgr;

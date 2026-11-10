@@ -14,3 +14,9 @@ workspace = true
 tokio = { version = "1", features = ["rt", "net", "sync", "io-util", "time"] }
 common = { path = "../common" }
 database = { path = "../database" }
+# The key exchange raises a 512-bit number to a 511-bit exponent modulo a 512-bit prime, and both
+# conversations - the login's and the gameplay connection's - make the same exchange.
+num-bigint = "0.4"
+# The master secret is 20 bytes from the operating system's entropy, and a program draws it once per
+# connection.
+getrandom = "0.2"

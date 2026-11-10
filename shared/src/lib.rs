@@ -15,3 +15,5 @@ pub mod worlds;
 pub mod secrets;
 #[path = "DataStores/mod.rs"]
 pub mod data_stores;
+#[path = "Cryptography/mod.rs"]
+pub mod cryptography;

@@ -21,3 +21,5 @@ scripts = { path = "../scripts" }
 shared = { path = "../shared" }
 common = { path = "../common" }
 database = { path = "../database" }
+# The reference's signal handler, which is what its io loop returns on.
+ctrlc = "3"

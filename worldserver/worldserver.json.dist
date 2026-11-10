@@ -1,6 +1,37 @@
 {
   "note": "worldserver.json.dist - the game program's own configuration. Reference: src/server/apps/worldserver/worldserver.conf.dist, whose setting names these are; the format is this project's (docs/decisions/0005-json-configuration.md). One file per program: this program reads this file and no other. Only the settings the ported stages read are here - a setting arrives with the stage that reads it, so a key in this file is one the program actually uses.",
 
+  "RealmID": {
+    "value": 2,
+    "doc": "Which world this process is: the id a login hands a client as its map_token, and the id a realmlist row carries. A connection that names another world is closed."
+  },
+
+  "WorldServerPort": {
+    "value": 6113,
+    "doc": "Where gameplay connections are accepted. The login names this address and port in its 0x0009, and the front door copies a client's gameplay connection here."
+  },
+
+  "BindIP": {
+    "value": "127.0.0.1",
+    "doc": "The address the listener binds."
+  },
+
+  "Network": {
+    "Threads": {
+      "value": 1,
+      "doc": "Network threads serving accepted connections; a connection goes to the thread with the fewest already."
+    },
+    "Trace": {
+      "value": false,
+      "doc": "Every byte of every gameplay connection, in and out, at debug. It needs its logger: Logger.network.trace = 6,Console Server."
+    }
+  },
+
+  "MapsFile": {
+    "value": "data/maps.json",
+    "doc": "The maps this world can put a client in - a record list, read at start-up."
+  },
+
   "Log": {
     "EffectiveConfig": {
       "value": false,
