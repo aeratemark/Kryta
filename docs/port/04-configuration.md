@@ -1,26 +1,24 @@
-# Configuration: JSON, one reader, and what is left to move
+# Configuration: settings, in JSON, read by one handler
 
-A **configuration option** is something an operator chooses and shares. Those live in JSON, one file per
-program, read by one handler, `common/src/Configuration/Json.rs`. This file says what an option is and
-is not, how to write a file, where the files are, and which numbers are still constants and where they
-are going. `docs/decisions/0005-json-configuration.md` records why the format is JSON rather than the
+**A configuration file holds settings: the values that differ per operator.** That is the whole rule.
+Ask it before writing one file: would two operators running this build legitimately have different
+values? Yes - port, address, database connection, log level - then it is a setting and it belongs here.
+No - then it does not go in a file, and what it is instead is decided by where it already lives: a
+constant in the code that uses it if the client dictates it, a row in the database if a player made it.
+
+Three things this rule has settled the hard way:
+
+- `RealmServerPort`, `BindIP`, `LoginDatabaseInfo` differ per operator, so they are settings -
+  `authserver/authserver.json`, `worldserver/worldserver.json`.
+- An account differs per *person*, not per operator, so it is a row in `kryta_login`'s `account`
+  table. It was in a file once, and that was wrong (`docs/decisions/0006-accounts-are-rows.md`).
+- The file check's 21 and 32 bytes are the same for every operator running this client build, so they
+  are constants in `authserver/src/Server/file_check.rs`, naming the capture they came from. They were
+  a file once too, and that was the same mistake.
+
+The rest of this file: how a file is written, which files there are, and which settings still live in
+code. `docs/decisions/0005-json-configuration.md` records why the format is JSON rather than the
 reference's `Key = value`.
-
-## What is a configuration option, and what is not
-
-Three kinds of thing a server holds, and only the first is configuration. Confusing them is how a
-payload became a file and an account became a file, both of which had to be undone:
-
-| kind | is | example | lives |
-|---|---|---|---|
-| **configuration option** | what an operator chooses, edits and shares to run *their* server | `RealmServerPort`, `BindIP`, `LoginDatabaseInfo`, `Network.Trace`, `Logger.root`, a world's address | a JSON file: `authserver/authserver.json`, `worldserver/worldserver.json` |
-| **protocol payload / client fact** | what the client demands, byte for byte. Nobody chooses it; there is no second valid value for a given client build | the 21-byte file check and its 32-byte answer, the 591-byte account settings block, message sizes, the handshake's arithmetic | **code**, as a constant whose `doc` names the capture it came from, refreshed by rebuilding |
-| **state** | what people do | an account, a character, a session, a travel | **a row** in the database |
-
-A file is not a place for a payload because a payload has no choices in it, and a payload is not a
-configuration option however it is written - hex text in a JSON file is still a payload. This is what
-keeps the configuration small enough for one person to read and share.
-
 
 ## Writing a file
 
@@ -119,30 +117,21 @@ possible. Bytes are decoded by `common::utilities::hex_bytes`, the one decoder, 
 
 A file that holds **rows** is a record list and is not a set of keys: it is read as rows through the
 same reader (`Document::records`), so a single file can carry both a `note` and a list without either
-being squeezed into the other's shape. Nothing in the tree is a row list today - the world list is the
-next one, and it will merge with the `realmlist` table rather than replace it, because a world is a
-deployment and deployments are configuration.
+being squeezed into the other's shape. Nothing in the tree is a row list today.
 
-## What still belongs in a configuration file, and what does not
+## Settings that still live in code
 
-The earlier version of this section listed the protocol's own numbers - the handshake's arithmetic,
-message sizes, status codes, the login answer's literals - as things "moving to JSON, immutable". That
-was the same mistake in a slower form: those are client facts, not choices, so they are settled where
-they are. What genuinely remains is the opposite direction, options that live in code today:
+By the one rule, these differ per operator today but have no file to differ in yet:
 
-| what | where it is now | where it goes |
+| setting | where it is now | where it goes |
 |---|---|---|
-| the world list (today only a database table) | `realmlist` in `kryta_login` | `data/realms.json`, a file row overriding a database row of the same id: a world is a deployment, and deployments are configuration |
-| the database layer's own defaults - host, port, user, database names | `database/src/Database/mod.rs` | the program's own `.json`, where the connection string already is |
-| network thread counts, connection backlog, buffer sizes | `shared/src/Network/`, passed as parameters | each program's own `.json` - `Network.Threads` is already read; the rest arrive as options when a program needs to choose them |
+| the world list | `realmlist` in `kryta_login` | `data/realms.json`, a file row overriding a database row of the same id - a world's address is the operator's choice, so it is a setting, and today only the table can hold it |
+| the database layer's defaults - host, port, user, database names | `database/src/Database/mod.rs` | the program's own `.json`, beside the connection string that already overrides them |
+| network thread counts, connection backlog, buffer sizes | `shared/src/Network/`, passed as parameters | each program's own `.json` - `Network.Threads` is read already; the rest arrive when a program needs to choose them |
 
-And what is settled as code, so that it is not "pending" again: the handshake's prime, exponent and
-sizes (`handshake.rs`); the client's three connection headers (`Authentication/`); the auth
-conversation's message sizes and its replies' shapes (`stream.rs`, `login_reply.rs`); the login
-answer's literals and status codes; the file check and account settings payloads; the portal's
-endpoint paths and its XML answers.
-
-Two kinds of number are in code for a reason worth stating: the ones that are part of an *algorithm*
-(RC4's state, the key derivation's round constants and rotation widths, SHA-1's initial words) and the
-ones that are *structure* (a field's offset inside a layout the builder writes). Separating those from
-the code that uses them would let a file desynchronise the wire while every test still passed.
+Everything else in the code is not a setting and is not waiting for a file: the client dictates it
+(message sizes, status codes, the handshake's arithmetic, the file check and account settings
+payloads, the portal's endpoint paths) or it is structure (a field's offset in a layout its builder
+writes). Two exceptions stay in code even as settings go into files, and both would break the wire if
+separated: a number that is part of an algorithm - RC4's state, the key derivation's rounds and
+rotation widths, SHA-1's initial words - and a field's offset.
