@@ -103,7 +103,8 @@ Updated as stages land, because this is a statement of today and not of intent.
 | the message stream | a table of the client's nine auth messages, because no message carries its length: a read holding four messages is answered four times. A run of this client sent them as `0x8001`, `0x8002`, `0x8000` and `0x8023` in one 76-byte segment, each named with its size, its build number and its decrypted body in the log |
 | the rest of the login | the EULA (answered with nothing, as the reference does), the ask-response, the player status, and the request for a map, which is answered with the world's own address in `0x0009` and an `0x0003` behind it |
 | which address a client dials | **measured, 2026-11-10, build 39167**: the launch address, not the one it is handed. A listener on the named port accepted nothing and the gameplay connection arrived on the auth port 35 ms later. The auth program is therefore the front door and hands it to the world; `docs/decisions/0004-gameplay-connections-arrive-at-the-front-door.md` |
-| the portal | the four endpoints served over HTTP on 6601 by the auth program, with an account list in `data/accounts.json`; `game/src/Portal/`, `docs/decisions/0003-portal-host.md` |
+| the portal | the four endpoints served over HTTP on 6601 by the auth program, answering from the login database's `account` table; `game/src/Portal/`, `authserver/src/Server/accounts.rs`, `docs/decisions/0003-portal-host.md`, `0006-accounts-are-rows.md` |
+| the account table | `account` in `kryta_login`: the login name the client types, and the pair the portal issued for it. A name it does not hold is the reference's own `400 who are you?`. Rows are inserted by an operator - creating an account is not built yet |
 | `worldserver/` | stages 1 to 4 - config, log, PID file; stops at its databases; `b604814` |
 | `game/`, `scripts/`, `modules/` | not started |
 

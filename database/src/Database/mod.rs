@@ -19,7 +19,7 @@ pub mod connection;
 pub mod pool;
 
 pub use connection::Connection;
-pub use pool::DatabaseWorkerPool;
+pub use pool::{DatabaseWorkerPool, Param};
 
 /// One of the three databases a program can open.
 ///

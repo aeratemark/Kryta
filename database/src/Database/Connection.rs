@@ -123,6 +123,25 @@ impl Connection {
         Ok(rows)
     }
 
+    /// Run a query with parameters and answer its rows.
+    ///
+    /// Reference: `MySQLConnection::Query(PreparedStatement, ...)` - the reference's statements are
+    /// prepared and take their values as parameters, which is why nothing that arrived on a socket
+    /// is ever concatenated into SQL. The parameter list is `postgres`'s own.
+    pub fn query_with(
+        &mut self,
+        sql: &str,
+        params: &[&(dyn postgres::types::ToSql + Sync)],
+    ) -> Result<Vec<postgres::Row>, String> {
+        self.trace_statement("query", &one_line(sql));
+        let rows = self
+            .client
+            .query(sql, params)
+            .map_err(|error| format!("query failed: {error}"))?;
+        self.trace_statement("rows", &rows.len().to_string());
+        Ok(rows)
+    }
+
     /// Answer one value from a one-row, one-column query.
     pub fn query_scalar<T>(&mut self, sql: &str) -> Result<T, String>
     where

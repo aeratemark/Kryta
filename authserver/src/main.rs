@@ -263,6 +263,11 @@ fn run(args: &[String]) -> Result<(), String> {
         format!("World list: {loaded} world(s), refreshed every {update_delay} s."),
     );
 
+    // From here the pool is shared: the portal asks it who a login name is, from a network thread,
+    // on every login. Its synchronous connection is one connection, so the pool goes behind a lock -
+    // which is what the reference's own `DirectQuery` callers hold too.
+    let login = std::sync::Arc::new(std::sync::Mutex::new(login));
+
     if worlds.is_empty() {
         // Reference: the three reasons the reference prints before it exits 1.
         log.out(
@@ -328,15 +333,24 @@ fn run(args: &[String]) -> Result<(), String> {
             report(&note);
         }
 
-        let accounts = game::portal::FileAccounts::load("data/accounts.json")
-            .map_err(|error| format!("the portal's account file cannot be read: {error}"))?;
+        // The accounts are rows in the login database, not a file: they are the server's state, and
+        // an operator configures the server rather than its people (`docs/decisions/0006`).
+        let accounts = crate::server::DatabaseAccounts::new(
+            std::sync::Arc::clone(&login),
+            log.clone(),
+        );
+        let count = accounts.count().unwrap_or_else(|error| {
+            log.out(
+                LogLevel::Error,
+                "server.authserver",
+                format!("Cannot count the accounts: {error}"),
+            );
+            0
+        });
         log.out(
             LogLevel::Info,
             "server.authserver",
-            format!(
-                "Portal: {} account(s) from data/accounts.json, binding {portal_bind}.",
-                accounts.len()
-            ),
+            format!("Portal: {count} account(s) in the login database, binding {portal_bind}."),
         );
 
         let portal = std::sync::Arc::new(game::portal::Portal::new(accounts));
@@ -517,7 +531,14 @@ fn run(args: &[String]) -> Result<(), String> {
     if let Some(mut portal_sockets) = portal_sockets {
         portal_sockets.stop_network();
     }
-    login.close();
+    match login.lock() {
+        Ok(mut pool) => pool.close(),
+        Err(_) => log.out(
+            LogLevel::Error,
+            "server.authserver",
+            "the login database pool was poisoned; it closes when the process ends",
+        ),
+    }
     log.out(
         LogLevel::Info,
         "server.authserver",

@@ -21,15 +21,11 @@
 //! in".
 //!
 //! What this does not do: decide who an account is. Opening a session and answering an account's
-//! identity is [`Accounts`], supplied by the caller, because what an account *is* in this game is a
-//! decision this module has no business making.
+//! identity is [`Accounts`], supplied by the caller, because what an account *is* in this game is
+//! the login database's answer: a row, looked up by the program that owns the pool.
 
-#[path = "accounts.rs"]
-pub mod accounts;
 #[path = "serve.rs"]
 pub mod serve;
-
-pub use accounts::FileAccounts;
 
 use std::collections::HashMap;
 use std::sync::Mutex;

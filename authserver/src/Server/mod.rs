@@ -5,6 +5,8 @@
 
 #[path = "account_settings.rs"]
 pub mod account_settings;
+#[path = "accounts.rs"]
+pub mod accounts;
 #[path = "file_check.rs"]
 pub mod file_check;
 #[path = "handshake.rs"]
@@ -16,5 +18,6 @@ pub mod session;
 #[path = "stream.rs"]
 pub mod stream;
 
+pub use accounts::DatabaseAccounts;
 pub use file_check::FileCheck;
 pub use session::{AuthSession, GameServer};

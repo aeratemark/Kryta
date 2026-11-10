@@ -10,7 +10,7 @@
 //! - closing means closing the queue and then joining the threads, in that order, so nothing
 //!   queued is lost.
 
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{channel, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -18,10 +18,42 @@ use common::logging::Log;
 
 use super::{Connection, DatabaseKind, DatabaseSettings};
 
+/// One query parameter, owned so it can be handed to a worker thread.
+///
+/// Reference: the value bound to a prepared statement's placeholder. The variants are the types a
+/// statement in this tree binds: text for a name or an identifier, an integer for an id, a flag for
+/// a column that is `0` or `1`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Param {
+    /// A string, bound as text.
+    Text(String),
+    /// A number.
+    Integer(i64),
+    /// A flag.
+    Flag(bool),
+}
+
+impl Param {
+    fn as_sql(&self) -> &(dyn postgres::types::ToSql + Sync) {
+        match self {
+            Self::Text(text) => text,
+            Self::Integer(number) => number,
+            Self::Flag(flag) => flag,
+        }
+    }
+}
+
 /// One thing for a worker to do.
 enum Operation {
     /// Run a statement and forget the answer. The reference's one-way `Execute`.
     Execute(String),
+    /// Run a query and hand its rows back through a channel. The reference's `Query` with its
+    /// callback: the answer arrives on the worker's thread, and the caller waits for it there.
+    Query {
+        sql: String,
+        params: Vec<Param>,
+        reply: SyncSender<Result<Vec<postgres::Row>, String>>,
+    },
 }
 
 /// The pool for one logical database.
@@ -121,6 +153,22 @@ impl DatabaseWorkerPool {
                                     );
                                 }
                             }
+                            // Reference: the reference's worker runs the statement and calls back
+                            // with the result. Here the callback is a channel: the caller waits on
+                            // the receiving end, and a caller that has gone away is not an error.
+                            Operation::Query { sql, params, reply } => {
+                                let borrowed: Vec<&(dyn postgres::types::ToSql + Sync)> =
+                                    params.iter().map(Param::as_sql).collect();
+                                let result = connection.query_with(&sql, &borrowed);
+                                if let Err(error) = &result {
+                                    log.out(
+                                        common::logging::LogLevel::Error,
+                                        "sql.sql",
+                                        format!("{error}: {sql}"),
+                                    );
+                                }
+                                let _ = reply.send(result);
+                            }
                         }
                     }
                 })
@@ -173,6 +221,48 @@ impl DatabaseWorkerPool {
         self.synch.query(sql)
     }
 
+    /// Query on the pool's own connection, with parameters.
+    ///
+    /// Reference: `Query` on a prepared statement. A value that came off a socket goes here as a
+    /// parameter and never into the statement's text.
+    pub fn query_with(
+        &mut self,
+        sql: &str,
+        params: &[&(dyn postgres::types::ToSql + Sync)],
+    ) -> Result<Vec<postgres::Row>, String> {
+        self.synch.query_with(sql, params)
+    }
+
+    /// Hand a query to a worker and answer the channel its rows will arrive on.
+    ///
+    /// This is the form a *session* uses. The blocking client cannot be driven from inside the
+    /// socket layer's runtime - `postgres`'s synchronous wrapper starts a runtime of its own, and a
+    /// runtime inside a runtime panics, which takes the whole network thread with it - so the work
+    /// goes to a worker thread, which owns a connection and no runtime. The caller waits on the
+    /// channel; that wait is a plain blocking wait, which is what the reference's own callback does
+    /// by another name.
+    ///
+    /// Reference: `DatabaseWorkerPool::Query` with its result callback.
+    pub fn query_reply(
+        &self,
+        sql: impl Into<String>,
+        params: Vec<Param>,
+    ) -> Receiver<Result<Vec<postgres::Row>, String>> {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let operation = Operation::Query {
+            sql: sql.into(),
+            params,
+            reply: sender,
+        };
+        if let Some(queue) = self.queue.as_ref()
+            && queue.send(operation).is_err()
+        {
+            // Nothing was sent and the sender is gone: the receiver answers `RecvError`, which the
+            // caller reports as a pool that is shutting down.
+        }
+        receiver
+    }
+
     /// The pool's own synchronous connection.
     ///
     /// Reference: the reference's callers reach the pool's synchronous connection the same way -
@@ -206,8 +296,9 @@ impl DatabaseWorkerPool {
     /// Close the queue and wait for the workers.
     ///
     /// Reference: `DatabaseWorkerPool::Close`, which cancels the queue and then waits for the
-    /// threads, in that order.
-    pub fn close(mut self) {
+    /// threads, in that order. A `&mut self` rather than a move, because a pool a program shares
+    /// with a network thread is closed through the lock that guards it.
+    pub fn close(&mut self) {
         self.queue = None;
         for worker in self.workers.drain(..) {
             let _ = worker.join();

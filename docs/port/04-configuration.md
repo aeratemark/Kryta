@@ -83,15 +83,20 @@ key.
 | `worldserver/worldserver.json` | the game program's own configuration | `worldserver`, `-c` |
 | `data/file_check.json` | the 21-byte question and the 32-byte answer | `authserver/src/Server/file_check.rs` |
 | `data/account_settings.json` | the 591-byte block every login is answered with | `authserver/src/Server/account_settings.rs` |
-| `data/accounts.json` | who the portal says an account is - a record list | `game/src/Portal/accounts.rs` |
 | `data/sql/base/db_*/*.sql` | the schema and its updates | the database updater |
 
 The `.dist` files are committed; the live ones are not, because they hold a database password. Copy
 one, edit it, keep it.
 
-A file that holds **rows** - `accounts.json` today, worlds next - is a record list and is not a set
-of keys: it is read as rows through the same reader (`Document::records`), so a single file can carry
-both a `note` and a list without either being squeezed into the other's shape.
+A file that holds **rows** is a record list and is not a set of keys: it is read as rows through the
+same reader (`Document::records`), so a single file can carry both a `note` and a list without either
+being squeezed into the other's shape. Nothing in the tree is a row list today - the world list is
+the next one, and it will merge with the `realmlist` table rather than replace it.
+
+**Accounts are not in this list, and that is the line.** A login name and the identity pair it
+carries are *state*: rows in `kryta_login`'s `account` table, read on every login
+(`docs/decisions/0006-accounts-are-rows.md`). A file holds what an operator configures and shares; a
+table holds what people do.
 
 ## What is still a constant, and where it is going
 
@@ -108,7 +113,7 @@ moved the five files above. What remains, and the file each is moving to:
 | the answer's status codes | `authserver/src/Server/login_reply.rs` | `data/protocol/account.json`, `immutable` |
 | the error codes a refusal carries | `login_reply.rs`, `Portal/` | `data/protocol/account.json` |
 | the portal's endpoints and answers | `game/src/Portal/` | `data/portal.json` |
-| the world list (today only a database table) | `realmlist` in `kryta_login` | `data/realms.json`, a file row overriding a database row of the same id |
+| the world list (today only a database table) | `realmlist` in `kryta_login` | `data/realms.json`, a file row overriding a database row of the same id - a world is an operator's deployment, so it is configuration; an account is a person's, so it is a row |
 | the database layer's own defaults | `database/src/Database/mod.rs` | the program's own `.json` - already reachable, not yet read from there |
 | network thread counts and buffer sizes | `shared/src/Network/` | each program's own `.json` - already reachable (`Network.Threads` is read; the rest are parameters) |
 
