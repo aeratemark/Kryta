@@ -300,11 +300,10 @@ fn run(args: &[String]) -> Result<(), String> {
     // The session is the reference's `AuthSession`: it reads the client's version and its seed and
     // answers with the server's seed. What it does not do yet is anything after that point, because
     // everything there is scrambled with a key both sides derive and that derivation is not written.
-    // The file check is a value file: its bytes are the client's, and they change when the client's
-    // own files change, so they are read here rather than compiled in.
-    let file_check = FileCheck::load("data/file_check.json").map_err(|error| {
-        format!("the file check at data/file_check.json cannot be read: {error}")
-    })?;
+    // The file check is a protocol payload, not a configuration option: the client compares these
+    // bytes and nobody chooses them, so they are constants (`docs/port/04-configuration.md`).
+    let file_check = FileCheck::shipped()
+        .map_err(|error| format!("the file check's own constants do not decode: {error}"))?;
     log.out(
         LogLevel::Info,
         "server.authserver",
@@ -388,9 +387,15 @@ fn run(args: &[String]) -> Result<(), String> {
         portal_sockets = Some(sockets);
     }
 
-    // The 591-byte block every login is answered with: a copied payload, so a file.
-    let account_settings = crate::server::account_settings::load("data/account_settings.json")
-        .map_err(|error| format!("the account settings block cannot be read: {error}"))?;
+    // The 591-byte block every login is answered with: a protocol payload, so a constant.
+    let account_settings = crate::server::account_settings::block();
+    if account_settings.len() != crate::server::account_settings::LEN {
+        return Err(format!(
+            "the account settings block is {} bytes and the client needs {}, so it would desynchronise the connection",
+            account_settings.len(),
+            crate::server::account_settings::LEN
+        ));
+    }
     log.out(
         LogLevel::Info,
         "server.authserver",

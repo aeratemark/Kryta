@@ -1,8 +1,10 @@
 //! The file check: a fixed 21-byte question and a fixed 32-byte answer, before anything else.
 //!
 //! Reference for the shape: the reference has no equivalent - this is this client's own gate, and it
-//! is the reason `game/FileCheck/` exists in this tree's naming. The bytes are a value file,
-//! `data/file_check.json`, because they change when the client's files change.
+//! is the reason `game/FileCheck/` exists in this tree's naming. The bytes are a **protocol payload**
+//! rather than a configuration option: nobody chooses them, and the client compares them exactly. They
+//! are constants here for that reason (`docs/port/04-configuration.md`), refreshed by capturing what a
+//! live client accepts.
 //!
 //! What it is: on the file-server address the client asks which game files it should have, compares
 //! the whole reply, and treats a wrong or missing answer as fatal. The question is 21 bytes and the
@@ -14,16 +16,25 @@
 
 use std::fmt;
 
-use common::configuration::Config;
+/// The question, as a capture prints it.
+///
+/// Source: `ASURA/docs/reference/client-protocol.md` section 7, measured from this client.
+const REQUEST_HEX: &str = "01 00 00 00 00 f1 00 10 00 01 00 00 00 00 00 00 00 00 00 00 00";
 
-/// Why the file check could not be read.
+/// The answer, as a capture prints it.
+///
+/// Header `0x02F1`, length `0x0020`, then six `Gw.dat` file ids in tight consecutive order with a zero
+/// among them. The order is what a capture shows, not a rule; the ids are a client-build fact,
+/// refreshed by capturing the reply a live client accepts and never by arithmetic on these numbers.
+const ANSWER_HEX: &str =
+    "f1 02 20 00 ab f7 05 00 b4 f7 05 00 9c 43 05 00 b6 f7 05 00 b7 f7 05 00 00 00 00 00 b5 f7 05 00";
+
+/// Why the file check could not be built.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileCheckError {
-    /// The file could not be read.
-    Unreadable(String),
-    /// A value is missing, or is not an even number of hexadecimal digits.
+    /// A payload that is missing, or is not an even number of hexadecimal digits.
     BadValue {
-        /// Which key.
+        /// Which of the two.
         key: String,
         /// What was wrong with it.
         reason: String,
@@ -33,7 +44,6 @@ pub enum FileCheckError {
 impl fmt::Display for FileCheckError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unreadable(reason) => f.write_str(reason),
             Self::BadValue { key, reason } => write!(f, "'{key}' in the file check: {reason}"),
         }
     }
@@ -41,7 +51,7 @@ impl fmt::Display for FileCheckError {
 
 impl std::error::Error for FileCheckError {}
 
-/// The question and the answer, as the value file states them.
+/// The question and the answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileCheck {
     request: Vec<u8>,
@@ -49,37 +59,15 @@ pub struct FileCheck {
 }
 
 impl FileCheck {
-    /// Read the value file.
+    /// The file check this client demands.
     ///
-    /// A JSON object with two byte strings, `request` and `answer`, each written as the capture
-    /// reads it. Both are required: a file check with no question cannot recognise the client, and
-    /// one with no answer would close the socket the client is waiting on - which is the failure
+    /// Built from the two constants above: a file check with no question cannot recognise the client,
+    /// and one with no answer would close the socket the client is waiting on - which is the failure
     /// this exists to stop.
-    pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self, FileCheckError> {
-        let path = path.as_ref();
-        let config = Config::load_json(path, false, Default::default())
-            .map_err(|error| FileCheckError::Unreadable(error.to_string()))?;
-
-        let wanted = |key: &str| -> Result<Vec<u8>, FileCheckError> {
-            match config.bytes(key) {
-                Some(Ok(bytes)) => Ok(bytes),
-                Some(Err(reason)) => Err(FileCheckError::BadValue {
-                    key: key.to_string(),
-                    reason,
-                }),
-                // A key the file states badly is dropped by the reader with a complaint rather than
-                // an empty value, so a missing key and a malformed one both land here - and the
-                // complaint is what says which.
-                None => Err(FileCheckError::BadValue {
-                    key: key.to_string(),
-                    reason: complaints(&config),
-                }),
-            }
-        };
-
+    pub fn shipped() -> Result<Self, FileCheckError> {
         Ok(Self {
-            request: wanted("request")?,
-            answer: wanted("answer")?,
+            request: payload("request", REQUEST_HEX)?,
+            answer: payload("answer", ANSWER_HEX)?,
         })
     }
 
@@ -117,25 +105,12 @@ impl FileCheck {
     }
 }
 
-/// Read space- or comma-separated hexadecimal pairs.
-fn parse_hex(key: &str, value: &str) -> Result<Vec<u8>, FileCheckError> {
-    common::configuration::json::hex_bytes(value).map_err(|reason| FileCheckError::BadValue {
+/// One of the two payloads, decoded, with its own name in a complaint.
+fn payload(key: &str, value: &str) -> Result<Vec<u8>, FileCheckError> {
+    common::utilities::hex_bytes(value).map_err(|reason| FileCheckError::BadValue {
         key: key.to_string(),
         reason,
     })
-}
-
-/// What the reader objected to, for a file whose values did not survive it.
-fn complaints(config: &Config) -> String {
-    if config.complaints().is_empty() {
-        return "missing".to_string();
-    }
-    config
-        .complaints()
-        .iter()
-        .map(|complaint| complaint.message.trim_start_matches("> Config: ").to_string())
-        .collect::<Vec<_>>()
-        .join("; ")
 }
 
 #[cfg(test)]
@@ -143,11 +118,11 @@ mod tests {
     use super::*;
 
     fn shipped() -> FileCheck {
-        FileCheck::load("../data/file_check.json").expect("the shipped file check is readable")
+        FileCheck::shipped().expect("the shipped file check decodes")
     }
 
     #[test]
-    fn the_shipped_file_holds_twenty_one_bytes_of_question_and_thirty_two_of_answer() {
+    fn the_shipped_payloads_are_twenty_one_bytes_of_question_and_thirty_two_of_answer() {
         let check = shipped();
         assert_eq!(check.request_len(), 21);
         assert_eq!(check.answer().len(), 32);
@@ -182,20 +157,8 @@ mod tests {
     }
 
     #[test]
-    fn a_file_without_a_key_is_refused() {
-        let dir = std::env::temp_dir().join(format!("kryta-filecheck-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("only_request.json");
-        std::fs::write(&path, r#"{"request": {"hex": "01 02 03 04"}}"#).unwrap();
-
-        let error = FileCheck::load(&path).unwrap_err();
-        assert!(error.to_string().contains("'answer'"), "{error}");
-    }
-
-    #[test]
     fn an_odd_number_of_digits_is_refused() {
-        let error = parse_hex("request", "01 0").unwrap_err();
+        let error = payload("request", "01 0").unwrap_err();
         assert!(error.to_string().contains("odd number"), "{error}");
     }
 }

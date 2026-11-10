@@ -40,10 +40,11 @@ fatal.
 - Source of the shape: this client's protocol, recorded in `ASURA/docs/reference/client-protocol.md`
   section 7. The reference server has no equivalent - its client does not ask this - which is why
   `game/FileCheck/` exists in this tree's naming.
-- In this tree: `data/file_check.json` holds both byte strings as values, and
-  `authserver/src/Server/file_check.rs` reads them and does the comparison. The bytes are not
-  compiled in because they change when the client's own files change.
-- Proved by: the shipped file's lengths (21 and 32) and header; a real socket sending the question
+- In this tree: both byte strings are constants in `authserver/src/Server/file_check.rs`, because they
+  are a **payload** rather than a configuration option - nobody chooses them and the client compares
+  them exactly (`docs/port/04-configuration.md`). Refreshing them is a new build: capture the reply a
+  live client accepts and replace the literal.
+- Proved by: the constants' lengths (21 and 32) and header; a real socket sending the question
   and then the preamble on the same connection; and a question that only starts like it, which is
   refused rather than answered.
 - What the ids are not: a rule. They are a client-build fact, refreshed by capturing the reply a
@@ -97,8 +98,9 @@ A refusal sends only `0x0003`, with status `11`.
   which prints each message with its header, its size and its first 24 bytes. That trace is the
   authority for the sizes, and it is what settles a disagreement in the older notes: their arithmetic
   sums an extra leading 10-byte message that the trace does not carry.
-- In this tree: `authserver/src/Server/login_reply.rs` and `data/account_settings.json`, the 591-byte
-  block as a value file because it is a copied payload.
+- In this tree: the builders are `authserver/src/Server/login_reply.rs`, and the 591-byte block is a
+  constant in `authserver/src/Server/account_settings.rs` - a payload, not a configuration option, so
+  refreshing it is a new build rather than an edit.
 - **Checked byte for byte against that trace**, without a client: five tests compare each builder's
   output - all ten bytes of `0x0003` and `0x0014`, and the first 24 of `0x0016`, `0x0011` and `0x0007`
   - with the bytes the reference printed. Every one matches.

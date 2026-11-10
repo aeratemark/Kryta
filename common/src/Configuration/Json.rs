@@ -272,33 +272,14 @@ impl Record<'_> {
     }
 }
 
-/// Decode hexadecimal text: bytes separated by spaces, commas or nothing at all.
+/// Decode hexadecimal text: the project's one decoder, which lives in `common::utilities`.
 ///
-/// This is the project's only hexadecimal decoder. A byte string in a configuration file is written
-/// the way a capture reads it - `f1 02 20 00` - because that is what an operator can compare against
-/// a trace without converting anything.
+/// A configuration file states a byte string this way - `{"hex": "f1 02 20 00"}` - because that is
+/// what an operator can compare against a trace. The decoding itself is not this module's business:
+/// code that holds a protocol constant uses the same decoder without going through a file, and a
+/// payload is not a configuration option however it is written.
 pub fn hex_bytes(text: &str) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::new();
-    for word in text.split(|character: char| character.is_whitespace() || character == ',') {
-        let word = word.trim();
-        let word = word.strip_prefix("0x").unwrap_or(word);
-        if word.is_empty() {
-            continue;
-        }
-        if word.len() % 2 != 0 {
-            return Err(format!(
-                "> Config: '{word}' is an odd number of hexadecimal digits"
-            ));
-        }
-        for pair in word.as_bytes().chunks(2) {
-            let pair = std::str::from_utf8(pair)
-                .map_err(|_| format!("> Config: '{word}' is not hexadecimal text"))?;
-            let byte = u8::from_str_radix(pair, 16)
-                .map_err(|_| format!("> Config: '{pair}' is not a hexadecimal byte"))?;
-            bytes.push(byte);
-        }
-    }
-    Ok(bytes)
+    crate::utilities::hex_bytes(text).map_err(|reason| format!("> Config: {reason}"))
 }
 
 /// Walk one level of a document into the bag, and complain about what cannot go in it.

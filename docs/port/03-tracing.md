@@ -65,8 +65,8 @@ a startup that worked until the statements are visible.
 |---|---|---|
 | no `accepted connection` line at all | nothing reached the port: the client is dialling elsewhere, or nothing is listening | check the `READY` line's address and port; then the client's own redirect |
 | `accepted connection` then nothing | the client connected and sent nothing, or closed | is a trace on? if so the close line says how many bytes arrived |
-| `... is neither the file check nor a connection this server recognises` | the first bytes are not something this server knows | `data/file_check.json` and the three connection headers |
-| `started like the file check but is not it` | the first four bytes matched and the rest did not | the trace's bytes against the file's 21 |
+| `... is neither the file check nor a connection this server recognises` | the first bytes are not something this server knows | `FileCheck::shipped()` and the three connection headers |
+| `started like the file check but is not it` | the first four bytes matched and the rest did not | the trace's bytes against the constant's 21 |
 | `sent a seed with header 0xXXXX` | the client's seed is not the shape expected | the exchange's sizes |
 | `first encrypted message reads as 0xXXXX ... the login message is 0x8038` | the derivation, or the framing after it, is wrong | the trace's bytes for the first scrambled message |
 

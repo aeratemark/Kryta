@@ -585,15 +585,6 @@ impl Config {
         self.lookup(name, default)
     }
 
-    /// A value as bytes: a file states a byte string as `{"hex": "f1 02 20 00"}`.
-    ///
-    /// `None` when the file does not state the key, so a loader can decide for itself whether the
-    /// absence is fatal; `Some(Err)` when it states something that is not hexadecimal. The decoding
-    /// is [`json::hex_bytes`] and there is no other, so no loader grows a parser of its own.
-    pub fn bytes(&self, name: &str) -> Option<Result<Vec<u8>, String>> {
-        self.options.get(name).map(|text| json::hex_bytes(text))
-    }
-
     /// Dry run, set by `--dry-run`. Reference: `ConfigMgr::setDryRun`.
     pub fn set_dry_run(&mut self, dry_run: bool) {
         self.dry_run = dry_run;
@@ -922,24 +913,15 @@ mod tests {
     }
 
     #[test]
-    fn bytes_are_decoded_in_one_place() {
-        let path = json_file(
-            "bytes",
-            r#"{"data": {"hex": "08 00 66 21", "doc": "the block a client is handed"}}"#,
-        );
+    fn a_configuration_holds_options_and_hands_out_no_payload() {
+        // A byte string is not an option and this type cannot produce one: `Config` answers values a
+        // program reads as settings, and nothing else. That is what stops a payload from being
+        // mistaken for configuration again - the reader simply has no method for it. A payload is
+        // read from the document it lives in, or held as a constant, and decoded by
+        // `common::utilities::hex_bytes`.
+        let path = json_file("payload", r#"{"data": {"hex": "08 00 66 21"}}"#);
         let config = Config::load_json(&path, false, Policy::default()).unwrap();
-        assert_eq!(
-            config.bytes("data").unwrap().unwrap(),
-            vec![0x08, 0x00, 0x66, 0x21]
-        );
-        assert!(config.bytes("nothing").is_none());
-    }
-
-    #[test]
-    fn bytes_that_are_not_hexadecimal_say_so_rather_than_answering_an_empty_slice() {
-        let path = json_file("badbytes", r#"{"data": "zz"}"#);
-        let config = Config::load_json(&path, false, Policy::default()).unwrap();
-        let error = config.bytes("data").unwrap().unwrap_err();
-        assert!(error.contains("not a hexadecimal byte"), "{error}");
+        // The key is there as text, which is all a configuration can say about it.
+        assert_eq!(config.raw("data"), Some("08 00 66 21"));
     }
 }

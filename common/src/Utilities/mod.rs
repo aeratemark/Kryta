@@ -6,7 +6,8 @@
 //! `ToString`, `StringTo`, the utf8 helpers and the time helpers.
 //!
 //! Here now: the process id and the PID file, which a program writes at start-up so a service
-//! manager or an operator can find it.
+//! manager or an operator can find it; and the hexadecimal decoder, which is the one place in the
+//! tree where `f1 02 20 00` becomes four bytes.
 
 use std::path::Path;
 
@@ -15,6 +16,34 @@ use std::path::Path;
 /// Reference: `GetPID`, which is `GetCurrentProcessId` on Windows and `getpid` elsewhere.
 pub fn get_pid() -> u32 {
     std::process::id()
+}
+
+/// Decode hexadecimal text: bytes separated by spaces, commas or nothing at all.
+///
+/// This is the project's only hexadecimal decoder, and it is here rather than in any one caller
+/// because two kinds of caller need it: a configuration file that states a byte string, and code
+/// that holds a protocol constant as text. A byte string is written the way a capture reads it -
+/// `f1 02 20 00` - so an operator can compare it against a trace without converting anything.
+pub fn hex_bytes(text: &str) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    for word in text.split(|character: char| character.is_whitespace() || character == ',') {
+        let word = word.trim();
+        let word = word.strip_prefix("0x").unwrap_or(word);
+        if word.is_empty() {
+            continue;
+        }
+        if word.len() % 2 != 0 {
+            return Err(format!("'{word}' is an odd number of hexadecimal digits"));
+        }
+        for pair in word.as_bytes().chunks(2) {
+            let pair = std::str::from_utf8(pair)
+                .map_err(|_| format!("'{word}' is not hexadecimal text"))?;
+            let byte = u8::from_str_radix(pair, 16)
+                .map_err(|_| format!("'{pair}' is not a hexadecimal byte"))?;
+            bytes.push(byte);
+        }
+    }
+    Ok(bytes)
 }
 
 /// Write this process's id to a file and answer it, or answer nothing when the file cannot be
@@ -65,5 +94,15 @@ mod tests {
     fn a_directory_that_does_not_exist_answers_nothing() {
         let dir = temp_dir("missing");
         assert_eq!(create_pid_file(dir.join("nope").join("x.pid")), None);
+    }
+
+    #[test]
+    fn hex_text_is_read_the_way_a_capture_prints_it() {
+        assert_eq!(hex_bytes("f1 02 20 00").unwrap(), vec![0xF1, 0x02, 0x20, 0x00]);
+        assert_eq!(hex_bytes("F102 2000").unwrap(), vec![0xF1, 0x02, 0x20, 0x00]);
+        assert_eq!(hex_bytes("0xf1,0x02").unwrap(), vec![0xF1, 0x02]);
+        assert!(hex_bytes("").unwrap().is_empty());
+        assert!(hex_bytes("f1 0").unwrap_err().contains("odd number"));
+        assert!(hex_bytes("zz").unwrap_err().contains("not a hexadecimal byte"));
     }
 }

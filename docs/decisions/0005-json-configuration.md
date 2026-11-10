@@ -17,14 +17,18 @@ inside a Rust function is not.
 
 ## The decision
 
-1. **The format is JSON.** `authserver/authserver.json` and `worldserver/worldserver.json` are the
-   programs' own files; `data/*.json` are the value files; the `.dist` files are committed and the
-   live ones are not, because they hold credentials.
+1. **The format is JSON, for configuration options only.** `authserver/authserver.json` and
+   `worldserver/worldserver.json` are the programs' own files; the `.dist` files are committed and the
+   live ones are not, because they hold credentials. A configuration file holds what an operator
+   *chooses and shares*. It holds no payload the client dictates and no row a person lives in - a
+   correction to this record's first version, which was written broadly enough that two payloads and
+   an account list ended up in files. Both were undone: accounts are rows (0006), and the payloads
+   are constants again. `docs/port/04-configuration.md` is the classification.
 2. **One reader, in `common/src/Configuration/Json.rs`.** Not one per consumer: a file is parsed
    into `Document`, flattened to the reference's `dotted.key -> text` bag, and every typed getter,
-   severity policy, environment override, `describe()` and masking above it is unchanged. Record
-   lists - accounts today, worlds next - are read as rows through the same `Document`, never by a
-   hand-written parse in the module that wants them.
+   severity policy, environment override, `describe()` and masking above it is unchanged. A record
+   list - a file of rows, if one ever earns its place - is read as rows through the same `Document`,
+   never by a hand-written parse in the module that wants it.
 3. **Key names stay the reference's.** `RealmServerPort`, `Logger.network.trace`,
    `LoginDatabaseInfo` mean what they meant in the `.conf`. The change is the file format, not the
    vocabulary, so every document and call site still says the same word.

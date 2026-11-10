@@ -39,13 +39,15 @@ content.
 6. **A stage is done when it works** - the reference's behaviour reproduced, and the client's
    judgement wherever the client can see it. Not when the tests pass, and not when the log looks
    right.
-7. **Values are JSON files, decisions are code.** Every number and every configuration value lives in
-   a JSON file - a program's own, or one under `data/` - and is read through the one handler,
-   `common/src/Configuration/Json.rs`. No datum lives only in code and none only in the database. A
-   number that is part of an algorithm, or a field's offset inside a layout its builder writes, stays
-   in code; those two exceptions are the whole list. A rule that needs a number takes it as an
-   argument. `docs/port/04-configuration.md` says how to write a file and which constants are still
-   moving.
+7. **Configuration is options; payloads and state are not.** A JSON file holds what an operator
+   chooses and shares, and nothing else. Three kinds of thing, three homes: an **option** is a file
+   (`authserver/authserver.json`, `worldserver/worldserver.json`); a **protocol payload or client
+   fact** is a constant in the code that answers with it, naming the capture it came from; **state**
+   is a row in the database. A payload put in a file is still a payload and an account in a file is
+   still state - both happened here and both were undone. No number lives only in code and none only
+   in the database; a number that is part of an algorithm, or a field's offset inside a layout its
+   builder writes, stays in code. A rule that needs a number takes it as an argument.
+   `docs/port/04-configuration.md` is the classification.
 8. **Every file is ASCII.** Write `-`, `->`, `=>`, `"`, `'`, `...`, `#`. Never rewrite a file with
    a `Get-Content` / `Set-Content` round trip.
 9. **A move inside this tree is additive.** Copy into the new home, re-export at the old path,
@@ -149,7 +151,7 @@ the client is the judge rather than a test.
 | the reference's measured structure, and the port order | `docs/port/01-structure.md` |
 | the wire facts this tree uses, and what it does not know yet | `docs/port/02-wire.md` |
 | what the server reports, and how to switch on its traces | `docs/port/03-tracing.md` |
-| how a configuration file is written, and which numbers are still constants | `docs/port/04-configuration.md` |
+| what is a configuration option and what is not, and which options are still in code | `docs/port/04-configuration.md` |
 | the configuration reader | `common/src/Configuration/`, and `Json.rs` in it for the format |
 | a decision taken away from the reference, and why | `docs/decisions/` |
 | workspace, dependency order, lint policy | `Cargo.toml` |
