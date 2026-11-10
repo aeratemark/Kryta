@@ -85,6 +85,12 @@ Configuration, and nothing else:
 The `.dist` files are committed; the live ones are not, because they hold a database password. Copy
 one, edit it, keep it.
 
+**A setting is in a file only once the program reads it.** The file states what the ported stages use
+and nothing else, so no key sits there configuring nothing: the listener's port and thread count, the
+thread pool, the console, SOAP and the world's own data directory arrive with the stages that read
+them. Both files are checked against the code that reads them - a run with every key missing from them
+warns, so a pruned file that is too small fails loudly rather than silently.
+
 The file check's bytes, the account settings block and the accounts are not settings and are not in this
 list: the first two are constants in `authserver/src/Server/file_check.rs` and `account_settings.rs`, and
 the accounts are rows in `kryta_login`'s `account` table. `Config` - the type a program's file is read
@@ -95,10 +101,12 @@ A file that holds **rows** is a record list and is not a set of keys: it is read
 reader (`Document::records`), so a single file can carry both a `note` and a list without either being
 squeezed into the other's shape. Nothing in the tree is a row list today.
 
-## Settings that still live in code
+## Settings that are still not in a file
 
 | setting | where it is now | where it goes |
 |---|---|---|
 | the world list | `realmlist` in `kryta_login` | `data/realms.json`, a file row overriding a database row of the same id |
 | the database layer's defaults - host, port, user, database names | `database/src/Database/mod.rs` | the program's own `.json`, beside the connection string that already overrides them |
-| network thread counts, connection backlog, buffer sizes | `shared/src/Network/`, passed as parameters | each program's own `.json` - `Network.Threads` is read already |
+| the network thread count, the acceptor's backlog, the buffer sizes | a literal at each `start_network` call, and defaults inside `shared/src/Network/` | the program's own `.json`, as `Network.Threads` and its siblings, when a program needs to choose them |
+
+Every other setting the programs have is in their file and read from it.

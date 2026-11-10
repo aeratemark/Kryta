@@ -1,88 +1,16 @@
 {
-  "note": "worldserver.json.dist - the game program's own configuration. Reference: src/server/apps/worldserver/worldserver.conf.dist, whose option names these are; the format is this project's (docs/decisions/0005-json-configuration.md). One config file per program: this program reads this file and no other. Only the keys the ported stages read are here, with the reference's own defaults.",
-
-  "RealmID": {
-    "value": 1,
-    "doc": "The world this process represents - the reference's realm, this server's world. It is the row in the login database's realmlist that describes this process."
-  },
-
-  "WorldServerPort": {
-    "value": 8085,
-    "doc": "Where game connections are accepted. Reference: WorldServerPort, 8085. A login hands a client the address in the realm's own row, so this number and that row have to agree."
-  },
-
-  "BindIP": {
-    "value": "0.0.0.0",
-    "doc": "The address the listener binds. 0.0.0.0 is every interface."
-  },
-
-  "Network": {
-    "Threads": {
-      "value": 1,
-      "doc": "Network threads serving the accepted sockets. Must be greater than 0; a connection goes to the thread with the fewest already."
-    },
-    "Trace": {
-      "value": false,
-      "doc": "Every byte of every connection, in and out, at debug. It needs its logger: Logger.network.trace = 6,Console Server."
-    }
-  },
-
-  "ThreadPool": {
-    "value": 2,
-    "doc": "Worker threads behind the world loop. Reference: ThreadPool, whose default is this."
-  },
-
-  "MapUpdate": {
-    "Threads": {
-      "value": 1,
-      "doc": "Threads updating maps."
-    }
-  },
-
-  "Instance": {
-    "UnloadDelay": {
-      "value": 1800000,
-      "doc": "How long an empty instance lives, in milliseconds. Reference: Instance.UnloadDelay, whose default is this."
-    }
-  },
+  "note": "worldserver.json.dist - the game program's own configuration. Reference: src/server/apps/worldserver/worldserver.conf.dist, whose setting names these are; the format is this project's (docs/decisions/0005-json-configuration.md). One file per program: this program reads this file and no other. Only the settings the ported stages read are here - a setting arrives with the stage that reads it, so a key in this file is one the program actually uses.",
 
   "Log": {
     "EffectiveConfig": {
       "value": false,
-      "doc": "Every key this program read from this file, with any database password masked, at debug. It needs its logger: Logger.server.loading = 6,Console Server."
+      "doc": "Every setting this program read from this file, with any database password masked, at debug. It needs its logger: Logger.server.loading = 6,Console Server."
     }
   },
 
   "PidFile": {
     "value": "",
     "doc": "Written when a PID is wanted for a service manager. Empty writes nothing."
-  },
-
-  "Console": {
-    "Enable": {
-      "value": true,
-      "doc": "The console the operator types into."
-    }
-  },
-
-  "SOAP": {
-    "Enabled": {
-      "value": false,
-      "doc": "The SOAP endpoint, which the reference serves from this program."
-    },
-    "IP": {
-      "value": "127.0.0.1",
-      "doc": "Where that endpoint binds."
-    },
-    "Port": {
-      "value": 7878,
-      "doc": "Which port it answers on."
-    }
-  },
-
-  "DataDir": {
-    "value": ".",
-    "doc": "Where the world's own data files are read from."
   },
 
   "LogsDir": {
