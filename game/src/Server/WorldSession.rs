@@ -25,7 +25,7 @@ use crate::server::packets::{
     character_packets, creation_load_block, misc_packets,
 };
 use crate::server::protocol::GameVersion;
-use crate::server::protocol::{Frame, FrameError};
+use crate::server::protocol::FrameError;
 use database::database::Param;
 use crate::world::World;
 
@@ -360,7 +360,7 @@ impl WorldSession {
                 let header = u16::from_le_bytes(*bytes);
                 // The table decides where the message ends: a counted field carries its own count, so
                 // the walk is exact for every header the protocol has, not just the ones answered here.
-                let used = match Frame::decode_game_message(&pending, true) {
+                let used = match crate::server::protocol::decode_game_message(&pending, true) {
                     Ok((frame, used)) => {
                         self.log.out(
                             LogLevel::Debug,
@@ -368,7 +368,7 @@ impl WorldSession {
                             format!(
                                 "trace {peer} game in  {} bytes, {}",
                                 used,
-                                frame.label()
+                                crate::server::protocol::label(frame.header())
                             ),
                         );
                         used

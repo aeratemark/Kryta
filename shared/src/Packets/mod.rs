@@ -19,8 +19,9 @@
 pub mod byte_buffer;
 #[path = "Frame.rs"]
 pub mod frame;
-#[path = "Tables.rs"]
-pub mod tables;
+#[path = "Types.rs"]
+pub mod types;
 
 pub use byte_buffer::{ByteBuffer, ByteBufferError};
 pub use frame::{Frame, FrameError, HEADER_LEN};
+pub use types::{Conn, Field, FieldKind, Packet, Status};

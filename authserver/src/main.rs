@@ -10,6 +10,8 @@
 
 #[path = "Authentication/mod.rs"]
 mod authentication;
+#[path = "Protocol/mod.rs"]
+mod protocol;
 #[allow(dead_code)]
 #[path = "Server/mod.rs"]
 mod server;

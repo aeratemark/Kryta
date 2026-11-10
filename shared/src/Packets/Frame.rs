@@ -1,15 +1,19 @@
-//! Framing a gameplay connection: where one message ends, decided by the table.
+//! Framing a connection: where one message ends, decided by the row that header has.
 //!
-//! A game message carries **no length**: the header is two bytes and the layout the table gives that
-//! header decides where the body stops. A counted field (`String16`, `Array8`, `Array16`, `Array32`)
+//! A message carries **no length**: the header is two bytes and the layout the row gives that header
+//! decides where the body stops. A counted field (`String16`, `Array8`, `Array16`, `Array32`)
 //! carries its own `u16` count and consumes exactly that many units, and a nested struct is the same
 //! idea one level down: a `u8` count and that many repeats of the fields after it. So the table's
 //! `size` column is an upper bound, never a length.
 //!
 //! Ported from `ASURA/crates/asura-protocol/src/client/frame.rs`: same walker, same shapes, same
 //! error cases. The Rust here is this tree's, the rule is not.
+//!
+//! The rows are not here. Each program owns the rows of the connection it serves
+//! (`game/src/Server/Protocol/Tables.rs`, `authserver/src/Protocol/Tables.rs`) and calls this with
+//! the row it found; the vocabulary the row is written in is `Types.rs` beside this file.
 
-use crate::packets::tables::{self, Conn, FieldKind};
+use crate::packets::types::{Field, FieldKind};
 
 /// The header is two bytes. Everything after it is the body, whose length the table fixes.
 pub const HEADER_LEN: usize = 2;
@@ -89,46 +93,28 @@ impl Frame {
         &self.bytes[HEADER_LEN..]
     }
 
-    /// The table's name for this header, for a log line.
-    pub fn label(&self) -> String {
-        match tables::lookup(Conn::Game, self.header(), true).or_else(|| tables::lookup(Conn::Auth, self.header(), true)) {
-            Some(row) => row.label(),
-            None => format!("{:#06X}", self.header()),
-        }
+    /// The header, for a log line when no row names it.
+    pub fn header_label(&self) -> String {
+        format!("{:#06X}", self.header())
     }
 
-    /// Frame one login-connection message off the front of `bytes`, and say how many bytes it used.
+    /// Frame one message of either connection, from the row the caller's own table gives it.
     ///
-    /// The same walk as a gameplay message: the two connections differ in their rows, not in their
-    /// rule. A login message is where a counted field first bit this tree - the client's computer info
-    /// carries two of them.
-    pub fn decode_login_message(bytes: &[u8], from_client: bool) -> Result<(Frame, usize), FrameError> {
-        Frame::decode_with(Conn::Auth, bytes, from_client)
-    }
-
-    /// Frame one gameplay message off the front of `bytes`, and say how many bytes it used.
-    pub fn decode_game_message(bytes: &[u8], from_client: bool) -> Result<(Frame, usize), FrameError> {
-        Frame::decode_with(Conn::Game, bytes, from_client)
-    }
-
-    /// Frame one message of either connection.
+    /// The walk is the rule; the row is the vocabulary, and each program owns the rows of the
+    /// connection it serves. `game` and `authserver` each wrap this with their own lookup.
     pub fn decode_with(
-        conn: Conn,
+        header: u16,
+        fields: &'static [Field],
         bytes: &[u8],
-        from_client: bool,
     ) -> Result<(Frame, usize), FrameError> {
         if bytes.len() < HEADER_LEN {
             return Err(FrameError::Incomplete {
                 needed: HEADER_LEN,
             });
         }
-        let header = u16::from_le_bytes([bytes[0], bytes[1]]);
-        let Some(row) = tables::lookup(conn, header, from_client) else {
-            return Err(FrameError::UnknownHeader { header });
-        };
-        let shapes: Vec<Shape> = row.fields.iter().map(shape_of).collect();
+        let shapes: Vec<Shape> = fields.iter().map(shape_of).collect();
         let walked = walk(bytes, header, &shapes)?;
-        let position = match measured_override(header, from_client, bytes) {
+        let position = match measured_override(header, bytes) {
             // One row this tree knows to be short: the confirm carries fields the table's row does not
             // list, and the measured frame is longer than the walk. The larger of the two is the
             // message, and the session says so when they disagree.
@@ -142,8 +128,14 @@ impl Frame {
             position,
         ))
     }
-}
 
+    /// The table's name for a header, from the row the caller found.
+    ///
+    /// A log line names what arrived; the name lives on the row, not on the message.
+    pub fn label_of(row: &crate::packets::types::Packet) -> String {
+        row.label()
+    }
+}
 /// How many bytes the creation confirm carries after its counted name, when the table's row for it is
 /// shorter than the message.
 ///
@@ -160,8 +152,8 @@ const CONFIRM_HEADER: u16 = 0x808B;
 
 /// The size a header's own measured layout gives it, when this tree measured one that the table does
 /// not describe.
-fn measured_override(header: u16, from_client: bool, bytes: &[u8]) -> Option<usize> {
-    if header != CONFIRM_HEADER || !from_client {
+fn measured_override(header: u16, bytes: &[u8]) -> Option<usize> {
+    if header != CONFIRM_HEADER {
         return None;
     }
     let count = bytes.get(HEADER_LEN..HEADER_LEN + 2)?;
@@ -182,7 +174,7 @@ enum Shape {
     Nested { capacity: u8 },
 }
 
-fn shape_of(field: &tables::Field) -> Shape {
+fn shape_of(field: &Field) -> Shape {
     match field.kind {
         FieldKind::MsgHeader => Shape::Header,
         // A four-byte game header: the walker has already consumed the first two bytes, so the field
@@ -283,11 +275,29 @@ fn walk_from(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::packets::types::Field;
+
+    /// A row with no fields: the header alone.
+    const BARE: &[Field] = &[Field {
+        kind: FieldKind::MsgHeader,
+        length: 0,
+    }];
+
+    /// A row with one counted string of up to twenty units.
+    const COUNTED: &[Field] = &[
+        Field {
+            kind: FieldKind::MsgHeader,
+            length: 0,
+        },
+        Field {
+            kind: FieldKind::String16,
+            length: 20,
+        },
+    ];
 
     #[test]
     fn the_header_alone_is_two_bytes() {
-        // `0x0186` has no fields: the player-data start, and it goes to the client.
-        let (frame, used) = Frame::decode_game_message(&[0x86, 0x01], false).expect("known header");
+        let (frame, used) = Frame::decode_with(0x0186, BARE, &[0x86, 0x01]).expect("frames");
         assert_eq!(used, 2);
         assert_eq!(frame.encode(), &[0x86, 0x01]);
         assert_eq!(frame.body().len(), 0);
@@ -296,74 +306,60 @@ mod tests {
     #[test]
     fn a_short_stream_asks_for_more_rather_than_guessing() {
         assert_eq!(
-            Frame::decode_game_message(&[0x86], false),
+            Frame::decode_with(0x0186, BARE, &[0x86]),
             Err(FrameError::Incomplete { needed: 2 })
         );
-    }
-
-    #[test]
-    fn a_header_in_no_row_is_refused() {
         assert_eq!(
-            Frame::decode_game_message(&[0xFF, 0xFF], true),
-            Err(FrameError::UnknownHeader { header: 0xFFFF })
+            Frame::decode_with(0x800A, COUNTED, &[0x0A, 0x80, 0x02, 0x00, 0x41]),
+            Err(FrameError::Incomplete { needed: 8 })
         );
     }
 
     #[test]
     fn a_counted_field_decides_the_length() {
-        // `0x8089` is the creation screen's ask: a bare header, two bytes.
-        let (frame, used) = Frame::decode_game_message(&[0x89, 0x80], true).expect("known header");
-        assert_eq!(used, 2);
-        assert_eq!(frame.len(), 2);
+        // A count of one and one unit: header, count, unit.
+        let (frame, used) =
+            Frame::decode_with(0x800A, COUNTED, &[0x0A, 0x80, 0x01, 0x00, 0x41, 0x00, 0xFF])
+                .expect("frames");
+        assert_eq!(used, 6, "header, count and one unit - the stray byte is the next message");
+        assert_eq!(frame.len(), 6);
     }
 
-    /// Every message a working server recorded the client sending frames to exactly the bytes it
-    /// recorded, and the recording is this tree's own copy of that session.
     #[test]
-    fn the_wire_recordings_frame_to_their_own_sizes() {
-        let path = "../../recordings/asura/world/live-client-session-20261027-223528.jsonl";
-        let Ok(text) = std::fs::read_to_string(path) else {
-            eprintln!("no recording at {path}; the walk is not measured here");
-            return;
-        };
+    fn a_count_above_the_fields_capacity_is_refused() {
+        let mut bytes = vec![0x0A, 0x80, 21, 0x00];
+        bytes.extend(std::iter::repeat_n(0u8, 42));
+        assert_eq!(
+            Frame::decode_with(0x800A, COUNTED, &bytes),
+            Err(FrameError::SizeMismatch {
+                header: 0x800A,
+                got: 21,
+                expected: 20,
+            })
+        );
+    }
 
-        let mut checked = 0;
-        for line in text.lines() {
-            let Ok(record) = serde_json::from_str::<serde_json::Value>(line) else {
-                continue;
-            };
-            if record["direction"] != "CToS" {
-                continue;
-            }
-            let Some(data) = record["data"].as_str() else {
-                continue;
-            };
-            let Some(size) = record["size"].as_u64() else {
-                continue;
-            };
-            let mut bytes = Vec::with_capacity(data.len() / 2);
-            for pair in 0..data.len() / 2 {
-                bytes.push(u8::from_str_radix(&data[pair * 2..pair * 2 + 2], 16).expect("hex"));
-            }
-
-            match Frame::decode_game_message(&bytes, true) {
-                Ok((frame, used)) => {
-                    assert_eq!(
-                        used as u64,
-                        size,
-                        "header 0x{:04X} framed to {} bytes, the recording says {size}",
-                        frame.header(),
-                        used
-                    );
-                    checked += 1;
-                }
-                Err(error) => panic!(
-                    "header 0x{:04X} did not frame: {error}",
-                    u16::from_le_bytes([bytes[0], bytes[1]])
-                ),
-            }
-        }
-
-        assert!(checked > 5, "the recording framed {checked} messages");
+    #[test]
+    fn a_nested_struct_is_a_byte_count_and_that_many_repeats() {
+        const NESTED: &[Field] = &[
+            Field {
+                kind: FieldKind::MsgHeader,
+                length: 0,
+            },
+            Field {
+                kind: FieldKind::NestedStruct,
+                length: 4,
+            },
+            Field {
+                kind: FieldKind::Dword,
+                length: 0,
+            },
+        ];
+        // Two repeats of one dword each.
+        let mut bytes = vec![0x61, 0x01, 0x02];
+        bytes.extend_from_slice(&7u32.to_le_bytes());
+        bytes.extend_from_slice(&8u32.to_le_bytes());
+        let (_, used) = Frame::decode_with(0x0161, NESTED, &bytes).expect("frames");
+        assert_eq!(used, 3 + 8);
     }
 }

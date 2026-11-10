@@ -14,7 +14,7 @@
 //! `recordings/gwps/world/load-stream.log`, except the two counted ones, which are walked
 //! rather than measured because their length is on the wire.
 
-use shared::packets::{Frame, FrameError};
+use shared::packets::FrameError;
 
 /// The frames a client sends on the auth connection, and how many bytes each one is.
 ///
@@ -102,7 +102,7 @@ pub fn take(buffer: &[u8]) -> Take<'_> {
     // as a gameplay one does, so a size read off a hand-kept list stops at the first message this tree
     // did not think of - which is what a character click sends (`0x800A`) and what the settings
     // uploads send (`0x8009`, `0x8020`, `0x8021`). See `docs/port/02-wire.md`.
-    match Frame::decode_login_message(buffer, true) {
+    match crate::protocol::decode_login_message(buffer, true) {
         Ok((_, used)) => Take::Message(Message {
             header,
             frame: &buffer[..used],

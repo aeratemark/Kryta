@@ -48,20 +48,31 @@ file it came from and every capture says its own layer in its header (`layer`, `
   tree did exactly that, broke a layer that was right, and undid it the next commit (`d9f0849`). The
   fact belongs to the project, not to the sniffer's docstring.
 
-## The table, and the walk that splits a stream
+## The tables, and the walk that splits a stream
 
-**The whole protocol is in this tree now.** `game/src/Server/Protocol/Tables.rs` is the client's
-message table, ported row for row from `ASURA/crates/asura-protocol/src/packets.rs`: 782 rows of
-header, connection, index, declared size, name and field layout - 60 + 40 for the login connection and
-194 + 488 for a world connection.
+**The whole protocol is in this tree, split the way the reference splits it.** 782 rows, ported from
+`ASURA/crates/asura-protocol/src/packets.rs`:
 
-A message carries no length, so the table is what says where one ends: `Protocol/Frame.rs` walks a
-message's field layout and stops where the layout stops. A counted field (`String16`, `Array8`,
+| where | holds | is |
+|---|---|---|
+| `game/src/Server/Protocol/Tables.rs` | 682 rows | the world connection's, in the game library beside the socket layer that serves it |
+| `authserver/src/Protocol/Tables.rs` | 100 rows | the login connection's, in the program that serves it |
+| `shared/src/Packets/Types.rs` | - | the vocabulary both write rows in: `Packet`, `Field`, `FieldKind`, `Conn`, `Status` |
+| `shared/src/Packets/Frame.rs` | - | the walk both frame with |
+
+That split is the reference's: an opcode table belongs to the program whose connection it describes,
+and the auth program does not link the game library. What is shared is the mechanism, which is what
+`shared/Packets/` is for; each program owns the vocabulary of its own connection and calls the walk
+with the row it found. (`tools/split-protocol-table.py` and `tools/extract-protocol-types.py` are the
+record of how the merged file was separated again.)
+
+A message carries no length, so a row is what says where one ends: the walk follows a message's field
+layout and stops where the layout stops. A counted field (`String16`, `Array8`,
 `Array16`, `Array32`) carries its own `u16` count and consumes exactly that many units, and a nested
 struct is the same idea one level down (a `u8` count and that many repeats of the fields after it).
 The table's `size` column is an upper bound, never a length.
 
-- Proved against the wire: `the_wire_recordings_frame_to_their_own_sizes` in `Frame.rs` frames every
+- Proved against the wire: `the_wire_recordings_frame_to_their_own_sizes` in the game library frames every
   client message of a recorded session (`recordings/asura/world/live-client-session-20261027-223528.jsonl`)
   and holds it to the size that session recorded.
 - One row is short and the framer says so: `0x808B`'s row lists fields that account for 22 bytes less

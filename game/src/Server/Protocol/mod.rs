@@ -15,9 +15,31 @@
 //!   It is the message the front door reads to learn which world a client was sent to, and the first
 //!   one the world program reads itself (`docs/decisions/0004`).
 
-pub use shared::packets::frame;
-pub use shared::packets::tables;
+#[path = "Tables.rs"]
+pub mod tables;
+
 pub use shared::packets::{Frame, FrameError, HEADER_LEN};
+
+/// Frame one message of a world connection: the row is this program's own table.
+///
+/// The walk is `shared::packets::Frame` - the mechanism both connections use - and the rows are
+/// `tables` beside this file, because a world connection is what this program serves.
+pub fn decode_game_message(bytes: &[u8], from_client: bool) -> Result<(Frame, usize), FrameError> {
+    let Some(header) = bytes.first_chunk::<2>().map(|pair| u16::from_le_bytes(*pair)) else {
+        return Err(FrameError::Incomplete { needed: HEADER_LEN });
+    };
+    let Some(row) = tables::lookup(header, from_client) else {
+        return Err(FrameError::UnknownHeader { header });
+    };
+    Frame::decode_with(header, row.fields, bytes)
+}
+
+/// The table's name for a header of this connection, for a log line.
+pub fn label(header: u16) -> String {
+    tables::lookup(header, true)
+        .map(|row| row.label())
+        .unwrap_or_else(|| format!("{header:#06X}"))
+}
 
 /// The four bytes that name a gameplay connection, as a bare little-endian `u32`.
 ///
@@ -166,6 +188,63 @@ impl GameVersion {
 mod tests {
     use super::*;
 
+    /// Every message a working server recorded the client sending frames to exactly the bytes it
+    /// recorded, and the recording is this tree's own copy of that session.
+    ///
+    /// This is the walk measured against the wire rather than against itself: a row whose field list
+    /// disagreed with the client's packing would stop here, at the message that disagreed.
+    #[test]
+    fn the_wire_recordings_frame_to_their_own_sizes() {
+        let path = "../recordings/asura/world/live-client-session-20261027-223528.jsonl";
+        let Ok(text) = std::fs::read_to_string(path) else {
+            eprintln!("no recording at {path}; the walk is not measured here");
+            return;
+        };
+
+        let mut checked = 0;
+        for line in text.lines() {
+            let Ok(record) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if record["direction"] != "CToS" {
+                continue;
+            }
+            let Some(data) = record["data"].as_str() else {
+                continue;
+            };
+            let Some(size) = record["size"].as_u64() else {
+                continue;
+            };
+            let mut bytes = Vec::with_capacity(data.len() / 2);
+            for pair in 0..data.len() / 2 {
+                bytes.push(u8::from_str_radix(&data[pair * 2..pair * 2 + 2], 16).expect("hex"));
+            }
+
+            match decode_game_message(&bytes, true) {
+                Ok((frame, used)) => {
+                    assert_eq!(
+                        used as u64,
+                        size,
+                        "header 0x{:04X} framed to {used} bytes, the recording says {size}",
+                        frame.header()
+                    );
+                    checked += 1;
+                }
+                Err(error) => panic!(
+                    "header 0x{:04X} did not frame: {error}",
+                    u16::from_le_bytes([bytes[0], bytes[1]])
+                ),
+            }
+        }
+
+        assert!(checked > 5, "the recording framed {checked} messages");
+    }
+
+    /// The world's table holds what the protocol has for a world connection.
+    #[test]
+    fn the_world_table_has_its_six_hundred_and_eighty_two_rows() {
+        assert_eq!(tables::rows().count(), 682);
+    }
     fn sample() -> GameVersion {
         GameVersion {
             version: 39167,
