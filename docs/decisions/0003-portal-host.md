@@ -40,5 +40,5 @@ own process, the move is one dependency line and one listener.
 
 - **Who an account is.** The portal's `Accounts` is still supplied by its caller; the portal is told
   who a login name is rather than knowing. What backs it is the login database's `account` table -
-  `docs/decisions/0006-accounts-are-rows.md`, which corrects the value file this line first named.
+  `docs/decisions/0006-accounts-are-rows.md`, which corrects the file this line first named.
 - The portal's other two duties in the naming - party and storage over HTTP - which are not written.

@@ -5,15 +5,14 @@ may correct it, and a correction replaces this text rather than being appended t
 
 ## The question
 
-The reference's configuration format is `Key = value` in a `.conf` file, parsed by
+The reference's format is `Key = value` in a `.conf` file, parsed by
 `src/common/Configuration/Config.cpp`. This tree ported that parser and every quirk in it, and both
-programs read a `authserver.conf` / `worldserver.conf`.
+programs read an `authserver.conf` / `worldserver.conf`.
 
-The owner's requirement, as it reads today: **a configuration file holds settings - the values that differ per operator**. It was first taken as **every hardcoded number and every configuration value is handled from JSON
-configuration files**, so that users can configure and share their setups; and **no datum may live
-only in code or only in the database**. A JSON file is a thing two people can diff, a web page can
-show, and another program can read; a `.conf` with `Key = value` is nearly that, and a constant
-inside a Rust function is not.
+The owner asked for JSON, because a settings file is something an operator edits and shares, and JSON
+is what another program can read and two people can diff. Read as "every number in a file", it carried
+two payloads and an account list into files as well - all three are out again, and the rule is the one
+sentence in `docs/port/04-configuration.md`.
 
 ## The decision
 
@@ -60,25 +59,15 @@ and the load reports which came from where).
 
 ## What stays in code
 
-One question decides it: **would two operators running this build legitimately have different
-values?**
+A setting is what an operator sets, so what nobody sets stays in code: what the client dictates (message
+sizes, status codes, the handshake's arithmetic, the file check and account settings payloads), what a
+player makes (an account, a character - those are rows), and what is part of an algorithm or a layout
+(the RC4 S-box, the key derivation's rounds and rotation widths, SHA-1's initial state, a field's offset
+in the layout its builder writes).
 
-- **Yes** - a port, an address, a database connection, a log level - it is a setting and it goes in the
-  program's file.
-- **No** - and then no file at all: a constant in the code that uses it when the client dictates the
-  value (message sizes, status codes, the handshake's arithmetic, the file check and account settings
-  payloads), a row in the database when a player made it (an account, a character).
-- **Not a setting, but also not a choice of anybody's** - a number that is part of an algorithm (the
-  RC4 S-box, the key derivation's round constants and rotation widths, SHA-1's initial state) or
-  *structural* (a field's offset inside a layout its builder writes) - stays in code, because
-  separating it would let a file desynchronise the wire.
-
-An earlier version of this section read the rule as "every hardcoded number or config", which put
-content and client facts in files beside the settings. That is what the first three rows of this
-record's cost line above are paying for.
-
-The settings that are still constants today - the world list above all - are tracked, one line each, in
-`docs/port/04-configuration.md`.
+The settings that were still constants when this record was written - the world list, the network thread
+count, the connection string - are files now; `docs/port/04-configuration.md` lists where every setting
+is set.
 
 ## What it costs
 

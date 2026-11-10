@@ -58,9 +58,10 @@ leaf, a row - so no configuration key here is called one of them:
 | `immutable` | a number the *client* decides rather than the server: editing it does not change the client. One without a `doc` is reported, because a label with no reason is a rumour |
 | `information` | commentary of any shape - an object, an array, nested trees, prose - for the explanation that will not fit in one line. Its contents are never keys and are never read |
 
-`information` is where a file writes down what it is for, how it was measured, what would replace
-it and what it links to. `data/file_check.json` is the worked example: an `information` block naming
-the capture the bytes came from and the way to replace them, then the two byte strings themselves.
+`information` is where a file writes down what it is for, how it was measured, what would replace it
+and what it links to. `data/realms.json` is the worked example: a note, an `information` block saying
+how the file is read and what is deliberately not in it, then the rows themselves.
+
 Two more rules, both enforced with a message rather than silence:
 
 - A key stated twice - which needs two spellings of one path - is reported and the first wins.

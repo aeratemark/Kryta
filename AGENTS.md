@@ -5,6 +5,10 @@ a session.
 
 The one sentence: **AzerothCore's server, in Rust, serving Guild Wars.**
 
+A new session starts here, then reads `docs/port/01-structure.md` for what runs today and what proves
+it, then the document for the area it is touching. Every claim in that table is a statement of today,
+updated in the same commit as the change that moves it.
+
 ## The task
 
 Port AzerothCore into Rust - the same structure, the same services, the same arrangements - with
@@ -26,31 +30,37 @@ content.
 
 ## The rules
 
-1. **The reference decides design.** An arrangement it has is the answer. A deviation is written
-   down with its reason, in `docs/decisions/`, in the same commit that takes it.
+1. **The reference decides design.** An arrangement it has is the answer. A deviation is written in
+   `docs/decisions/`, with its reason, in the same commit that takes it.
 2. **Two halves never share a commit.** Infrastructure - processes, sockets, packets, database,
-   secrets, the script manager, modules, configuration - and game mechanics - agents, terrain,
-   maps, spawns, movement, combat.
-3. **The client is the judge.** Where a running client and a document disagree, the client wins
-   and the disagreement is reported, not split.
-4. **Do exactly the command.** A measurement or an explanation is evidence for reading the
-   reference. It is not permission to change behaviour.
+   secrets, the script manager, modules, configuration - and game mechanics - agents, terrain, maps,
+   spawns, movement, combat.
+3. **The client is the judge.** Where a running client and a document disagree, the client wins, and
+   the disagreement is reported rather than split.
+4. **Do exactly the command.** A measurement or an explanation is evidence for reading the reference;
+   it is not permission to change behaviour.
 5. **One change, one subject.** The commit message is the sentence you would say out loud.
 6. **A stage is done when it works** - the reference's behaviour reproduced, and the client's
    judgement wherever the client can see it. Not when the tests pass, and not when the log looks
    right.
-7. **Settings live in a JSON file.** A setting is read from the file; it is never compiled in.
-   `docs/port/04-configuration.md` says how a file is written and which files there are.
-8. **Every file is ASCII.** Write `-`, `->`, `=>`, `"`, `'`, `...`, `#`. Never rewrite a file with
-   a `Get-Content` / `Set-Content` round trip.
-9. **A move inside this tree is additive.** Copy into the new home, re-export at the old path,
-   delete the old copy in one commit. The compiler is then the complete list of callers.
+7. **Settings live in a JSON file.** A setting is read from the file, never compiled in; a program's
+   file and what belongs in it are `docs/port/04-configuration.md`.
+8. **A fact names where it came from.** A number or a byte string that came from the client cites the
+   recording or document it came from, where it is used. A reference decision cites `file:line`.
+9. **What the program does, it says.** Every stage reports itself in the log, and a trace can show
+   what a client sent, so a fault is read rather than guessed - `docs/port/03-tracing.md`.
+10. **Every file is ASCII.** Write `-`, `->`, `=>`, `"`, `'`, `...`, `#`. Never rewrite a file with a
+    `Get-Content` / `Set-Content` round trip.
+11. **A move inside this tree is additive.** Copy into the new home, re-export at the old path, delete
+    the old copy, in one commit. The compiler is then the complete list of callers.
+12. **Say the short true thing.** A correction replaces the text it corrects; it is never appended
+    beside it, in a file or in an answer.
 
 ### Before any change: the pre-flight sentence
 
 One sentence: what changes, in which message or code path, and why it is not simply copying the
-reference. If it contains anything the command did not ask for, stop and ask. Name the source as
-`file:line` in the reference and quote it. "I believe" is not a source.
+reference. If it contains anything the command did not ask for, stop and ask. "I believe" is not a
+source.
 
 ## Why the separation is the point
 
@@ -144,8 +154,8 @@ the client is the judge rather than a test.
 | the reference's measured structure, and the port order | `docs/port/01-structure.md` |
 | the wire facts this tree uses, and what it does not know yet | `docs/port/02-wire.md` |
 | what the server reports, and how to switch on its traces | `docs/port/03-tracing.md` |
-| which settings there are, how a file is written, and which settings still live in code | `docs/port/04-configuration.md` |
-| the configuration reader | `common/src/Configuration/`, and `Json.rs` in it for the format |
+| every setting, where it is set, and what is not a setting | `docs/port/04-configuration.md` |
+| the settings reader | `common/src/Configuration/`, and `Json.rs` in it for the format |
 | a decision taken away from the reference, and why | `docs/decisions/` |
 | workspace, dependency order, lint policy | `Cargo.toml` |
 | the byte buffer | `shared/src/Packets/` |
@@ -156,6 +166,3 @@ the client is the judge rather than a test.
 | the hook registry | `scripts/src/ScriptMgr/` |
 | one config file per program | `authserver/authserver.json.dist`, `worldserver/worldserver.json.dist` |
 | this machine's cargo | `C:\Users\Apo\.cargo\bin\cargo.exe` |
-
-A correction replaces the text it corrects. It is never appended beside the old text, in a file
-or in an answer.

@@ -57,7 +57,7 @@ Each stage ends with the reference's behaviour reproduced. Where the client can 
 the client is the judge, not a test.
 
 1. **`common/`** - Configuration, Logging, Platform, Threading, Utilities. This stage's proof is
-   that both programs read their conf file and log what they read.
+   that both programs read their settings file and log what they read.
 2. **`database/`** - the connection, statements, results, the worker pool, then `Updater/`. Proof:
    the schema applies and `schema_version` records it.
 3. **`shared/src/Network/`** - `AsyncAcceptor` -> a listener, `NetworkThread` -> N workers, `Socket`,
@@ -81,7 +81,7 @@ Updated as stages land, because this is a statement of today and not of intent.
 
 | stage | state, and what proves it |
 |---|---|
-| `common/` Configuration | done - both programs read their conf file; `5ac97ba` |
+| `common/` Configuration | done - both programs read their settings file, JSON, through one reader; `5ac97ba`, `30c01ec` |
 | `common/` Logging | done - both programs log through the appender chain, and write the same lines to console and file; `8475380` |
 | `common/` Utilities | partly - `GetPID` and `CreatePIDFile`; the rest arrives with the stage that calls it; `9087e75` |
 | `common/` Cryptography | started - RC4, against three published vectors; `3463ed2` |
