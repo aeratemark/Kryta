@@ -35,6 +35,23 @@ pub struct MapSpawn {
     pub plane: i16,
 }
 
+/// Where a portal crossing puts a character: the destination's entry for the map it came from (R21).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Arrival {
+    /// The map the character arrives on.
+    pub map_id: u32,
+    /// The map it left.
+    pub from_map: u32,
+    /// The point, in the game's own units.
+    pub x: f32,
+    /// The point's other axis.
+    pub y: f32,
+    /// Which plane it is on.
+    pub plane: i16,
+}
+
+const SELECT_ARRIVALS: &str = "SELECT \"map_id\"::bigint, \"from_map\"::bigint, \"x\", \"y\", \"plane\"::bigint FROM \"map_arrival\" ORDER BY \"map_id\", \"from_map\"";
+
 const SELECT_MAPS: &str = "SELECT \"id\"::bigint, \"type\"::bigint, \"file_id\"::bigint, \"name\", \"party_cap\"::bigint FROM \"map\" ORDER BY \"id\"";
 
 const SELECT_SPAWNS: &str = "SELECT \"map_id\"::bigint, \"idx\"::bigint, \"x\", \"y\", \"plane\"::bigint FROM \"map_spawn\" ORDER BY \"map_id\", \"idx\"";
@@ -85,6 +102,26 @@ impl DatabaseMaps {
             .collect::<Result<Vec<_>, String>>()?;
 
         Ok((maps, spawns))
+    }
+
+    /// Every arrival point, for the portal crossings R21 decides.
+    pub fn arrivals(&self) -> Result<Vec<Arrival>, String> {
+        self.query(SELECT_ARRIVALS)?
+            .iter()
+            .map(|row| {
+                Ok(Arrival {
+                    map_id: read_number(row, "map_id")? as u32,
+                    from_map: read_number(row, "from_map")? as u32,
+                    x: row
+                        .try_get::<_, f32>("x")
+                        .map_err(|error| format!("column x: {error}"))?,
+                    y: row
+                        .try_get::<_, f32>("y")
+                        .map_err(|error| format!("column y: {error}"))?,
+                    plane: read_number(row, "plane")? as i16,
+                })
+            })
+            .collect()
     }
 
     /// Add a spawn point to a map at its next free index, and answer that index.

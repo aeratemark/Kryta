@@ -158,8 +158,8 @@ pub fn worlds(manage: &Manage) -> Response {
     page("worlds", &body)
 }
 
-/// The content: the world's maps and their spawn points, and the item templates, read through the
-/// nouns' own repositories.
+/// The content: the world's maps and their spawn and arrival points, and the item templates, read
+/// through the nouns' own repositories.
 pub fn content(manage: &Manage) -> Response {
     let Some((maps, spawns)) = manage.list_maps() else {
         return Response::html(
@@ -167,6 +167,7 @@ pub fn content(manage: &Manage) -> Response {
             message("No world database is configured in manage.json, so there is no content to show."),
         );
     };
+    let arrivals = manage.list_arrivals().unwrap_or_default();
 
     let mut rows = String::new();
     for map in &maps {
@@ -195,7 +196,7 @@ pub fn content(manage: &Manage) -> Response {
              x <input type=\"text\" name=\"x\" size=\"8\"> \
              y <input type=\"text\" name=\"y\" size=\"8\"> \
              plane <input type=\"text\" name=\"plane\" size=\"3\" value=\"0\"> \
-             <button type=\"submit\">add a spawn point</button></form></td></tr>\n",
+             <button type=\"submit\">add a spawn point</button></form></td><td>{arrivals}</td></tr>\n",
             id = map.id,
             kind = map.kind,
             file_id = map.file_id,
@@ -204,6 +205,23 @@ pub fn content(manage: &Manage) -> Response {
                 "<em>none</em>".to_string()
             } else {
                 points.join("<br>")
+            },
+            arrivals = {
+                let points: Vec<String> = arrivals
+                    .iter()
+                    .filter(|arrival| arrival.map_id == map.id)
+                    .map(|arrival| {
+                        format!(
+                            "from {}: x {:.2} y {:.2} plane {}",
+                            arrival.from_map, arrival.x, arrival.y, arrival.plane
+                        )
+                    })
+                    .collect();
+                if points.is_empty() {
+                    "<em>none</em>".to_string()
+                } else {
+                    points.join("<br>")
+                }
             },
         ));
     }
@@ -238,7 +256,8 @@ pub fn content(manage: &Manage) -> Response {
          <code>kryta_world.map</code> and <code>kryta_world.map_spawn</code>. A spawn point added \
          here is where every entry may place a character, scattered per R13; one removed is one the \
          load will not pick again.</p>\n\
-         <table>\n<tr><th>id</th><th>kind</th><th>file id</th><th>name</th><th>spawn points</th></tr>\n\
+         <table>\n<tr><th>id</th><th>kind</th><th>file id</th><th>name</th><th>spawn points</th>\
+         <th>arrivals</th></tr>\n\
          {rows}</table>\n\
          <p class=\"note\">{maps} map(s), {spawns} spawn point(s). Kinds: 0 outpost, 1 explorable, \
          11 character creation.</p>\n\

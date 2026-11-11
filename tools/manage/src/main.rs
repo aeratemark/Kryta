@@ -204,6 +204,11 @@ impl Manage {
         maps.load().ok()
     }
 
+    /// The arrival points, when a world database is configured: where a portal crossing lands (R21).
+    pub fn list_arrivals(&self) -> Option<Vec<game::maps::Arrival>> {
+        self.maps.as_ref()?.arrivals().ok()
+    }
+
     /// The item templates, when a world database is configured.
     pub fn list_items(&self) -> Option<Vec<game::data_stores::ItemDefinition>> {
         let items = self.items.as_ref()?;

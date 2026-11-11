@@ -54,6 +54,8 @@ pub struct World {
     creation: crate::creation::Tables,
     /// Where a character may stand on entry, per map (R13).
     spawns: Vec<crate::maps::MapSpawn>,
+    /// Where a portal crossing puts a character, per destination and source map (R21).
+    arrivals: Vec<crate::maps::Arrival>,
     /// The numbers this world runs by: a district's allotment, a party's cap, the spawn scatter and the
     /// rest of the rules that name a number (docs/game-rules.md, R53).
     settings: world_config::WorldConfig,
@@ -73,6 +75,7 @@ impl World {
             maps: Vec::new(),
             creation: crate::creation::Tables::default(),
             spawns: Vec::new(),
+            arrivals: Vec::new(),
             settings: world_config::WorldConfig::default(),
             districts: Arc::new(Mutex::new(crate::districts::Districts::new())),
             templates: Vec::new(),
@@ -160,13 +163,15 @@ impl World {
         let (records, spawns) = maps.load()?;
         self.maps = records;
         self.spawns = spawns;
+        self.arrivals = maps.arrivals()?;
         log.out(
             LogLevel::Info,
             "server.worldserver",
             format!(
-                "{} map(s) and {} spawn point(s) read from the world database.",
+                "{} map(s), {} spawn point(s) and {} arrival point(s) read from the world database.",
                 self.maps.len(),
-                self.spawns.len()
+                self.spawns.len(),
+                self.arrivals.len()
             ),
         );
         Ok(self.maps.len())
@@ -182,6 +187,11 @@ impl World {
     /// Every spawn point this world holds.
     pub fn spawns(&self) -> &[crate::maps::MapSpawn] {
         &self.spawns
+    }
+
+    /// Every arrival point this world holds: where a portal crossing on a map lands (R21).
+    pub fn arrivals(&self) -> &[crate::maps::Arrival] {
+        &self.arrivals
     }
 
     /// Where a character may stand on entry, for one map (R13).
