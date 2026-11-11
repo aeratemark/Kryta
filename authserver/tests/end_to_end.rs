@@ -493,6 +493,27 @@ fn an_end_to_end_login_and_load_against_the_live_programs() {
         "the settings block the login carries is the row's own"
     );
 
+    // 5b. The district list the character screen's world map asks for (R16): a transaction, a game
+    // type, a territory and a mission; answered with the one district a world opens to begin with.
+    let mut query = vec![0u8; 18];
+    query[0..2].copy_from_slice(&0x800Bu16.to_le_bytes());
+    query[2..6].copy_from_slice(&42u32.to_le_bytes());
+    query[10..14].copy_from_slice(&1u32.to_le_bytes());
+    let mut scrambled = query;
+    sending.apply(&mut scrambled);
+    stream.write_all(&scrambled).expect("the district list query");
+    let answered = read_quiet(&mut stream, &mut reading);
+    assert_eq!(
+        answered.len(),
+        29,
+        "the district list is the reference's own shape: {}",
+        shared::network::socket::hex(&answered)
+    );
+    assert_eq!(&answered[..2], &[0x1A, 0x00], "the counts message");
+    assert_eq!(&answered[2..6], &42u32.to_le_bytes(), "the transaction is echoed");
+    assert_eq!(answered[6], 11, "eleven language pairs");
+    assert_eq!(&answered[7..9], &[0, 1], "language 0 has one district");
+
     // 6. The map request: the client names the map it wants, and the login answers with the world it
     // was told to dial and records the hand-off the world claims (R9). The wire is the traced six
     // dwords: request, map type, map, region, district, language.
