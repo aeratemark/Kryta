@@ -26,6 +26,17 @@ pub trait Session: Send + 'static {
     fn run(self: Box<Self>, io: SessionIo) -> SessionFuture;
 }
 
+/// What a bounded read answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadOutcome {
+    /// This many bytes arrived.
+    Read(usize),
+    /// The peer closed.
+    Closed,
+    /// Nothing arrived within the bound.
+    TimedOut,
+}
+
 /// The stream a session talks through.
 pub struct SessionIo {
     stream: TcpStream,
@@ -111,8 +122,7 @@ impl SessionIo {
     }
 
     /// Read into a buffer, answering how many bytes arrived. Zero means the peer closed.
-    pub async fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        let read = self.stream.read(buffer).await;
+    pub async fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {        let read = self.stream.read(buffer).await;
         if let Ok(count) = &read {
             self.received += count;
             if *count == 0 {
@@ -133,6 +143,21 @@ impl SessionIo {
             }
         }
         read
+    }
+
+    /// Read into a buffer, but give up after `wait` - what a world's tick needs: a loaded map sends
+    /// its tick on time whether or not the client says anything.
+    pub async fn read_timeout(
+        &mut self,
+        buffer: &mut [u8],
+        wait: std::time::Duration,
+    ) -> std::io::Result<ReadOutcome> {
+        match tokio::time::timeout(wait, self.read(buffer)).await {
+            Ok(Ok(0)) => Ok(ReadOutcome::Closed),
+            Ok(Ok(count)) => Ok(ReadOutcome::Read(count)),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Ok(ReadOutcome::TimedOut),
+        }
     }
 
     /// Write everything in a buffer.

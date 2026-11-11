@@ -271,6 +271,44 @@ impl DatabaseCharacters {
             .collect()
     }
 
+    /// Move one of a character's items to a bag slot, and answer whether the row was the character's.
+    ///
+    /// The item's own row is the state: a drag that the client drew is this update, and the answer to
+    /// the client is the placement it already knows (`0x013E`).
+    pub fn move_item(
+        &self,
+        uuid: &str,
+        item_id: u32,
+        bag_id: u16,
+        slot: u8,
+    ) -> Result<bool, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "UPDATE \"item_instance\" SET \"bag_id\" = $1, \"slot\" = $2 \
+                 WHERE \"character_uuid\" = $3 AND \"item_id\" = $4 RETURNING 1",
+                vec![
+                    Param::Integer(i64::from(bag_id)),
+                    Param::Integer(i64::from(slot)),
+                    Param::Text(uuid.to_string()),
+                    Param::Integer(i64::from(item_id)),
+                ],
+            ),
+            Err(_) => return Err("the character database pool is poisoned".to_string()),
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(!rows.is_empty()),
+            Ok(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    format!("Cannot move item {item_id} of {uuid}: {error}"),
+                );
+                Err(error)
+            }
+            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+        }
+    }
+
     /// One row, as the list reads it.
     fn character(&self, row: &postgres::Row) -> Option<Character> {
         let uuid_text: String = row.get("uuid");

@@ -85,6 +85,8 @@ client got inside the game:
 | `... map M ('name', type T) is loading - N message(s), B bytes: ... (district D, language L).` | an outpost or explorable load went out, and D/L are the district and language `0x019A` reports - the district the copy the connection entered holds (R22, R57) |
 | `... the ping pair` / `... the inventory and the map's record` / `... the entry position` / `... the player and the load's last message` | the four answers of a measured load, each logged with what it carried - the last one ends with the load's own message |
 | `... a ping on the loaded map, N bytes.` | the client is awake on a loaded map; the reference answers it with nothing, and so does this |
+| `... item N is not the character's, so its move to bag B slot S is refused.` | a drag that names an item the character does not hold: nothing is written, and the client is told nothing |
+| the world sends `0x001E` every 100 ms once a map is loaded | the simulation's tick; its absence is a client whose world time is frozen |
 | `... was empty for H s and is disposed (R37, R40).` | the instance tick found a copy that had nobody inside past the hold, and its row is deleted - the count in the world's status line drops |
 | `Disposed N instance row(s) left by an earlier run; a fresh world has nobody inside it.` | start-up found copies a previous run opened; they cannot have members, so they are disposed rather than held |
 | `... district D of map M is full (...) and cannot be entered; the connection is closed ...` | a travel named a full district and R58 says it is refused; the refusal's own wire shape is not captured, so the connection is closed rather than lied to |

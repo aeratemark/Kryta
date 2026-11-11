@@ -24,7 +24,7 @@ use shared::cryptography::AuthCrypt;
 use shared::network::socket::{Session, SessionFuture, SessionIo};
 
 use crate::server::packets::{
-    character_packets, creation_load_block, instance_packets, misc_packets,
+    character_packets, creation_load_block, instance_packets, item_packets, misc_packets,
 };
 use crate::server::protocol::GameVersion;
 use crate::server::protocol::FrameError;
@@ -59,6 +59,14 @@ const CHAR_CREATION_CHANGE_PROF: u16 = 0x8060;
 const CHAR_CREATION_CONFIRM: u16 = 0x808B;
 /// `GAME_CMSG_PING_REQUEST`: two bytes on the gameplay connection.
 const GAME_PING: u16 = 0x800D;
+
+/// `GAME_CMSG_ITEM_MOVE` (`0x8072`): a drag in the inventory - the item, the bag and the slot.
+const CLIENT_ITEM_MOVE: u16 = 0x8072;
+
+/// The simulation's tick period: the reference sent one `0x001E` every 90-110 ms (average 105 ms over
+/// 1780 ticks, `recordings/asura/feature/travel/first-crossing-20261031.jsonl`), so this ticks at
+/// 100 ms and says nothing of its own: the client's world time is this world's tick.
+const SIMULATION_TICK_MS: u64 = 100;
 
 /// The statement a creation confirm runs.
 ///
@@ -850,6 +858,8 @@ impl WorldSession {
         let mut pending: Vec<u8> = Vec::new();
         let mut buffer = vec![0u8; 1024];
         let inventory = self.load_inventory(sheet);
+        let mut tick: u32 = 500;
+        let mut loaded = false;
 
         loop {
             while let Some(bytes) = pending.first_chunk::<2>() {
@@ -925,8 +935,9 @@ impl WorldSession {
                         frames.push(misc_packets::world_simulation_tick(500));
                         self.send(io, peer, crypt, &frames, "the entry position").await;
                     }
-                    // The players request: the PvP halves, the character's own body, then the load
-                    // is over.
+                    // The players request: the PvP halves and the character's own body, and the load
+                    // is over. The connection stays: from here the world ticks it (R33) and answers
+                    // what the client asks on a live map.
                     instance_packets::CLIENT_LOAD_REQUEST_PLAYERS => {
                         let frames = vec![
                             misc_packets::pvp_update_unlocked_skills(&[]),
@@ -943,8 +954,62 @@ impl WorldSession {
                                 map.id, sheet.name
                             ),
                         );
-                        let _ = message;
-                        return;
+                        loaded = true;
+                    }
+                    // A drag in the inventory: where the item goes is a row, and the client is told
+                    // the same placement back. `0x8072` is the client's own `9` bytes - the item, the
+                    // bag and the slot - and `0x013E` is the placement the client already knows.
+                    CLIENT_ITEM_MOVE => {
+                        match item_move(&message) {
+                            Some((item_id, bag_id, slot)) => {
+                                let characters = self.characters.as_ref().map(|pool| {
+                                    crate::characters::DatabaseCharacters::new(
+                                        std::sync::Arc::clone(pool),
+                                        self.log.clone(),
+                                    )
+                                });
+                                let stored = match characters {
+                                    Some(characters) => characters.move_item(
+                                        &crate::characters::uuid_text(&sheet.uuid),
+                                        item_id,
+                                        bag_id,
+                                        slot,
+                                    ),
+                                    None => Ok(false),
+                                };
+                                match stored {
+                                    Ok(true) => {
+                                        let frame = item_packets::item_move_to_location(
+                                            item_packets::ITEM_STREAM,
+                                            item_id,
+                                            bag_id,
+                                            slot,
+                                        );
+                                        self.send(io, peer, crypt, &[frame], "the item's new place")
+                                            .await;
+                                    }
+                                    Ok(false) => self.say(
+                                        LogLevel::Info,
+                                        format!(
+                                            "Gameplay connection from {peer}: item {item_id} is not the character's, so its move to bag {bag_id} slot {slot} is refused."
+                                        ),
+                                    ),
+                                    Err(error) => self.say(
+                                        LogLevel::Warn,
+                                        format!(
+                                            "Gameplay connection from {peer}: the item move could not be written: {error}"
+                                        ),
+                                    ),
+                                }
+                            }
+                            None => self.say(
+                                LogLevel::Warn,
+                                format!(
+                                    "Gameplay connection from {peer}: an item move of {} bytes cannot be read.",
+                                    message.len()
+                                ),
+                            ),
+                        }
                     }
                     // The client's own ping on a live connection: the reference logs it and
                     // answers nothing, so this does the same.
@@ -971,9 +1036,25 @@ impl WorldSession {
                 }
             }
 
-            match io.read(&mut buffer).await {
-                Ok(0) => return,
-                Ok(read) => {
+            // The simulation's tick (R33): while the map is loaded, one every hundred milliseconds -
+            // the reference's own cadence, ~105 ms over 1780 ticks in
+            // `recordings/asura/feature/travel/first-crossing-20261031.jsonl`.
+            let read = io
+                .read_timeout(
+                    &mut buffer,
+                    std::time::Duration::from_millis(SIMULATION_TICK_MS),
+                )
+                .await;
+            match read {
+                Ok(shared::network::socket::ReadOutcome::TimedOut) => {
+                    if loaded {
+                        tick = tick.wrapping_add(1);
+                        let frame = misc_packets::world_simulation_tick(tick);
+                        self.send(io, peer, crypt, &[frame], "a tick").await;
+                    }
+                }
+                Ok(shared::network::socket::ReadOutcome::Closed) => return,
+                Ok(shared::network::socket::ReadOutcome::Read(read)) => {
                     // The asks after the seed are scrambled with the key both sides derive, the
                     // same as in the run loop above.
                     let mut plain = buffer[..read].to_vec();
@@ -1280,6 +1361,21 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
+/// The item, the bag and the slot of a client's `0x8072`, or `None` when the message is short.
+///
+/// Source: the client's own message, measured in the client captures as `GAME_CMSG_ITEM_MOVE`
+/// (`recordings/client/feature/maps/`, a 9-byte frame: the header, the item, the bag and the slot).
+fn item_move(message: &[u8]) -> Option<(u32, u16, u8)> {
+    let item = message.get(2..6)?;
+    let bag = message.get(6..8)?;
+    let slot = message.get(8)?;
+    Some((
+        u32::from_le_bytes([item[0], item[1], item[2], item[3]]),
+        u16::from_le_bytes([bag[0], bag[1]]),
+        *slot,
+    ))
+}
+
 impl Session for WorldSession {
     fn run(self: Box<Self>, mut io: SessionIo) -> SessionFuture {
         Box::pin(async move {
@@ -1293,8 +1389,7 @@ impl Session for WorldSession {
 }
 
 /// Read exactly as many bytes as the slice holds.
-async fn read_exactly(io: &mut SessionIo, out: &mut [u8]) -> Result<(), String> {
-    let mut filled = 0;
+async fn read_exactly(io: &mut SessionIo, out: &mut [u8]) -> Result<(), String> {    let mut filled = 0;
     while filled < out.len() {
         match io.read(&mut out[filled..]).await {
             Ok(0) => return Err("the peer closed".to_string()),
@@ -1734,6 +1829,17 @@ Logger.root = 6,Console
         );
         assert_eq!(&answered[40 + player.len()..], &[0x8E, 0x01], "and the load is over");
 
+        // 8. And the connection stays: the world ticks it, one per interval, with no prompt.
+        let mut tick = vec![0u8; 6];
+        client.read_exact(&mut tick).unwrap();
+        reading.apply(&mut tick);
+        assert_eq!(&tick[..2], &[0x1E, 0x00], "a world simulation tick");
+        assert_eq!(
+            &tick[2..],
+            &501u32.to_le_bytes(),
+            "the next tick after the load's first, 500"
+        );
+
         manager.stop_network();
         log.shutdown();
     }
@@ -1944,6 +2050,30 @@ Logger.root = 6,Console
             "the outpost's file, so the record decided the map"
         );
         assert_eq!(&spawn[26..32], &[0x1E, 0x00, 0xF4, 0x01, 0x00, 0x00], "the first tick");
+
+        // 4c. A drag in the inventory: the item's row moves, and the client is told the placement.
+        let mut ask = vec![0x72, 0x80];
+        ask.extend_from_slice(&1u32.to_le_bytes());
+        ask.extend_from_slice(&3u16.to_le_bytes());
+        ask.push(7);
+        sending.apply(&mut ask);
+        client.write_all(&ask).unwrap();
+        let mut moved = vec![0u8; 11];
+        client.read_exact(&mut moved).unwrap();
+        reading.apply(&mut moved);
+        assert_eq!(&moved[..2], &[0x3E, 0x01], "the placement");
+        assert_eq!(&moved[2..4], &item_packets::ITEM_STREAM.to_le_bytes(), "the stream");
+        assert_eq!(&moved[4..8], &1u32.to_le_bytes(), "the item");
+        assert_eq!(&moved[8..10], &3u16.to_le_bytes(), "the bag");
+        assert_eq!(moved[10], 7, "the slot");
+        let held = crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
+            .items_of(&character_text)
+            .expect("the item rows are readable");
+        let moved_row = held
+            .iter()
+            .find(|row| row.item_id == 1)
+            .expect("the item is one of the character's");
+        assert_eq!((moved_row.bag_id, moved_row.slot), (3, 7), "the row moved with it");
 
         // 5. The record is claimed once: a second claim finds nothing.
         let claimed = crate::maps::DatabaseTravels::new(Arc::clone(&login), log.clone())

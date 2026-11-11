@@ -26,5 +26,5 @@ pub use async_acceptor::AsyncAcceptor;
 pub use http::{HttpError, MAX_REQUEST_BYTES, Request, Response, read_request, write_response};
 pub use network_thread::{NetworkThread, NetworkThreadHandle};
 pub use relay::{RelayError, Relayed};
-pub use socket::{Session, SessionFactory, SessionFuture, SessionIo};
+pub use socket::{ReadOutcome, Session, SessionFactory, SessionFuture, SessionIo};
 pub use socket_mgr::{select_thread_with_min_connections, SocketMgr};
