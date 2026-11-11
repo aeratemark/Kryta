@@ -5,7 +5,8 @@
 //! waits for its own READY line, and drives a creation screen and a load of map 148 exactly as the
 //! manual test says a client does - the version message, the key exchange, the creation confirm, the
 //! asks the load is built from, the travel request and the ticks. What is proven is the program: its
-//! configuration reading, its listener, its three pools and its sessions, together.
+//! configuration reading, its listener, its three pools and its sessions, together - and the item
+//! stream it answers with is compared byte for byte with the stream the character's own rows draw.
 //!
 //! It is `#[ignore]` because it needs the databases the program's configuration names, and it is a
 //! **live** test: it writes a character row and an instance row, then removes both.
@@ -393,6 +394,46 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         assert_eq!(&ping[..2], &[0x0C, 0x00], "the ping request");
         assert_eq!(&ping[2..4], &[0x0D, 0x00], "its reply");
 
+        // What the items answer must be, drawn from the character's own rows: the creation setting's
+        // bags, the templates the world database holds, and the items the confirm wrote. This is the
+        // block the client sees, so it is compared byte for byte, not only by its headers.
+        let tables = game::creation::Tables::load(
+            "../data/inventory.json",
+            "../data/equipment.json",
+            &Log::new(),
+        )
+        .expect("the creation data");
+        let templates = game::data_stores::DatabaseItems::new(
+            Arc::clone(&world_pool),
+            Log::new(),
+        )
+        .list()
+        .expect("the item templates are readable");
+        let held = game::characters::DatabaseCharacters::new(
+            Arc::clone(&characters),
+            Log::new(),
+        )
+        .items_of(&uuid_text)
+        .expect("the character's items are readable");
+        assert!(!held.is_empty(), "the load had items to draw");
+        let inventory = game::creation::inventory_from_held(
+            game::creation::bags(&tables),
+            &held,
+            &templates,
+            &Log::new(),
+        );
+        let mut expected_items = game::creation::load_item_stream(&inventory, 0);
+        expected_items.push(game::server::packets::misc_packets::hard_mode_unlocked(1));
+        expected_items.push(game::server::packets::character_packets::character_update_info());
+        expected_items.push(game::server::packets::misc_packets::map_update_current(148, 0));
+        expected_items.push(instance_packets::ready_for_map_spawn(0));
+        expected_items.push(instance_packets::instance_manifest_phase(0));
+        expected_items.push(instance_packets::instance_manifest_phase(1));
+        expected_items.push(instance_packets::instance_manifest_done(2, 877, 0));
+        expected_items.push(instance_packets::instance_manifest_phase(0));
+        expected_items.push(instance_packets::instance_manifest_phase(1));
+        expected_items.push(instance_packets::instance_manifest_done(0, 148, 0));
+
         // The items ask: the character's items, the map's record and the manifest. The answer ends
         // at the manifest's second end message.
         let mut ask = vec![0x91, 0x80, 0x00, 0x00];
@@ -411,6 +452,22 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             0x0198,
             "the manifest ends the answer"
         );
+        // Byte for byte: the same stream the creation set would draw, from the rows that are this
+        // character's own. A change to the item stream or to the rows breaks here.
+        let mut whole = Vec::new();
+        for frame in &expected_items {
+            whole.extend_from_slice(frame);
+        }
+        let mut answered = Vec::new();
+        for (_, frame) in &items {
+            answered.extend_from_slice(frame);
+        }
+        assert_eq!(
+            answered.len(),
+            whole.len(),
+            "the items answer is the same size as the set draws"
+        );
+        assert_eq!(answered, whole, "the items answer is the set's own bytes");
 
         // The spawn ask: where it stands, and the first tick.
         let mut ask = vec![0x88, 0x80];
