@@ -349,6 +349,15 @@ fn run(args: &[String]) -> Result<(), String> {
         ),
     );
 
+    // The accounts are rows in the login database, not a file: they are the server's state, and an
+    // operator configures the server rather than its people (`docs/decisions/0006`). This store is
+    // the game library's: a login session records the EULA version through it, and the
+    // administration tool reads the same table through the same code.
+    let game_accounts = std::sync::Arc::new(game::accounts::DatabaseAccounts::new(
+        std::sync::Arc::clone(&login),
+        log.clone(),
+    ));
+
     // The portal, when the configuration asks for it. It is served by this program rather than a
     // third one: it hands out the identity this program then resolves, and a third service is a third
     // thing to start before a client can log in - `docs/decisions/0003-portal-host.md`.
@@ -367,27 +376,26 @@ fn run(args: &[String]) -> Result<(), String> {
             report(&note);
         }
 
-        // The accounts are rows in the login database, not a file: they are the server's state, and
-        // an operator configures the server rather than its people (`docs/decisions/0006`).
-        let accounts = crate::server::DatabaseAccounts::new(
-            std::sync::Arc::clone(&login),
-            log.clone(),
-        );
-        let count = accounts.count().unwrap_or_else(|error| {
-            log.out(
-                LogLevel::Error,
-                "server.authserver",
-                format!("Cannot count the accounts: {error}"),
-            );
-            0
-        });
+        let count = game_accounts
+            .list()
+            .map(|accounts| accounts.len())
+            .unwrap_or_else(|error| {
+                log.out(
+                    LogLevel::Error,
+                    "server.authserver",
+                    format!("Cannot count the accounts: {error}"),
+                );
+                0
+            });
         log.out(
             LogLevel::Info,
             "server.authserver",
             format!("Portal: {count} account(s) in the login database, binding {portal_bind}."),
         );
 
-        let portal = std::sync::Arc::new(game::portal::Portal::new(accounts));
+        let portal = std::sync::Arc::new(game::portal::Portal::new(
+            crate::server::DatabaseAccounts::new(std::sync::Arc::clone(&login), log.clone()),
+        ));
         let factory: SessionFactory = {
             let portal = std::sync::Arc::clone(&portal);
             let log = Some(log.clone());
@@ -559,6 +567,7 @@ fn run(args: &[String]) -> Result<(), String> {
         let front_door = std::sync::Arc::clone(&front_door);
         let characters = std::sync::Arc::clone(&characters_store);
         let travels = std::sync::Arc::clone(&travels);
+        let accounts = std::sync::Arc::clone(&game_accounts);
         std::sync::Arc::new(move || {
             Box::new(
                 AuthSession::with_random_master(
@@ -568,7 +577,8 @@ fn run(args: &[String]) -> Result<(), String> {
                     Some(std::sync::Arc::clone(&front_door)),
                     Some(std::sync::Arc::clone(&characters)),
                 )
-                .with_travels(std::sync::Arc::clone(&travels)),
+                .with_travels(std::sync::Arc::clone(&travels))
+                .with_accounts(std::sync::Arc::clone(&accounts)),
             ) as Box<dyn Session>
         })
     };

@@ -98,6 +98,9 @@ pub struct AuthSession {
     /// The travel table in the login database, when the program opened one: a `0x8029` answer
     /// records the hand-off the world then claims (`docs/port/06-world-plan.md`, "The three seams").
     travels: Option<std::sync::Arc<game::maps::DatabaseTravels>>,
+    /// The account table, when the program opened one: the EULA version a client accepts is
+    /// recorded there, which is what stops it asking again.
+    accounts: Option<std::sync::Arc<game::accounts::DatabaseAccounts>>,
 }
 
 impl AuthSession {
@@ -121,7 +124,14 @@ impl AuthSession {
             front_door,
             characters,
             travels: None,
+            accounts: None,
         }
+    }
+
+    /// Give the session an account table to record the EULA version in.
+    pub fn with_accounts(mut self, accounts: std::sync::Arc<game::accounts::DatabaseAccounts>) -> Self {
+        self.accounts = Some(accounts);
+        self
     }
 
     /// Give the session a travel table to record a hand-off in.
@@ -497,14 +507,40 @@ impl AuthSession {
 
             ACCEPT_EULA => {
                 // Reference: the EULA handler records the version and sends nothing at all
-                // (`AuthSrv.c:1270-1275`); the client proceeds on its own.
+                // (`AuthSrv.c:1270-1275`); the client proceeds on its own. The column is what stops
+                // it asking again on the next login.
                 let version = body.first().copied().unwrap_or(0);
-                self.say(
-                    LogLevel::Info,
-                    format!(
-                        "Connection from {peer}: the EULA was accepted, version {version}; the reference answers this with nothing."
+                match (self.accounts.as_ref(), self.account) {
+                    (Some(accounts), Some(account)) => {
+                        let user_id = game::characters::uuid_text(&account);
+                        match accounts.set_eula_for_user(&user_id, i64::from(version)) {
+                            Ok(true) => self.say(
+                                LogLevel::Info,
+                                format!(
+                                    "Connection from {peer}: the EULA version {version} is recorded for account {user_id}; the reference answers this with nothing."
+                                ),
+                            ),
+                            Ok(false) => self.say(
+                                LogLevel::Warn,
+                                format!(
+                                    "Connection from {peer}: the EULA version {version} is accepted, and no account row is keyed {user_id}."
+                                ),
+                            ),
+                            Err(error) => self.say(
+                                LogLevel::Error,
+                                format!(
+                                    "Connection from {peer}: the EULA version could not be recorded: {error}"
+                                ),
+                            ),
+                        }
+                    }
+                    _ => self.say(
+                        LogLevel::Info,
+                        format!(
+                            "Connection from {peer}: the EULA was accepted, version {version}, but no account is known on this connection yet, so it is not recorded; the reference answers this with nothing."
+                        ),
                     ),
-                );
+                }
                 true
             }
 
@@ -1447,10 +1483,24 @@ mod tests {
             std::sync::Arc::clone(&login),
             log.clone(),
         ));
+        // The account the login resolves: a row with the user id the login message presents, so the
+        // EULA it accepts afterward has somewhere to be recorded.
+        let accounts = std::sync::Arc::new(game::accounts::DatabaseAccounts::new(
+            std::sync::Arc::clone(&login),
+            log.clone(),
+        ));
+        let eula_user = "eula-test@example.com";
+        accounts
+            .create(eula_user, &game::characters::uuid_text(&[0x11u8; 16]), "token")
+            .expect("the account is written");
+        accounts
+            .set_eula(eula_user, 0)
+            .expect("the account starts unaccepted");
 
         let factory: SessionFactory = {
             let log = log.clone();
             let travels = std::sync::Arc::clone(&travels);
+            let accounts = std::sync::Arc::clone(&accounts);
             let front_door = Some(one_world(7, 6113));
             Arc::new(move || {
                 Box::new(
@@ -1462,7 +1512,8 @@ mod tests {
                         front_door.clone(),
                         None,
                     )
-                    .with_travels(std::sync::Arc::clone(&travels)),
+                    .with_travels(std::sync::Arc::clone(&travels))
+                    .with_accounts(std::sync::Arc::clone(&accounts)),
                 ) as Box<dyn Session>
             })
         };
@@ -1502,6 +1553,30 @@ mod tests {
         let mut answer = vec![0u8; 700];
         client.read_exact(&mut answer).unwrap();
         reading.apply(&mut answer);
+
+        // The EULA the client accepts after its login: the version is recorded on the account row,
+        // and nothing is sent back (the reference's handler says nothing).
+        let mut segment = vec![0x26, 0x80, 0x1A];
+        sending.apply(&mut segment);
+        client.write_all(&segment).unwrap();
+        let mut eula = None;
+        for _ in 0..40 {
+            eula = {
+                let mut pool = login.lock().expect("the login pool");
+                let rows = pool
+                    .query_with(
+                        "SELECT \"eula\"::bigint FROM \"account\" WHERE \"username\" = $1",
+                        &[&eula_user],
+                    )
+                    .expect("the account row reads");
+                rows.first().map(|row| row.get::<usize, i64>(0))
+            };
+            if eula == Some(26) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert_eq!(eula, Some(26), "the EULA version is recorded");
 
         // The request for a map, with a district and a language of its own.
         let mut segment = vec![
@@ -1554,6 +1629,7 @@ mod tests {
         );
 
         manager.stop_network();
+        accounts.delete(eula_user).expect("the test's account goes");
         log.shutdown();
     }
 

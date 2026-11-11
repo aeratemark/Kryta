@@ -94,6 +94,18 @@ impl DatabaseAccounts {
         Ok(!rows.is_empty())
     }
 
+    /// Record the EULA version for the account the portal identified, by its own identifier.
+    ///
+    /// The client accepts the EULA before the character list with only a version byte; the session
+    /// knows the account by the portal's uuid, and this is the same column `set_eula` writes by name.
+    pub fn set_eula_for_user(&self, user_id: &str, version: i64) -> Result<bool, String> {
+        let rows = self.query(
+            "UPDATE \"account\" SET \"eula\" = $2::text::int WHERE \"user_id\" = $1::text RETURNING \"id\"::bigint",
+            vec![Param::Text(user_id.to_string()), Param::Text(version.to_string())],
+        )?;
+        Ok(!rows.is_empty())
+    }
+
     /// Remove an account. Its characters are the character database's business and are left alone.
     pub fn delete(&self, username: &str) -> Result<bool, String> {
         let rows = self.query(DELETE_ACCOUNT, vec![Param::Text(username.to_string())])?;
