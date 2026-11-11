@@ -84,6 +84,38 @@ impl DatabaseCharacters {
         self.read(&format!("{SELECT_CHARACTERS} ORDER BY \"name\""), Vec::new())
     }
 
+    /// Set a character's level - the row's own column, which a load reads back into the list and the
+    /// character's own body (R46, R48).
+    ///
+    /// Reference: `CharacterDatabase`'s level update, which the reference's console reaches. The
+    /// administration tool is the caller; the level's own range (1 to 20, R48) is the caller's check
+    /// because it is a rule of the game rather than of the row. Answers whether the character row is
+    /// there.
+    pub fn set_level(&self, uuid: &str, level: u8) -> Result<bool, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "UPDATE \"characters\" SET \"level\" = $1 WHERE \"uuid\" = $2 RETURNING 1",
+                vec![Param::Integer(i64::from(level)), Param::Text(uuid.to_string())],
+            ),
+            Err(_) => {
+                return Err("the character database pool is poisoned; the level was not set"
+                    .to_string());
+            }
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(!rows.is_empty()),
+            Ok(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    format!("Cannot set the level of {uuid}: {error}"),
+                );
+                Err(error)
+            }
+            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+        }
+    }
+
     /// Record the outpost a character is now in - R14's "last outpost visited", which a later load
     /// (and the login's list) places it at.
     ///

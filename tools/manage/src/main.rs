@@ -82,6 +82,7 @@ impl Manage {
             ("GET", "/settings") => pages::settings(self),
             ("GET", "/schema") => pages::schema(self),
             ("POST", "/characters/delete") => self.delete_character(request),
+            ("POST", "/characters/level") => self.set_level(request),
             ("POST", "/accounts/eula") => self.set_eula(request),
             ("POST", "/accounts/create") => self.create(request),
             ("POST", "/accounts/delete") => self.delete(request),
@@ -200,6 +201,44 @@ impl Manage {
         match characters.remove(&uuid) {
             Ok(true) => {
                 self.say(format!("character {uuid}: removed, with its items and unlocks"));
+                pages::redirect("/characters")
+            }
+            Ok(false) => Response::html(
+                404,
+                pages::message(&format!("No character has the id {uuid}.")),
+            ),
+            Err(error) => Response::html(
+                500,
+                pages::message(&format!("The character database said: {error}")),
+            ),
+        }
+    }
+
+    /// `POST /characters/level`: set a character's level, 1 to 20 (R46, R48). The range is the
+    /// game's rule, so it is checked here rather than in the row.
+    fn set_level(&self, request: &Request) -> Response {
+        let Some(characters) = self.characters.as_ref() else {
+            return Response::html(
+                503,
+                pages::message("No character database is configured in manage.json."),
+            );
+        };
+        let form = form_fields(&request.body_text());
+        let Some(uuid) = form.get("uuid").cloned() else {
+            return Response::html(400, pages::message("A request with no character id."));
+        };
+        let Some(level) = form.get("level").and_then(|value| value.parse::<u8>().ok()) else {
+            return Response::html(400, pages::message("A level is a number."));
+        };
+        if !(1..=20).contains(&level) {
+            return Response::html(
+                400,
+                pages::message("A level is between 1 and 20, the game's own range (R48)."),
+            );
+        }
+        match characters.set_level(&uuid, level) {
+            Ok(true) => {
+                self.say(format!("character {uuid}: level {level}"));
                 pages::redirect("/characters")
             }
             Ok(false) => Response::html(

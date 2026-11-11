@@ -166,7 +166,11 @@ pub fn characters(manage: &Manage) -> Response {
             "<tr><td><code>{name}</code></td><td><code>{uuid}</code></td>\
              <td>{campaign}</td><td>{level}</td><td>{outpost}</td><td>{items}</td>\
              <td>{unlocks}</td><td>{pvp}</td>\
-             <td><form method=\"post\" action=\"/characters/delete\" style=\"display:inline\">\
+             <td><form method=\"post\" action=\"/characters/level\" style=\"display:inline\">\
+             <input type=\"hidden\" name=\"uuid\" value=\"{uuid}\">\
+             level <input type=\"text\" name=\"level\" size=\"2\" value=\"{level}\">\
+             <button type=\"submit\">set</button></form>\
+             <form method=\"post\" action=\"/characters/delete\" style=\"display:inline\">\
              <input type=\"hidden\" name=\"uuid\" value=\"{uuid}\">\
              <button type=\"submit\">remove</button></form></td></tr>\n",
             name = escape(&character.name),
@@ -184,8 +188,8 @@ pub fn characters(manage: &Manage) -> Response {
         "<p class=\"note\">Every row of the character table, as the login's own list reads them: a \
          name, the id the client knows it by, its campaign, level, last outpost, how many items it \
          holds, the maps it may travel to (R12), and its PvP flag. A character is written by the \
-         creation confirm, not here; removing one deletes its row and its own records (its items \
-         and its unlocks).</p>\n\
+         creation confirm, not here; its level can be corrected (1 to 20, R48), and removing one \
+         deletes its row and its own records (its items and its unlocks).</p>\n\
          <table>\n<tr><th>name</th><th>uuid</th><th>campaign</th><th>level</th><th>last outpost</th>\
          <th>items</th><th>unlocks</th><th>PvP</th><th></th></tr>\n{rows}</table>\n\
          <p class=\"note\">{count} row(s).</p>",
