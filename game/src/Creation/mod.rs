@@ -437,7 +437,7 @@ pub fn inventory_block(inventory: &Inventory) -> Vec<Vec<u8>> {
 /// `recordings/gwps/world/load-stream.log` - `0x0144`, `0x0148`, the bag and item frames, `0x0147`
 /// four times, `0x0141`, then `0x00EA` to `0x00ED`. A map load carries no player-data end (`0x018A`):
 /// the reference sends the creation screen's wrapper and a map's stream do not share it.
-pub fn load_item_stream(inventory: &Inventory) -> Vec<Vec<u8>> {
+pub fn load_item_stream(inventory: &Inventory, gold: u32) -> Vec<Vec<u8>> {
     let mut frames = vec![
         item_packets::item_stream_create(item_packets::ITEM_STREAM, 0),
         item_packets::item_set_active_weapon_set(item_packets::ITEM_STREAM, 0),
@@ -451,7 +451,7 @@ pub fn load_item_stream(inventory: &Inventory) -> Vec<Vec<u8>> {
             0,
         ));
     }
-    frames.push(item_packets::update_gold_storage(item_packets::ITEM_STREAM, 0));
+    frames.push(item_packets::update_gold_storage(item_packets::ITEM_STREAM, gold));
     for header in [
         character_packets::FACTION_MAX_KURZICK,
         character_packets::FACTION_MAX_LUXON,

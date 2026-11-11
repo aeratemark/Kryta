@@ -39,13 +39,15 @@ use crate::world::World;
 pub(crate) const CREATION_AGENT: u32 = 1;
 
 /// What a load reads from the character's own row: the name it shows, the campaign and profession
-/// whose starting set its item stream carries, and the id its items are recorded under.
+/// whose starting set its item stream carries, the id its items are recorded under, and the gold it
+/// carries (R45: gold is per character).
 #[derive(Debug, Clone)]
 pub(crate) struct CharacterSheet {
     pub name: String,
     pub campaign: u8,
     pub profession: u8,
     pub uuid: [u8; 16],
+    pub gold: u32,
 }
 
 /// The client's asks on a gameplay connection, as the reference's dispatch reads them.
@@ -873,6 +875,7 @@ impl WorldSession {
             campaign: 0,
             profession: character_packets::DEFAULT_PROFESSION,
             uuid: version.character,
+            gold: 0,
         };
         let Some(pool) = self.characters.as_ref() else {
             return fallback;
@@ -880,7 +883,7 @@ impl WorldSession {
         let uuid = crate::characters::uuid_text(&version.character);
         let reply = match pool.lock() {
             Ok(pool) => pool.query_reply(
-                "SELECT \"name\", \"campaign\", \"primary_profession\" FROM \"characters\" WHERE \"uuid\" = $1",
+                "SELECT \"name\", \"campaign\", \"primary_profession\", \"gold\"::bigint FROM \"characters\" WHERE \"uuid\" = $1",
                 vec![Param::Text(uuid)],
             ),
             Err(_) => return fallback,
@@ -908,6 +911,7 @@ impl WorldSession {
                 campaign: row.get::<usize, i64>(1) as u8,
                 profession: row.get::<usize, i64>(2) as u8,
                 uuid: version.character,
+                gold: row.get::<usize, i64>(3) as u32,
             })
             .unwrap_or(fallback)
     }
@@ -969,7 +973,7 @@ impl WorldSession {
                     // The items ask: the inventory stream and the map's record, measured in one
                     // block. The manifest pair that ends it names the map in its second form.
                     instance_packets::CLIENT_LOAD_REQUEST_ITEMS => {
-                        let mut frames = crate::creation::load_item_stream(&inventory);
+                        let mut frames = crate::creation::load_item_stream(&inventory, sheet.gold);
                         frames.push(misc_packets::hard_mode_unlocked(1));
                         frames.push(character_packets::character_update_info());
                         frames.push(misc_packets::map_update_current(map.id as u16, 0));
@@ -2071,7 +2075,7 @@ Logger.root = 6,Console
         let inventory = world
             .creation()
             .inventory(0, character_packets::DEFAULT_PROFESSION);
-        let mut expected_items = crate::creation::load_item_stream(&inventory);
+        let mut expected_items = crate::creation::load_item_stream(&inventory, 0);
         expected_items.push(misc_packets::hard_mode_unlocked(1));
         expected_items.push(character_packets::character_update_info());
         expected_items.push(misc_packets::map_update_current(148, 0));
@@ -2261,8 +2265,8 @@ Logger.root = 6,Console
             )
             .unwrap();
             pool.query_with(
-                "INSERT INTO \"characters\" (\"uuid\", \"account_uuid\", \"name\", \"appearance\", \"primary_profession\", \"unlocked_professions\", \"campaign\", \"level\") \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                "INSERT INTO \"characters\" (\"uuid\", \"account_uuid\", \"name\", \"appearance\", \"primary_profession\", \"unlocked_professions\", \"campaign\", \"level\", \"gold\") \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
                 &[
                     &character_text,
                     &crate::characters::uuid_text(&account),
@@ -2272,6 +2276,7 @@ Logger.root = 6,Console
                     &2i64,
                     &0i64,
                     &1i64,
+                    &1234i64,
                 ],
             )
             .unwrap();
@@ -2360,7 +2365,7 @@ Logger.root = 6,Console
         let mut ask = vec![0x91, 0x80, 0x00, 0x00];
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
-        let mut expected_items = crate::creation::load_item_stream(&starting);
+        let mut expected_items = crate::creation::load_item_stream(&starting, 1234);
         expected_items.push(misc_packets::hard_mode_unlocked(1));
         expected_items.push(character_packets::character_update_info());
         expected_items.push(misc_packets::map_update_current(148, 0));
@@ -2655,8 +2660,8 @@ Logger.root = 6,Console
             &log,
         );
         assert_eq!(
-            crate::creation::load_item_stream(&from_rows),
-            crate::creation::load_item_stream(&expected),
+            crate::creation::load_item_stream(&from_rows, 0),
+            crate::creation::load_item_stream(&expected, 0),
             "the rows draw the same item stream the set does"
         );
 

@@ -57,7 +57,7 @@ The states are:
 | R50 skills: quests, trainers, capture | not started | `game/Skills/` is a stub |
 | R51 attribute points from level-ups | not started | |
 | R55 a quest affects only the log | not started | `game/Quests/` is a stub |
-| R45 gold is per character; the bank holds gold and materials | data | `characters.gold` written 0 at creation; no bank rows |
+| R45 gold is per character; the bank holds gold and materials | data | `characters.gold` is written 0 at creation and drawn into the load's `0x0141` from the row (`a_travel_record_decides_the_map_and_the_district`, gold 1234); nothing changes it yet, and no bank rows exist |
 | R49 Xunlai storage is per account | not started | |
 
 ## Items and commerce
