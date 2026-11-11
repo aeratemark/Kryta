@@ -134,7 +134,10 @@ trace diff, and it stays M3's acceptance criterion.
 
 1. The client obtains `user_id` and `session_id` (UUIDs) from the portal/web gate, not from us.
 2. It sends them in the login message on the auth connection: `AUTH_CMSG_PORTAL_ACCOUNT_LOGIN`
-   (`0x8038`, 150 bytes on the wire) carrying `user_id`, `session_id`, a character name and a type.
+   (`0x8038`: `user_id`, `session_id`, a character name and a type, the last two counted UTF-16
+   strings). The wire size follows the two counts - the reference's own traced login message is 54
+   bytes (`authserver/src/Server/stream.rs`, "0x8038 54"), and the game-side table's 150 is its
+   declared maximum, not a fixed size.
 3. The auth service validates the pair, and answers with the account's character list.
 4. The client selects a character; the auth service records the selection.
 
