@@ -44,16 +44,19 @@ reaches the data through the nouns' own repositories, so what a page writes is w
 
 | page | is | state |
 |---|---|---|
-| `/` | what exists, and how much of it | accounts, with how many accepted the EULA |
+| `/` | what exists, and how much of it | accounts, characters, worlds and content, each with its count and a link |
 | `/accounts` | the rows the login reads: create, remove, and set the EULA version | done |
-| `/characters` | a character's settings, the columns the client sees | next |
-| `/worlds` | the realm list and `data/realms.json` | next |
-| `/content` | the maps, inventories and profession sets, validated before a write | next |
+| `/characters` | every row of the character table, as the login's list reads it | done - read only; a character is written by the creation confirm |
+| `/worlds` | the realm list and `data/realms.json` merged over it | done - read only, from the login's own reader |
+| `/content` | the maps and their spawn points, the rows the load reads | done - read only; the item and profession editors arrive with the stages that write them |
 | `/schema` | what the updater has applied | next |
 
 Proved end to end on this machine: the page lists both accounts, `POST /accounts/eula` set a version and
 the row read back as `version 26`, `POST /accounts/create` wrote a row and `POST /accounts/delete` removed
-it, each answering a redirect to the list.
+it, each answering a redirect to the list. The three new pages were fetched against the live databases:
+`/characters` listed the rows the creation confirm wrote, `/worlds` listed world 2 "Kryta" at
+127.0.0.1:6113, and `/content` listed map 148 "Ascalon City (pre-Searing)" with its spawn point
+(9541.87, 4796.46, plane 0).
 
 The EULA itself is a column now (`data/sql/base/db_auth/account_eula.sql`): the version an account
 accepted, or 0 for none. The auth program's answer reports it, so a client that has accepted stops asking.
