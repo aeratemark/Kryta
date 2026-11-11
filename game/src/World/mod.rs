@@ -46,7 +46,7 @@ impl MapEntry {
 }
 
 /// The world a program represents.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct World {
     realm: u32,
     maps: Vec<MapEntry>,
@@ -95,6 +95,18 @@ impl World {
     /// The running district copies, shared by every session.
     pub fn districts(&self) -> Arc<Mutex<crate::districts::Districts>> {
         Arc::clone(&self.districts)
+    }
+
+    /// Give the copies their table and their log: what a program does once the world database is
+    /// open and the maps are read (`docs/port/06-world-plan.md`, step 3).
+    pub fn set_instances(
+        &mut self,
+        store: Arc<crate::districts::DatabaseInstances>,
+        log: Log,
+    ) {
+        if let Ok(mut districts) = self.districts.lock() {
+            districts.attach(store, log);
+        }
     }
 
     /// Set the numbers this world runs by, after the program read its file.

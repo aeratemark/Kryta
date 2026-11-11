@@ -441,6 +441,7 @@ impl WorldSession {
                 Ok(mut districts) => districts.enter(
                     map,
                     travel.map(|travel| travel.district).unwrap_or(0),
+                    u32::from(language),
                     self.settings.district_allotment,
                 ),
                 Err(_) => Err("the world's district copies are poisoned".to_string()),
@@ -1183,6 +1184,14 @@ impl WorldSession {
     }
 }
 
+/// Seconds since the unix epoch, the clock the district hold counts on (R37).
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
 impl Session for WorldSession {
     fn run(self: Box<Self>, mut io: SessionIo) -> SessionFuture {
         Box::pin(async move {
@@ -1223,7 +1232,7 @@ impl WorldSession {
         if let Some((map_id, district)) = entered
             && let Ok(mut districts) = self.districts.lock()
         {
-            districts.leave(map_id, district);
+            districts.leave(map_id, district, unix_now());
         }
     }
 }

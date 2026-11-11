@@ -1,0 +1,138 @@
+//! The `instance` table: one row per running copy of a map.
+//!
+//! A copy is the world's state, so the row is world data (`kryta_world.instance`,
+//! `data/sql/base/db_world/0003-instances.sql`) and the repository is the noun's own: the reference
+//! keeps its instance records in memory and in its instance manager; this tree keeps the row for
+//! what outlives a connection - which district holds which number, and when it last emptied, which
+//! is where R37's hold is measured from (`docs/game-rules.md`).
+//!
+//! Every method goes through the pool's worker queue: a caller here is a session running inside the
+//! network's runtime, and the synchronous connection's own `block_on` is not allowed there
+//! (`database/src/Database/Pool.rs`).
+
+use std::sync::{Arc, Mutex};
+
+use common::logging::{Log, LogLevel};
+use database::database::{DatabaseWorkerPool, Param};
+
+const INSERT_INSTANCE: &str = "INSERT INTO \"instance\" (\"map_id\", \"district\", \"language\", \
+                               \"kind\") VALUES ($1, $2, $3, $4) RETURNING \"id\"::bigint";
+
+const MARK_EMPTY: &str = "UPDATE \"instance\" SET \"empty_since\" = now() WHERE \"id\" = $1";
+
+const DISPOSE: &str = "DELETE FROM \"instance\" WHERE \"id\" = $1";
+
+const DISPOSE_ALL: &str = "DELETE FROM \"instance\" RETURNING 1";
+
+/// The `instance` table, as a world uses it.
+pub struct DatabaseInstances {
+    pool: Arc<Mutex<DatabaseWorkerPool>>,
+    log: Log,
+}
+
+impl DatabaseInstances {
+    /// A source that asks this pool.
+    pub fn new(pool: Arc<Mutex<DatabaseWorkerPool>>, log: Log) -> Self {
+        Self { pool, log }
+    }
+
+    /// Write the row a new copy is given, and answer its id.
+    pub fn open(&self, map_id: u32, district: u32, language: u32, kind: u8) -> Result<i64, String> {
+        let rows = self.query(
+            INSERT_INSTANCE,
+            vec![
+                Param::Integer(i64::from(map_id)),
+                Param::Integer(i64::from(district)),
+                Param::Integer(i64::from(language)),
+                Param::Integer(i64::from(kind)),
+            ],
+        )?;
+        rows.first()
+            .map(|row| row.get::<usize, i64>(0))
+            .ok_or_else(|| "the instance row was written but its id was not answered".to_string())
+    }
+
+    /// Record that the last member left, which starts R37's hold.
+    pub fn mark_empty(&self, id: i64) -> Result<(), String> {
+        self.query(MARK_EMPTY, vec![Param::Integer(id)])?;
+        Ok(())
+    }
+
+    /// Delete one copy's row - the disposal R40 acts on.
+    pub fn dispose(&self, id: i64) -> Result<(), String> {
+        self.query(DISPOSE, vec![Param::Integer(id)])?;
+        Ok(())
+    }
+
+    /// Delete every row, and answer how many were deleted.
+    ///
+    /// A world that just started has nobody inside anything: every row it finds is left over from a
+    /// run that ended, so it is disposed rather than held.
+    pub fn dispose_all(&self) -> Result<usize, String> {
+        let rows = self.query(DISPOSE_ALL, Vec::new())?;
+        Ok(rows.len())
+    }
+
+    /// One statement, and every row it answered.
+    fn query(
+        &self,
+        sql: &str,
+        params: Vec<Param>,
+    ) -> Result<Vec<postgres::Row>, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(sql, params),
+            Err(_) => {
+                return Err("the world database pool is poisoned".to_string());
+            }
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(rows),
+            Ok(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.worldserver",
+                    format!("the instance table could not be written: {error}"),
+                );
+                Err(error)
+            }
+            Err(_) => Err("the world database answered no query: it is shutting down".to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use common::configuration::{Config, Policy};
+    use database::database::{read_settings, DatabaseKind};
+    use database::updater::{collect_files, UpdateState};
+    use std::path::Path;
+
+    #[test]
+    #[ignore = "needs the world database"]
+    fn a_copy_is_opened_emptied_and_disposed() {
+        let log = Log::new();
+        let Some(config) =
+            Config::load_json("../worldserver/worldserver.json", false, Policy::default()).ok()
+        else {
+            panic!("the world program's configuration is not readable");
+        };
+        let settings = read_settings(&config, DatabaseKind::World).expect("the world settings");
+        let mut pool = DatabaseWorkerPool::open(DatabaseKind::World, &settings, &log)
+            .expect("the world pool opens");
+        let schema = collect_files(Path::new("../data/sql/base/db_world"), UpdateState::Released)
+            .expect("the world schema");
+        pool.apply_updates(&schema, &log).expect("the schema applies");
+        let store = DatabaseInstances::new(Arc::new(Mutex::new(pool)), log.clone());
+
+        let id = store.open(148, 7, 0, 0).expect("the copy opens");
+        assert!(id > 0, "the row has an id");
+        store.mark_empty(id).expect("the copy can be marked empty");
+        store.dispose(id).expect("the copy can be disposed");
+
+        store.open(148, 8, 0, 0).expect("another copy opens");
+        let left = store.dispose_all().expect("every row disposes");
+        assert!(left >= 1, "the copy that was opened is disposed");
+        log.shutdown();
+    }
+}

@@ -304,6 +304,37 @@ fn run(args: &[String]) -> Result<(), String> {
             "Creation screen: {bags} bag(s) and {items} item(s) from {inventory_file}, {sets} profession set(s) from {equipment_file}."
         ),
     );
+
+    // The instance table (`data/sql/base/db_world/0003-instances.sql`): the copies a session opens
+    // are rows, and a fresh world disposes what an earlier run left - nobody is inside it.
+    if let Some(pool) = world_pool.as_ref() {
+        let store = std::sync::Arc::new(game::districts::DatabaseInstances::new(
+            std::sync::Arc::clone(pool),
+            log.clone(),
+        ));
+        match store.dispose_all() {
+            Ok(count) if count > 0 => log.out(
+                LogLevel::Info,
+                "server.worldserver",
+                format!(
+                    "Disposed {count} instance row(s) left by an earlier run; a fresh world has nobody inside it."
+                ),
+            ),
+            Ok(_) => {}
+            Err(error) => log.out(
+                LogLevel::Error,
+                "server.worldserver",
+                format!("Cannot read the instance table: {error}"),
+            ),
+        }
+        world.set_instances(store, log.clone());
+    } else {
+        log.out(
+            LogLevel::Warn,
+            "server.worldserver",
+            "No world database is open, so instances are kept in memory only and no copy is recorded.",
+        );
+    }
     let world = std::sync::Arc::new(world);
 
     // Stage 9. Reference: `sWorldSocketMgr.StartWorldNetwork(*ioContext, worldListener, worldPort,
@@ -362,7 +393,43 @@ fn run(args: &[String]) -> Result<(), String> {
     //   sScriptMgr->OnStartup
     // On shutdown: `sWorldSessionMgr->KickAll`, `sMapMgr->UnloadAll`,
     // `sScriptMgr->OnAfterUnloadAllMaps`, `sScriptMgr->OnShutdown`.
+    // The instance tick (R33): once a second, copies that have been empty past the hold (R37) are
+    // disposed (R40) and their rows removed. `InstanceTick` turns the clock off; a world without a
+    // clock keeps every copy it opened and says so in its configuration dump.
+    let stop_tick = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if world.settings().instance_tick {
+        let tick_world = std::sync::Arc::clone(&world);
+        let tick_log = log.clone();
+        let stop_tick = std::sync::Arc::clone(&stop_tick);
+        std::thread::Builder::new()
+            .name("instance-tick".to_string())
+            .spawn(move || {
+                while !stop_tick.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    if stop_tick.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    let hold = u64::from(tick_world.settings().explorable_disconnect_hold);
+                    let disposed = match tick_world.districts().lock() {
+                        Ok(mut districts) => districts.sweep(unix_now(), hold),
+                        Err(_) => Vec::new(),
+                    };
+                    for (map_id, district) in disposed {
+                        tick_log.out(
+                            LogLevel::Info,
+                            "server.worldserver",
+                            format!(
+                                "Instance on map {map_id}, district {district}, was empty for {hold} s and is disposed (R37, R40)."
+                            ),
+                        );
+                    }
+                }
+            })
+            .map_err(|error| format!("the instance tick could not start: {error}"))?;
+    }
+
     wait_for_shutdown();
+    stop_tick.store(true, std::sync::atomic::Ordering::Relaxed);
     log.out(
         LogLevel::Info,
         "server.worldserver",
@@ -400,6 +467,14 @@ fn run(args: &[String]) -> Result<(), String> {
     );
     log.shutdown();
     Ok(())
+}
+
+/// Seconds since the unix epoch, for the hold the instance tick measures.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 
 /// Block until the operator stops the program.

@@ -141,7 +141,7 @@ layout and not a judgement per feature: it is what the thing **is**.
 
 | kind | is | lives in | examples |
 |---|---|---|---|
-| **game data** | the world's state: what exists, what a character has, where it stands | **database rows**, through the noun's repository | accounts, characters and their settings, item definitions (`item_template`), a character's bags and items, map records, spawns, portals, travel |
+| **game data** | the world's state: what exists, what a character has, where it stands | **database rows**, through the noun's repository | accounts, characters and their settings, item definitions (`item_template`), a character's bags and items, map records, spawns, instances, portals, travel |
 | **a setting** | a choice an operator makes and may share | **a JSON file** | a program's configuration, the world list, the profession sets a new character starts wearing, loot tables |
 | **what the client dictates** | a value the client decides and the server can only obey | **a constant in the code that answers with it**, citing the capture | message headers and sizes, the file check's bytes, the account settings block |
 
