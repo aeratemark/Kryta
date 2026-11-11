@@ -227,15 +227,23 @@ The session comes from call 1 and travels in `Authorization: Arena <session>`. T
 reference's own: a missing or unknown session is `401`, a provider that is not `Portal` is
 `400 Unsupported provider`, and a login name nobody knows is `400 who are you?`.
 
+**What the portal does not check: a password.** The evidence for call 2 names the
+`UserId`/`LoginName`/`Provider` block and no password field, and no capture shows the client sending
+one, so this tree answers the login name and hands out the pair - and the auth program then trusts
+the pair the login message presents. A refusal for a wrong password is therefore not written: its
+answer is not measured. What an identity check would be is the owner's, and it is named here rather
+than silently absent.
+
 - Source: `docs/evidence/client-protocol.md` section 4, measured with a real client at build
   39112, where all four answered `200` and the pair they returned is what the login message carried.
 - In this tree: `game/src/Portal/`, which is one of the directories the naming adds because the
   reference has no equivalent. The arrangement is a request-to-response function with no socket in
   it, so the same code answers a test and a program.
-- Not decided here: who an account is. `Accounts` is supplied by the caller, and the login database
-  still has no account table - that is the identity question, and it is the owner's.
-- Not built: the HTTP listener on 6601, and which program hosts it. `game/Portal/` is the code's home
-  by this tree's naming; a third program is not in the naming, and the reference has two.
+- Who an account is: the login database's `account` table, read by the portal's caller - the auth
+  program hosts the portal beside its own listener (`docs/decisions/0003-portal-host.md`), and
+  `docs/decisions/0006-accounts-are-rows.md` places the identity in a row. The listener on 6601
+  exists and the auth program owns it.
+
 ## The answer to the login
 
 After the exchange and a `0x8038`, the client is owed five messages in this order, and each is sent
