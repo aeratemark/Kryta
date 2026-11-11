@@ -538,6 +538,11 @@ mod tests {
         // The count is what the confirm's log line says, so it must be the rows, not the INSERT's
         // own answer: a statement without RETURNING answers no row even when it writes one, and a
         // log line that says "0 row(s) written" over written rows is a lie a load then trusts.
+        //
+        // Serialized with the other live tests that apply schemas to the same databases, so a run
+        // of the whole suite cannot interleave a DDL pass with this write.
+        let _serial = database::updater::apply::test_lock("characters");
+        let _serial_world = database::updater::apply::test_lock("world");
         let Some(source) = source() else {
             panic!("the character database is not reachable");
         };
@@ -580,18 +585,21 @@ mod tests {
         let written = source
             .write_starting_items(uuid, &inventory, &templates)
             .expect("the starting items are written");
+        let stored = source
+            .items_of(uuid)
+            .expect("the items are readable");
+        // The count the confirm logs is the rows that are there.
         assert_eq!(
             written,
-            inventory.items.len(),
+            stored.len(),
             "the count is the rows written"
         );
+        // And every item of the set became a row: a missing template would leave one out, with a
+        // warning of its own.
         assert_eq!(
-            source
-                .items_of(uuid)
-                .expect("the items are readable")
-                .len(),
+            stored.len(),
             inventory.items.len(),
-            "the rows are there"
+            "every item of the set is a row"
         );
 
         {
