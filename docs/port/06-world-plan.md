@@ -1,9 +1,11 @@
 # Porting the world: what ASURA's world has, where each piece goes, and what must exist first
 
-The infrastructure half is ported (`docs/port/01-structure.md`). What is left is the world - and the
+The infrastructure half is ported (docs/port/01-structure.md). What is left is the world - and the
 world is not one port, it is a dependency chain. This file is the plan for it: every piece ASURA's world
 is made of, the noun it belongs to here, what it needs from the schema and the content files, and the
-order the chain allows.
+order the chain allows. Five stages are in scope; items and the content-heavy nouns are listed at the end
+with the evidence that would bring them in, because a stage with no data to run on and no capture to
+judge it is not work yet.
 
 Nothing here changes the rule the project exists for: a piece goes into the **noun** that owns it, it
 reaches the database through that noun's repository, its content is a **data file**, and it never reaches
@@ -55,38 +57,37 @@ into the archive. **Needs:** nothing from the schema; the archive path is a sett
 | `player.rs` | 507 | the player's own agent: the one a connection controls |
 | `pvp_items.rs` | 1566 | the PvP half of a character's items |
 
-**Needs:** the item nouns below (an agent is described by what it wears), and stage 2's spawn records.
-The message family already exists (`game/Server/Packets/AgentPackets.rs`); what is missing is the state
-behind it.
+**Needs:** stage 2's spawn records. An agent is described to the client by its properties and its
+appearance, and both are the agent's own data - an agent wearing nothing is a valid agent, which is what
+the creation screen sends today. The message family already exists
+(`game/Server/Packets/AgentPackets.rs`); what is missing is the state behind it.
 
-### 5. items - rows in the database, like every other piece of game data
+### Items - **out of scope**, and said here so nobody ports a skeleton (see the last section)
 
-An item is game data, so it is **rows**: what a definition is lives with the world, and what a
-character holds lives with the character. That is this tree's rule, not a reading of another project's
-layout (`docs/port/04-configuration.md`, "three kinds of data").
+There is no item data in this tree: no definitions derived from the archive (stage 1 has not run), and no
+capture of a live server's item stream beyond the creation screen's own block, which is already sent.
+ASURA has item code - `item.rs`, `pvp_items.rs`, a generated equipment table - and porting that on its
+own would be porting a skeleton with nothing to point it at: rows nobody has, for messages nobody has
+recorded.
 
-| piece | where | why |
-|---|---|---|
-| an item definition - kind, model, dyes, value, flags, name | **`item_template`** in `kryta_world` | it is content the world holds, and an operator changes it by changing a row |
-| a bag, and an item a character holds (which bag, which slot, quantity, the state a player changed) | **`bag`** and **`item_instance`** in `kryta_characters` | it is state: a player's, changed by playing |
-| a loot table - what a source drops and how often | **a JSON file** (`data/loot/*.json`) | it is a setting: an operator tunes it, and two servers may want different ones |
+So items are deferred, and the placement below is the *rule for when the data arrives*, not work in this
+plan (`docs/port/04-configuration.md`, "three kinds of data"):
 
-In code the reference's arrangement: the item type beside the entity it belongs to (its `Entities/Item`),
-the template store in `game/DataStores/` (its `ItemTemplate`), the message builders in
-`game/Server/Packets/ItemPackets.rs` (written), the handlers in `game/Handlers/` (stub). The noun that
-gains behaviour is `game/DataStores/` for definitions and `game/Characters/` for what a character holds;
-no new directory is invented, and no item lives in a file.
+| piece | where, when it lands |
+|---|---|
+| an item definition - kind, model, dyes, value, flags, name | `item_template` in `kryta_world`, filled from the archive |
+| a bag, and an item a character holds | `bag` and `item_instance` in `kryta_characters` |
+| a loot table | a JSON file under `data/loot/`, a setting |
 
-| ASURA | lines | is |
-|---|---|---|
-| `item.rs` | 525 | the streams and the in-memory inventory - read for the message shapes, ported into `ItemPackets.rs` and the repositories |
-| `default_equipment.rs` | 2957 | the profession table, which is content: imported into `data/equipment.json` (a setting an operator may change) |
+What is **already here** is the creation screen's own stream: `game/Server/Packets/ItemPackets.rs` and
+`data/equipment.json`, which exist because a creation screen is sent its starting set and we had that
+capture. That is a screen's payload, not an item system.
 
-**Needs:** `item_template` in the world schema, `bag` and `item_instance` in the character schema, and
-the creation confirm writing them instead of only the character row. The creation screen already sends
-the same item streams from memory, so the streams are proven before the rows arrive.
+**What would bring items in:** a recording of a live server's item traffic (equip, move, drop) - the
+input a message's shape is measured from - and the archive reader of stage 1 to name the file ids those
+messages carry. Until then, no table, no noun, no page.
 
-### 6. `game/Districts/` - instances and how a client enters one
+### 5. `game/Districts/` - instances and how a client enters one
 
 | ASURA | lines | is |
 |---|---|---|
@@ -98,13 +99,13 @@ the same item streams from memory, so the streams are proven before the rows arr
 `0x017C`, `0x0186`, the manifest stages, `0x0189`/`0x0188`, `0x0196` redirects. That sequence is the one
 place where a port must follow the client's own order exactly, and ASURA measured it.
 
-### 7. `game/Chat/`, `game/Parties/`, `game/Quests/` - the rest
+### 6. `game/Chat/`, `game/Parties/`, `game/Quests/` - the rest
 
 | ASURA | lines | is |
 |---|---|---|
 | `chat.rs` | 340 | the chat line, the channels and the GM commands |
 
-**Needs:** stages 4 and 6 for anything a player does while standing somewhere.
+**Needs:** stages 4 and 5 for anything a player does while standing somewhere.
 
 ## The three seams
 
@@ -122,7 +123,7 @@ Everything above fits inside one noun. These three cross a boundary and each has
    bag, a setting, a last outpost - adds a table or a column, never a second repository.
 3. **What is a row and what is a file.** The test is fixed and it is not the source project's: **game data
    is rows, a setting is a file** (`docs/port/04-configuration.md`, "three kinds of data"). So a map, its
-   spawns, its portals, an item definition and a character's items are rows; a loot table, the profession
+   spawns and its portals are rows; a loot table (when items exist), the profession
    sets an operator may retune, the world list and every program setting are files. A port never decides
    this per piece - it asks which of the three kinds the data is.
 
@@ -133,15 +134,17 @@ Everything above fits inside one noun. These three cross a boundary and each has
 | 1 | `game/Pack/` | a file id in the archive is read and its bytes checksum against the archive's own table | nothing |
 | 2 | `game/Maps/` + world schema | the world hosts a real map: it answers `0x017C` with a blob from the archive and the client loads it without the creation instance | 1 |
 | 3 | `game/Terrain/` | a walk from one point to another follows the blob's own planes | 2 |
-| 4 | `game/Agents/` | a spawn from the map's own table appears in the client | 2, 5 |
-| 5 | `game/Items/` (+ `bag`, `item` rows) | a created character's equipment is rows, and it draws from them | 2 |
-| 6 | `game/Districts/` + travel | a character created in the creation instance can be sent to an outpost and arrive there | 2, 4, 5 |
-| 7 | chat, parties, quests | the rest, one noun at a time | 4, 6 |
+| 4 | `game/Agents/` | a spawn from the map's own table appears in the client | 2 |
+| 5 | `game/Districts/` + travel | a character created in the creation instance can be sent to an outpost and arrive there | 2, 4 |
+| 6 | chat, parties, quests | the rest, one noun at a time | 4, 5 |
+| - | items | **out of scope**: no item data and no capture of an item stream, so nothing could be verified. The rule for when it lands is below | needs both |
+
+The numbers above are the order; items sit outside it on purpose.
 
 ## What is already in place for this
 
-- The **message families** the client reads: instance, agent, character, item, misc - and the walk that
-  frames anything (`shared/src/Packets/`, `docs/port/02-wire.md`).
+- The **message families** the client reads: instance, agent, character, misc, and the creation screen's
+  own item stream - and the walk that frames anything (`shared/src/Packets/`, `docs/port/02-wire.md`).
 - The **socket layer** and the world listener (`game/Server/`), so a client can arrive.
 - The **creation flow**, which ends in a character row and is the only path a character has today.
 - The **administration tool**, which is where the world schema above will be edited from
@@ -154,3 +157,18 @@ Everything above fits inside one noun. These three cross a boundary and each has
 - The world schema's exact table and column names: those arrive with `docs/decisions/0009-world-schema.md`
   and stage 2, and follow from the messages that read them. The **kinds** are settled and are not open:
   the world's data is rows, a setting is a file, and what the client dictates is a constant.
+
+## What is out of scope, and why it stays out
+
+A stage is work only when there is **data to run it on** and **evidence to judge it by** - a capture of a
+live server doing it, or the client itself. A skeleton in another tree is neither.
+
+| out of scope | why | what would bring it in |
+|---|---|---|
+| items: definitions, inventory, equip, drops, loot | no item data (stage 1 has not read the archive) and no capture of an item stream beyond the creation screen's block | a recording of a live server's item traffic and the archive reader; then the rule above says where each piece lives |
+| PvP: heroes, skills, the PvP item table | nothing recorded of a PvP conversation, and no data for the tables | a capture of a PvP session |
+| quests, achievements, guilds, parties beyond their message rows | no data and no capture | content plus a recording |
+
+The message tables already hold those families' rows (they are read from the protocol, not invented), and
+framing them costs nothing. Having a *row* for a message is not having its noun: the noun arrives when
+data and evidence do.
