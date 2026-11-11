@@ -164,6 +164,7 @@ the client is the judge rather than a test.
 | the tools: the client patch, the hosts setting, the imports, and what is still borrowed | `docs/port/05-tooling.md` |
 | porting the world: every piece, its noun, its schema and content, and the order the chain allows | `docs/port/06-world-plan.md` |
 | what to do with a real client, what the server must say, and what to send back | `docs/port/07-manual-test.md` |
+| where each of the owner's 58 rules stands in this tree, and what is blocked | `docs/port/08-rules-coverage.md` |
 | how the game works: the owner's rules and the evidence for them | `docs/game-rules.md` |
 | the settings reader | `common/src/Configuration/`, and `Json.rs` in it for the format |
 | a decision taken away from the reference, and why | `docs/decisions/` |

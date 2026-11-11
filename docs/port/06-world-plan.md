@@ -90,7 +90,7 @@ Two open items, and they are not ours to invent:
 Both go to the owner or to a capture, in that order of preference.
 
 What to do with a real client in the meantime, and what the server must say at each step, is
-`docs/port/07-manual-test.md`.
+`docs/port/07-manual-test.md`; where each rule of the ledger stands is `docs/port/08-rules-coverage.md`.
 
 ## The three seams
 
