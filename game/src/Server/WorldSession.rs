@@ -570,6 +570,78 @@ impl WorldSession {
         // `reference/instance-initialization.md` measured on a live load, and the rows
         // `shared/src/Packets/../Tables.rs` names.
         if !map.is_creation() {
+            // R12: a claimed travel only reaches a map the character has unlocked. A character
+            // with no unlock rows at all predates the ledger (or was never written one), so the
+            // world's first outpost is unlocked for it here - the same starting unlock a confirm
+            // writes - and the rule holds from the first load on.
+            if let Some(pool) = self.characters.as_ref() {
+                let characters = crate::characters::DatabaseCharacters::new(
+                    std::sync::Arc::clone(pool),
+                    self.log.clone(),
+                );
+                let uuid = crate::characters::uuid_text(&version.character);
+                match characters.unlocked_maps(&uuid) {
+                    Ok(unlocked) if unlocked.contains(&map.id) => {}
+                    Ok(unlocked) if unlocked.is_empty() => {
+                        let first = self
+                            .maps
+                            .iter()
+                            .filter(|map| !map.is_creation())
+                            .map(|map| map.id)
+                            .min();
+                        match first {
+                            Some(first) => {
+                                if let Err(error) = characters.unlock_map(&uuid, first) {
+                                    self.say(
+                                        LogLevel::Warn,
+                                        format!(
+                                            "Gameplay connection from {peer}: the starting unlock cannot be written: {error}"
+                                        ),
+                                    );
+                                }
+                                self.say(
+                                    LogLevel::Info,
+                                    format!(
+                                        "Gameplay connection from {peer}: the character has no unlock rows yet, so map {first} - the world's first outpost - is unlocked for it (R12)."
+                                    ),
+                                );
+                            }
+                            None => {
+                                self.say(
+                                    LogLevel::Warn,
+                                    format!(
+                                        "Gameplay connection from {peer}: the character has no unlocks and the world hosts no outpost; the connection is closed (R12)."
+                                    ),
+                                );
+                                let _ = io.close().await;
+                                return;
+                            }
+                        }
+                    }
+                    Ok(unlocked) => {
+                        self.say(
+                            LogLevel::Warn,
+                            format!(
+                                "Gameplay connection from {peer} asks for map {} ({}) but the character has not unlocked it (unlocked: {unlocked:?}); the connection is closed, because the refusal's own wire shape is not captured (R12, R58).",
+                                map.id, map.name
+                            ),
+                        );
+                        let _ = io.close().await;
+                        return;
+                    }
+                    Err(error) => {
+                        self.say(
+                            LogLevel::Warn,
+                            format!(
+                                "Gameplay connection from {peer}: the character's unlocks cannot be read: {error}"
+                            ),
+                        );
+                        let _ = io.close().await;
+                        return;
+                    }
+                }
+            }
+
             // The district the connection enters: the travel's own number when it named one (R57),
             // otherwise the first with room (R22) - and a named full district is refused rather than
             // moved (R58). The allotment is the world's setting (R5).
@@ -2354,6 +2426,16 @@ Logger.root = 6,Console
             block, whole,
             "the travel's map, district and language, not the version message's"
         );
+
+        // R12: the character had no unlock rows, so the load wrote the world's first outpost for
+        // it before entering - the same starting unlock a confirm writes.
+        let unlocked = crate::characters::DatabaseCharacters::new(
+            Arc::clone(&characters),
+            log.clone(),
+        )
+        .unlocked_maps(&character_text)
+        .expect("the character's unlocks");
+        assert_eq!(unlocked, vec![148], "the starting unlock the load wrote");
 
         // 4. The ping pair, then the character's own items - the rows the confirm wrote, drawn the
         // same way the creation set would be - and then where it stands on map 148's own file.
