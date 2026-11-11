@@ -58,7 +58,7 @@ These are the plan's known gaps, each waiting on a capture rather than on work:
 - **Travelling between maps** (a door, a portal, the world map's travel button): the client's request is
   read and named in the log (`the client asks to travel to map M ...; the redirect's own wire is not
   captured yet`), and nothing else happens. The redirect the client expects is the one message of this
-  path without a measurement (`docs/port/06-world-plan.md`, "The where the ledger says we do not know").
+  path without a measurement (`docs/port/06-world-plan.md`, "Where the ledger says we do not know").
 - **Other players, NPCs and monsters in the outpost**: the map is drawn with no agents in it. The
   agent-creation stream is not captured on this build; the load sends its own body and nothing else.
 - **Walking on real terrain**: movement is read and kept on the player's agent, but the world has no
