@@ -193,6 +193,13 @@ impl Manage {
             .and_then(|characters| characters.items_of(uuid).ok())
     }
 
+    /// The maps one character may travel to, read through the repository the load's gate uses (R12).
+    pub fn list_unlocks(&self, uuid: &str) -> Option<Vec<u32>> {
+        self.characters
+            .as_ref()
+            .and_then(|characters| characters.unlocked_maps(uuid).ok())
+    }
+
     /// The world list, when the login database answered.
     pub fn list_worlds(&self) -> Option<Vec<shared::worlds::Realm>> {
         self.worlds
