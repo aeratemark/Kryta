@@ -77,6 +77,14 @@
     "value": "authserver/authserver.json",
     "doc": "The login program's own settings file, shown by the settings page and never written by this tool. Relative to where the tool is started. Empty leaves that half of the page out."
   },
+  "InventoryFile": {
+    "value": "data/inventory.json",
+    "doc": "The creation record list: the bags and the items a new character is given. The content page shows the profession sets it holds. Relative to where the tool is started."
+  },
+  "EquipmentFile": {
+    "value": "data/equipment.json",
+    "doc": "The profession sets a creation screen may choose from. The content page lists them, which set carries what."
+  },
 
   "LogsDir": {
     "value": "",

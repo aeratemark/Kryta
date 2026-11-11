@@ -310,6 +310,23 @@ pub fn content(manage: &Manage) -> Response {
 
     let items = manage.list_items().unwrap_or_default();
     let instances = manage.list_instances().unwrap_or_default();
+    let sets = manage.creation_sets().unwrap_or_default();
+    let mut set_rows = String::new();
+    for set in &sets {
+        let files: Vec<String> = set
+            .items
+            .iter()
+            .take(6)
+            .map(|item| item.file_id.to_string())
+            .collect();
+        set_rows.push_str(&format!(
+            "<tr><td>{campaign}</td><td>{profession}</td><td>{count}</td><td>{files}</td></tr>\n",
+            campaign = set.campaign,
+            profession = set.profession,
+            count = set.items.len(),
+            files = files.join(", "),
+        ));
+    }
     let mut instance_rows = String::new();
     for instance in &instances {
         instance_rows.push_str(&format!(
@@ -367,6 +384,14 @@ pub fn content(manage: &Manage) -> Response {
          <table>\n<tr><th>file id</th><th>type</th><th>dyes</th><th>model</th><th>value</th>\
          <th>profession</th><th>stack</th><th>name units</th></tr>\n{item_rows}</table>\n\
          <p class=\"note\">{items} template(s).</p>\n\
+         <h2>profession sets</h2>\n\
+         <p class=\"note\">The sets a creation screen may choose from, from the creation record \
+         list (<code>data/equipment.json</code>): a campaign and a profession, how many items the \
+         set carries, and the first few of their <code>Gw.dat</code> file ids. A character is given \
+         one of these at its confirm.</p>\n\
+         <table>\n<tr><th>campaign</th><th>profession</th><th>items</th><th>first file ids</th></tr>\n\
+         {set_rows}</table>\n\
+         <p class=\"note\">{sets} set(s).</p>\n\
          <h2>running instances</h2>\n\
          <p class=\"note\">The copies the world has open - the rows its tick disposes once they have \
          been empty past the hold (R37/R40). A copy with a time in the last column is waiting for \
@@ -377,6 +402,7 @@ pub fn content(manage: &Manage) -> Response {
         maps = maps.len(),
         spawns = spawns.len(),
         items = items.len(),
+        sets = sets.len(),
         instances = instances.len()
     );
     page("content", &body)

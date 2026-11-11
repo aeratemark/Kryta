@@ -234,6 +234,12 @@ impl Tables {
             .find(|set| set.campaign == campaign && set.profession == profession)
     }
 
+    /// Every profession set, in the record list's order: the administration tool's view of what a
+    /// new character may be given.
+    pub fn sets(&self) -> &[EquipmentSet] {
+        &self.sets
+    }
+
     /// The inventory a creation screen is given for a choice: the reference's bags, the items it
     /// creates before anything else, and the chosen profession's equipment in the equipped bag.
     ///

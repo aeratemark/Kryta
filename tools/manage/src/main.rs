@@ -59,6 +59,9 @@ pub struct Manage {
     /// settings page shows them. A file is shown and validated, never rewritten (`manage.json`).
     world_config: Option<String>,
     auth_config: Option<String>,
+    /// The creation record lists' paths: the content page shows the profession sets they hold.
+    inventory_file: Option<String>,
+    equipment_file: Option<String>,
     token: Option<String>,
     log: Log,
 }
@@ -317,6 +320,18 @@ impl Manage {
             self.world_config.as_deref(),
             self.auth_config.as_deref(),
         )
+    }
+
+    /// The profession sets the creation record holds, read through the noun's own loader: what a
+    /// new character may be given, and the content page's view of it. Loading per request keeps the
+    /// page honest when the files change under it.
+    pub fn creation_sets(&self) -> Option<Vec<game::creation::EquipmentSet>> {
+        let inventory = self.inventory_file.as_deref()?;
+        let equipment = self.equipment_file.as_deref()?;
+        let log = Log::new();
+        game::creation::Tables::load(inventory, equipment, &log)
+            .ok()
+            .map(|tables| tables.sets().to_vec())
     }
 
     /// Add a spawn point to a map: what the load's entry placement reads (R13).
@@ -765,6 +780,22 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
     } else {
         Some(auth_config)
     };
+    let (inventory_file, _) = config
+        .value_string("InventoryFile", "data/inventory.json")
+        .map_err(|error| error.to_string())?;
+    let (equipment_file, _) = config
+        .value_string("EquipmentFile", "data/equipment.json")
+        .map_err(|error| error.to_string())?;
+    let inventory_file = if inventory_file.is_empty() {
+        None
+    } else {
+        Some(inventory_file)
+    };
+    let equipment_file = if equipment_file.is_empty() {
+        None
+    } else {
+        Some(equipment_file)
+    };
 
     let manage = Arc::new(Manage {
         accounts,
@@ -776,6 +807,8 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         schemas,
         world_config,
         auth_config,
+        inventory_file,
+        equipment_file,
         token: Some(token),
         log: log.clone(),
     });
