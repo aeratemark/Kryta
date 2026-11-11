@@ -96,6 +96,23 @@ fn start_world() -> (Child, Receiver<String>, u16) {
     (child, rx, port)
 }
 
+/// Read until the connection has been quiet for a moment, answering everything decrypted.
+fn read_quiet(stream: &mut TcpStream, reading: &mut common::cryptography::Arc4) -> Vec<u8> {
+    let mut all = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => return all,
+            Ok(n) => {
+                let mut plain = chunk[..n].to_vec();
+                reading.apply(&mut plain);
+                all.extend_from_slice(&plain);
+            }
+            Err(_) => return all,
+        }
+    }
+}
+
 /// Read exactly `size` bytes, or fail saying how many arrived.
 fn read_exact(stream: &mut TcpStream, size: usize) -> Vec<u8> {
     let mut buffer = vec![0u8; size];
@@ -225,6 +242,45 @@ fn create_character(port: u16, account: [u8; 16], name: &str) -> ([u8; 16], Stri
         shared::network::socket::hex(&block)
     );
     assert_eq!(&block[6..8], &[0x89, 0x01], "the creation start");
+
+    // The creation screen's own asks, in the order a client sends them: its player's data first -
+    // the item stream and the bags the record list draws - and then the armoury, its PvP half.
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("the socket reads with a timeout");
+    let mut ask = vec![0x89, 0x80];
+    sending.apply(&mut ask);
+    stream.write_all(&ask).expect("the player-data ask");
+    let player = read_quiet(&mut stream, &mut reading);
+    assert!(
+        player.starts_with(&[0x86, 0x01]),
+        "the player-data stream opens: {}",
+        shared::network::socket::hex(&player[..player.len().min(24)])
+    );
+    assert!(
+        player.windows(2).any(|window| window == [0x61, 0x01]),
+        "the creation set's items are in it: {}",
+        shared::network::socket::hex(&player[..player.len().min(24)])
+    );
+    let mut ask = vec![0x8A, 0x80];
+    sending.apply(&mut ask);
+    stream.write_all(&ask).expect("the armoury ask");
+    let armory = read_quiet(&mut stream, &mut reading);
+    assert!(
+        armory.starts_with(&[0x1D, 0x00]),
+        "the armoury opens with the skills half: {}",
+        shared::network::socket::hex(&armory)
+    );
+    for header in [[0x18u8, 0x00], [0x1B, 0x00]] {
+        assert!(
+            armory.windows(2).any(|window| window == header),
+            "the armoury carries 0x{header:02X?}: {}",
+            shared::network::socket::hex(&armory)
+        );
+    }
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("the socket reads with a timeout");
 
     // The confirm, in the shape the recording shows: a counted name and thirty-four bytes after it.
     let units: Vec<u16> = name.encode_utf16().collect();
