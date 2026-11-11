@@ -346,7 +346,8 @@ pub fn content(manage: &Manage) -> Response {
          each - the rows the load reads (<code>0x0196</code>), straight from \
          <code>kryta_world.map</code> and <code>kryta_world.map_spawn</code>. A spawn point added \
          here is where every entry may place a character, scattered per R13; one removed is one the \
-         load will not pick again.</p>\n\
+         load will not pick again. These rows are read at the world program's start-up: restart it \
+         to see an edit take effect.</p>\n\
          <table>\n<tr><th>id</th><th>kind</th><th>file id</th><th>name</th><th>party cap</th>\
          <th>spawn points</th><th>arrivals</th></tr>\n\
          {rows}</table>\n\
