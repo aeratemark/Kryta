@@ -1107,12 +1107,14 @@ impl WorldSession {
                     }
                     // The players request: the PvP halves and the character's own body, and the load
                     // is over. The connection stays: from here the world ticks it (R33) and answers
-                    // what the client asks on a live map.
+                    // what the client asks on a live map. The party update before the end is the
+                    // frame the reference's own log sends (`0x01B3`, one member), measured.
                     instance_packets::CLIENT_LOAD_REQUEST_PLAYERS => {
                         let frames = vec![
                             misc_packets::pvp_update_unlocked_skills(&[]),
                             misc_packets::pvp_update_unlocked_heroes(&[0xFFFF_FFFF; 8]),
                             instance_packets::player_create(CREATION_AGENT, &sheet.name),
+                            character_packets::character_update_party(1, 1),
                             instance_packets::instance_load_finish(),
                         ];
                         self.send(io, peer, crypt, &frames, "the player and the load's last message")
@@ -2212,7 +2214,8 @@ Logger.root = 6,Console
         client.write_all(&ask).unwrap();
 
         let player = instance_packets::player_create(1, "Player");
-        let mut answered = vec![0u8; 4 + 36 + player.len() + 2];
+        let party = character_packets::character_update_party(1, 1);
+        let mut answered = vec![0u8; 4 + 36 + player.len() + party.len() + 2];
         client.read_exact(&mut answered).unwrap();
         reading.apply(&mut answered);
         assert_eq!(&answered[..4], &[0x1D, 0x00, 0x00, 0x00], "no unlocked PvP skills");
@@ -2226,7 +2229,16 @@ Logger.root = 6,Console
             player.as_slice(),
             "the character's own body"
         );
-        assert_eq!(&answered[40 + player.len()..], &[0x8E, 0x01], "and the load is over");
+        assert_eq!(
+            &answered[40 + player.len()..40 + player.len() + party.len()],
+            party.as_slice(),
+            "the party update the reference sends before the end"
+        );
+        assert_eq!(
+            &answered[40 + player.len() + party.len()..],
+            &[0x8E, 0x01],
+            "and the load is over"
+        );
 
         // 8. And the connection stays: the world ticks it, one per interval, with no prompt.
         let mut tick = vec![0u8; 6];

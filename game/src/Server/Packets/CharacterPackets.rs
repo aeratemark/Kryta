@@ -19,6 +19,8 @@ pub const SKILLBAR_UPDATE: u16 = 0x00DA;
 pub const CHARACTER_UPDATE_FACTIONS: u16 = 0x00E9;
 /// `GAME_SMSG_CHARACTER_UPDATE_INFO` (`0x0030`): a character summary - a counted string and six dwords.
 pub const CHARACTER_UPDATE_INFO: u16 = 0x0030;
+/// `GAME_SMSG_CHARACTER_UDPATE_PARTY` (`0x01B3`, the table's own spelling): a word and a byte.
+pub const CHARACTER_UPDATE_PARTY: u16 = 0x01B3;
 /// `GAME_SMSG_CHAR_CREATION_SUCCESS`: the character was written.
 pub const CHAR_CREATION_SUCCESS: u16 = 0x0188;
 /// `GAME_SMSG_CHAR_CREATION_ERROR`: it was not, and the code says why.
@@ -152,6 +154,18 @@ pub fn character_update_info() -> Vec<u8> {
     let mut body = vec![0u8; 2 + 24];
     body[10..14].copy_from_slice(&1000u32.to_le_bytes());
     frame(CHARACTER_UPDATE_INFO, &body)
+}
+
+/// `0x01B3`: a character's party membership, which a load sends before its end.
+///
+/// Source: `recordings/gwps/world/load-stream.log` - `SEND 0x01B3 5 bytes : B3 01 01 00 01`: the
+/// header, the word 1 and the byte 1. What the two fields name is not measured; the frame is carried
+/// as the capture has it, and a one-member party is what a solo connection is (R3).
+pub fn character_update_party(member: u16, flag: u8) -> Vec<u8> {
+    let mut body = Vec::with_capacity(3);
+    body.extend_from_slice(&member.to_le_bytes());
+    body.push(flag);
+    frame(CHARACTER_UPDATE_PARTY, &body)
 }
 
 #[cfg(test)]
