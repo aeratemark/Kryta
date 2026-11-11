@@ -336,9 +336,48 @@ impl DatabaseCharacters {
         }
     }
 
+    /// Remove a character and every record that is its own - its items, its unlocks, its row.
+    ///
+    /// Reference: `CharacterDatabase.DeleteFromDB`, which deletes the character and the records that
+    /// point at it together. The administration tool is the caller; neither a login's list nor a
+    /// load ever deletes a row. Answers whether the character's own row was there.
+    pub fn remove(&self, uuid: &str) -> Result<bool, String> {
+        let mut gone = false;
+        for statement in [
+            "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1 RETURNING 1",
+            "DELETE FROM \"character_unlock\" WHERE \"character_uuid\" = $1 RETURNING 1",
+            "DELETE FROM \"characters\" WHERE \"uuid\" = $1 RETURNING 1",
+        ] {
+            let reply = match self.pool.lock() {
+                Ok(pool) => pool.query_reply(statement, vec![Param::Text(uuid.to_string())]),
+                Err(_) => return Err("the character database pool is poisoned".to_string()),
+            };
+            match reply.recv() {
+                Ok(Ok(rows)) => {
+                    if statement.contains("\"characters\"") {
+                        gone = !rows.is_empty();
+                    }
+                }
+                Ok(Err(error)) => {
+                    self.log.out(
+                        LogLevel::Error,
+                        "server.characters",
+                        format!("Cannot remove the records of {uuid}: {error}"),
+                    );
+                    return Err(error);
+                }
+                Err(_) => {
+                    return Err(
+                        "the character database answered no query: it is shutting down".to_string(),
+                    );
+                }
+            }
+        }
+        Ok(gone)
+    }
+
     /// Give a character one more map it may travel to (R12), answering whether the row was new.
-    pub fn unlock_map(&self, uuid: &str, map_id: u32) -> Result<bool, String> {
-        let reply = match self.pool.lock() {
+    pub fn unlock_map(&self, uuid: &str, map_id: u32) -> Result<bool, String> {        let reply = match self.pool.lock() {
             Ok(pool) => pool.query_reply(
                 "INSERT INTO \"character_unlock\" (\"character_uuid\", \"map_id\") \
                  VALUES ($1, $2::bigint) ON CONFLICT DO NOTHING RETURNING 1",
@@ -612,5 +651,55 @@ mod tests {
             pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&uuid])
                 .unwrap();
         }
+    }
+
+    #[test]
+    #[ignore = "needs the character database"]
+    fn a_character_is_removed_with_its_own_records() {
+        // The administration tool's remove: the row, its items and its unlocks, in one call. A row
+        // that is not there answers false rather than failing, so a second click is harmless.
+        let _serial = database::updater::apply::test_lock("characters");
+        let Some(source) = source() else {
+            panic!("the character database is not reachable");
+        };
+        let uuid = "00000000-0000-0000-0000-0000000000AC";
+        let account = "00000000-0000-0000-0000-00000000C10D";
+        {
+            let mut pool = source.pool.lock().unwrap();
+            pool.query_with(
+                "INSERT INTO \"characters\" (\"uuid\", \"account_uuid\", \"name\", \"appearance\", \"primary_profession\", \"unlocked_professions\", \"campaign\", \"level\") \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                &[&uuid, &account, &"Removable One", &0i64, &1i64, &2i64, &0i64, &1i64],
+            )
+            .expect("the character row is written");
+            pool.query_with(
+                "INSERT INTO \"item_instance\" (\"character_uuid\", \"template_id\", \"file_id\", \"dye_tint\", \"dye_colors\", \"item_id\", \"bag_id\", \"slot\", \"quantity\", \"profession\") \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                &[&uuid, &1i64, &100i64, &0i64, &0i64, &9001i64, &1i64, &0i64, &1i64, &1i64],
+            )
+            .expect("the item row is written");
+            pool.query_with(
+                "INSERT INTO \"character_unlock\" (\"character_uuid\", \"map_id\") VALUES ($1, $2)",
+                &[&uuid, &148i64],
+            )
+            .expect("the unlock row is written");
+        }
+
+        assert!(source.remove(uuid).expect("the character is removed"), "the row was there");
+        assert!(
+            !source.remove(uuid).expect("a second remove answers"),
+            "nothing is left to remove"
+        );
+        assert!(
+            source.items_of(uuid).expect("the items are readable").is_empty(),
+            "its items are gone"
+        );
+        assert!(
+            source
+                .unlocked_maps(uuid)
+                .expect("the unlocks are readable")
+                .is_empty(),
+            "its unlocks are gone"
+        );
     }
 }

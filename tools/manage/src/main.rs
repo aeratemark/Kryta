@@ -81,6 +81,7 @@ impl Manage {
             ("POST", "/content/party-cap") => self.set_party_cap(request),
             ("GET", "/settings") => pages::settings(self),
             ("GET", "/schema") => pages::schema(self),
+            ("POST", "/characters/delete") => self.delete_character(request),
             ("POST", "/accounts/eula") => self.set_eula(request),
             ("POST", "/accounts/create") => self.create(request),
             ("POST", "/accounts/delete") => self.delete(request),
@@ -179,6 +180,36 @@ impl Manage {
                 pages::message(&format!("No account is called {username}.")),
             ),
             Err(error) => Response::html(500, pages::message(&format!("The account table said: {error}"))),
+        }
+    }
+
+    /// `POST /characters/delete`: remove a character and the records that are its own - its items,
+    /// its unlocks, its row. A character is *written* by the creation confirm and not here; removing
+    /// one is the operator's act, and the page's button is the reason this route exists.
+    fn delete_character(&self, request: &Request) -> Response {
+        let Some(characters) = self.characters.as_ref() else {
+            return Response::html(
+                503,
+                pages::message("No character database is configured in manage.json."),
+            );
+        };
+        let form = form_fields(&request.body_text());
+        let Some(uuid) = form.get("uuid").cloned() else {
+            return Response::html(400, pages::message("A request with no character id."));
+        };
+        match characters.remove(&uuid) {
+            Ok(true) => {
+                self.say(format!("character {uuid}: removed, with its items and unlocks"));
+                pages::redirect("/characters")
+            }
+            Ok(false) => Response::html(
+                404,
+                pages::message(&format!("No character has the id {uuid}.")),
+            ),
+            Err(error) => Response::html(
+                500,
+                pages::message(&format!("The character database said: {error}")),
+            ),
         }
     }
 
