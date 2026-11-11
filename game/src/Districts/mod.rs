@@ -19,7 +19,7 @@
 #[path = "Instances.rs"]
 pub mod instances;
 
-pub use instances::DatabaseInstances;
+pub use instances::{DatabaseInstances, InstanceRow};
 
 use common::logging::{Log, LogLevel};
 use std::sync::Arc;

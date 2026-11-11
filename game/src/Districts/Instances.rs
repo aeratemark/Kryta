@@ -30,6 +30,23 @@ pub struct DatabaseInstances {
     log: Log,
 }
 
+/// One copy as the table records it, for a page that shows what is running.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceRow {
+    /// The map it is a copy of.
+    pub map_id: u32,
+    /// Its district number.
+    pub district: u32,
+    /// The language it was opened for.
+    pub language: u32,
+    /// 0 outpost, 1 explorable (the map's own type).
+    pub kind: u8,
+    /// When it opened, as the database prints it.
+    pub opened_at: Option<String>,
+    /// When it last became empty; `None` while somebody is inside.
+    pub empty_since: Option<String>,
+}
+
 impl DatabaseInstances {
     /// A source that asks this pool.
     pub fn new(pool: Arc<Mutex<DatabaseWorkerPool>>, log: Log) -> Self {
@@ -71,6 +88,34 @@ impl DatabaseInstances {
     pub fn dispose_all(&self) -> Result<usize, String> {
         let rows = self.query(DISPOSE_ALL, Vec::new())?;
         Ok(rows.len())
+    }
+
+    /// Every copy the table records, for the administration tool's page: the open ones and the
+    /// ones awaiting disposal.
+    pub fn rows(&self) -> Result<Vec<InstanceRow>, String> {
+        let rows = self.query(
+            "SELECT \"map_id\"::bigint, \"district\"::bigint, \"language\"::bigint, \
+             \"kind\"::bigint, to_char(\"opened_at\", 'YYYY-MM-DD HH24:MI:SS'), \
+             to_char(\"empty_since\", 'YYYY-MM-DD HH24:MI:SS') FROM \"instance\" \
+             ORDER BY \"map_id\", \"district\"",
+            Vec::new(),
+        )?;
+        rows.iter()
+            .map(|row| {
+                Ok(InstanceRow {
+                    map_id: row.try_get::<usize, i64>(0).map_err(|error| format!("map: {error}"))? as u32,
+                    district: row.try_get::<usize, i64>(1).map_err(|error| format!("district: {error}"))? as u32,
+                    language: row.try_get::<usize, i64>(2).map_err(|error| format!("language: {error}"))? as u32,
+                    kind: row.try_get::<usize, i64>(3).map_err(|error| format!("kind: {error}"))? as u8,
+                    opened_at: row
+                        .try_get::<usize, Option<String>>(4)
+                        .map_err(|error| format!("opened at: {error}"))?,
+                    empty_since: row
+                        .try_get::<usize, Option<String>>(5)
+                        .map_err(|error| format!("empty since: {error}"))?,
+                })
+            })
+            .collect()
     }
 
     /// One statement, and every row it answered.
@@ -134,6 +179,55 @@ mod tests {
         store.open(148, 8, 0, 0).expect("another copy opens");
         let left = store.dispose_all().expect("every row disposes");
         assert!(left >= 1, "the copy that was opened is disposed");
+        log.shutdown();
+    }
+
+    #[test]
+    #[ignore = "needs the world database"]
+    fn a_copy_is_read_as_a_row_for_the_tool() {
+        let _serial = database::updater::apply::test_lock("world");
+        let log = Log::new();
+        let Some(config) =
+            Config::load_json("../worldserver/worldserver.json", false, Policy::default()).ok()
+        else {
+            panic!("the world program's configuration is not readable");
+        };
+        let settings = read_settings(&config, DatabaseKind::World).expect("the world settings");
+        let mut pool = DatabaseWorkerPool::open(DatabaseKind::World, &settings, &log)
+            .expect("the world pool opens");
+        let schema = collect_files(Path::new("../data/sql/base/db_world"), UpdateState::Released)
+            .expect("the world schema");
+        pool.apply_updates(&schema, &log).expect("the schema applies");
+        let store = DatabaseInstances::new(Arc::new(Mutex::new(pool)), log.clone());
+
+        let id = store.open(148, 9, 1, 0).expect("the copy opens");
+        let rows = store.rows().expect("the table reads");
+        let row = rows
+            .iter()
+            .find(|row| row.map_id == 148 && row.district == 9)
+            .expect("the copy is a row");
+        assert_eq!(row.language, 1);
+        assert_eq!(row.kind, 0, "an outpost");
+        assert!(row.opened_at.is_some());
+        assert_eq!(row.empty_since, None, "somebody is inside while it opens");
+
+        store.mark_empty(id).expect("the copy can be marked empty");
+        let rows = store.rows().expect("the table reads");
+        let row = rows
+            .iter()
+            .find(|row| row.map_id == 148 && row.district == 9)
+            .expect("the copy is still a row");
+        assert!(row.empty_since.is_some(), "and its hold has begun");
+
+        store.dispose(id).expect("the copy can be disposed");
+        assert!(
+            !store
+                .rows()
+                .expect("the table reads")
+                .iter()
+                .any(|row| row.map_id == 148 && row.district == 9),
+            "the disposed copy is gone"
+        );
         log.shutdown();
     }
 }

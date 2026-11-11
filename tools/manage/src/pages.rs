@@ -231,6 +231,23 @@ pub fn content(manage: &Manage) -> Response {
     }
 
     let items = manage.list_items().unwrap_or_default();
+    let instances = manage.list_instances().unwrap_or_default();
+    let mut instance_rows = String::new();
+    for instance in &instances {
+        instance_rows.push_str(&format!(
+            "<tr><td>{map_id}</td><td>{district}</td><td>{language}</td><td>{kind}</td>\
+             <td>{opened}</td><td>{empty}</td></tr>\n",
+            map_id = instance.map_id,
+            district = instance.district,
+            language = instance.language,
+            kind = if instance.kind == 0 { "outpost" } else { "explorable" },
+            opened = instance.opened_at.clone().unwrap_or_default(),
+            empty = instance
+                .empty_since
+                .clone()
+                .unwrap_or_else(|| "somebody inside".to_string()),
+        ));
+    }
     let mut item_rows = String::new();
     for item in &items {
         item_rows.push_str(&format!(
@@ -270,10 +287,18 @@ pub fn content(manage: &Manage) -> Response {
          A character's own items point at these.</p>\n\
          <table>\n<tr><th>file id</th><th>type</th><th>dyes</th><th>model</th><th>value</th>\
          <th>profession</th><th>stack</th><th>name units</th></tr>\n{item_rows}</table>\n\
-         <p class=\"note\">{items} template(s).</p>",
+         <p class=\"note\">{items} template(s).</p>\n\
+         <h2>running instances</h2>\n\
+         <p class=\"note\">The copies the world has open - the rows its tick disposes once they have \
+         been empty past the hold (R37/R40). A copy with a time in the last column is waiting for \
+         that.</p>\n\
+         <table>\n<tr><th>map</th><th>district</th><th>language</th><th>kind</th><th>opened</th>\
+         <th>empty since</th></tr>\n{instance_rows}</table>\n\
+         <p class=\"note\">{instances} copy(ies).</p>",
         maps = maps.len(),
         spawns = spawns.len(),
-        items = items.len()
+        items = items.len(),
+        instances = instances.len()
     );
     page("content", &body)
 }

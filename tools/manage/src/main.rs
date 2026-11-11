@@ -49,6 +49,8 @@ pub struct Manage {
     maps: Option<Arc<game::maps::DatabaseMaps>>,
     /// The item templates, when the world database is open: what the content page counts.
     items: Option<Arc<game::data_stores::DatabaseItems>>,
+    /// The instance table, when the world database is open: what the content page shows running.
+    instances: Option<Arc<game::districts::DatabaseInstances>>,
     /// The world list, read from `realmlist` and merged with `data/realms.json`.
     worlds: Option<Arc<shared::worlds::WorldList>>,
     /// The databases whose updater records the schema page shows.
@@ -207,6 +209,11 @@ impl Manage {
     /// The arrival points, when a world database is configured: where a portal crossing lands (R21).
     pub fn list_arrivals(&self) -> Option<Vec<game::maps::Arrival>> {
         self.maps.as_ref()?.arrivals().ok()
+    }
+
+    /// The copies the instance table records, when a world database is configured.
+    pub fn list_instances(&self) -> Option<Vec<game::districts::InstanceRow>> {
+        self.instances.as_ref()?.rows().ok()
     }
 
     /// The party cap a map states, or `None` when the world's own setting applies (R15).
@@ -581,6 +588,12 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
             log.clone(),
         ))
     });
+    let instances = world_pool.as_ref().map(|pool| {
+        Arc::new(game::districts::DatabaseInstances::new(
+            Arc::clone(pool),
+            log.clone(),
+        ))
+    });
 
     // The schema page: each database's own record of what it has applied, against the files on disk.
     let mut schemas = vec![DatabaseSchema {
@@ -608,6 +621,7 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         characters,
         maps,
         items,
+        instances,
         worlds: Some(Arc::new(world_list)),
         schemas,
         token: Some(token),
