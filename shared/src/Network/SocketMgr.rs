@@ -242,8 +242,64 @@ mod tests {
         }
     }
 
+    /// A session that echoes one message and then waits for the peer to go away.
+    struct Hold;
+
+    impl Session for Hold {
+        fn run(self: Box<Self>, mut io: SessionIo) -> SessionFuture {
+            Box::pin(async move {
+                let mut buffer = [0u8; 64];
+                if let Ok(read) = io.read(&mut buffer).await
+                    && read > 0
+                {
+                    let _ = io.write_all(&buffer[..read]).await;
+                }
+                // Held open until the client goes: this is what a status line's live count names.
+                loop {
+                    match io.read(&mut buffer).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                }
+                let _ = io.close().await;
+            })
+        }
+    }
+
     fn echo_factory() -> SessionFactory {
         Arc::new(|| Box::new(Echo) as Box<dyn Session>)
+    }
+
+    #[test]
+    fn a_served_connection_is_counted_live_until_it_ends() {
+        use std::io::{Read, Write};
+
+        let mut manager = SocketMgr::new(Arc::new(|| Box::new(Hold) as Box<dyn Session>));
+        let port = manager.start_network("127.0.0.1", 0, 1).unwrap();
+        assert_eq!(manager.live_count(), 0, "nothing is served before a client");
+
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        client.write_all(b"hi").unwrap();
+        let mut answer = [0u8; 2];
+        client.read_exact(&mut answer).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while manager.live_count() == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(manager.live_count(), 1, "the connection is being served");
+
+        drop(client);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while manager.live_count() != 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(manager.live_count(), 0, "and counted no more once it ends");
+
+        manager.stop_network();
     }
 
     #[test]
