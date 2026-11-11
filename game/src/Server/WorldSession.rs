@@ -111,6 +111,10 @@ pub struct WorldSession {
     /// The character database, when the program opened one: a creation screen's confirm writes a row
     /// there. A session without it can draw the screen but cannot finish it.
     characters: Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
+    /// The login database, when the program opened one: the travel record a login wrote is claimed
+    /// here, once, and decides the map and the district the connection loads
+    /// (`docs/port/06-world-plan.md`, "The three seams").
+    login: Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
     /// The bags, items and profession sets a creation screen is built from, when the program read them.
     creation: Option<crate::creation::Tables>,
     /// The master secret to draw the exchange from, when the caller wants a known one. A program
@@ -128,6 +132,7 @@ impl WorldSession {
             spawns: world.spawns().to_vec(),
             settings: world.settings().clone(),
             characters: None,
+            login: None,
             creation: Some(world.creation().clone()),
             master: None,
         }
@@ -141,6 +146,23 @@ impl WorldSession {
     ) -> Self {
         Self {
             characters: Some(characters),
+            ..Self::new(log, world)
+        }
+    }
+
+    /// A session that can write a character and claim a travel.
+    ///
+    /// The program's own shape: the travel table is in the login database, and the version message's
+    /// token pair is what claims a row.
+    pub fn with_characters_and_login(
+        log: Log,
+        world: &World,
+        characters: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
+        login: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
+    ) -> Self {
+        Self {
+            characters: Some(characters),
+            login: Some(login),
             ..Self::new(log, world)
         }
     }
@@ -180,6 +202,24 @@ impl WorldSession {
     ) -> Self {
         Self {
             characters: Some(characters),
+            ..Self::with_master(log, world, master)
+        }
+    }
+
+    /// A session with a known master, a character database and a login database.
+    ///
+    /// The shape a test that plays a whole travel uses: the row the login would have written is
+    /// claimed by the connection, and the map it names is the one loaded.
+    pub fn with_master_and_characters_and_login(
+        log: Log,
+        world: &World,
+        master: [u8; shared::cryptography::handshake::MASTER_SECRET_LEN],
+        characters: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
+        login: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
+    ) -> Self {
+        Self {
+            characters: Some(characters),
+            login: Some(login),
             ..Self::with_master(log, world, master)
         }
     }
@@ -308,13 +348,64 @@ impl WorldSession {
             ),
         );
 
-        // 3. The block the world sends unasked, once the connection is scrambled.
-        let Some(map) = self.maps.iter().find(|map| map.id == version.map_id) else {
+        // 3. The travel record. The login wrote one when it answered the client's request for a map
+        // (`0x8029`), and this connection presents the same world, account and token; claiming it is
+        // what makes the map and the district the login's decision rather than the client's. A
+        // connection with no record - the creation screen, or a client that never asked - keeps the
+        // map its version message names (`docs/port/06-world-plan.md`, "The three seams").
+        let travel = match self.login.as_ref() {
+            Some(login) => {
+                let account = crate::characters::uuid_text(&version.account);
+                let travels = crate::maps::DatabaseTravels::new(
+                    std::sync::Arc::clone(login),
+                    self.log.clone(),
+                );
+                match travels.claim(self.realm, &account, version.player_token) {
+                    Ok(Some(travel)) => {
+                        self.say(
+                            LogLevel::Info,
+                            format!(
+                                "Gameplay connection from {peer}: the travel record is claimed - map {}, district {}, language {}.",
+                                travel.map_id, travel.district, travel.language
+                            ),
+                        );
+                        Some(travel)
+                    }
+                    Ok(None) => {
+                        self.say(
+                            LogLevel::Info,
+                            format!(
+                                "Gameplay connection from {peer}: no travel record was claimed; the map {} is the one its own version message names.",
+                                version.map_id
+                            ),
+                        );
+                        None
+                    }
+                    Err(error) => {
+                        self.say(
+                            LogLevel::Error,
+                            format!(
+                                "Gameplay connection from {peer}: the travel table could not be read ({error}); the version message's map is used."
+                            ),
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+        let map_id = travel.map(|travel| travel.map_id).unwrap_or(version.map_id);
+        // R57: the district the request named is honoured; a request that named none is answered
+        // with the first district, which is the only one before the district lifecycle exists (R16).
+        let district = travel.map(|travel| travel.district.max(1)).unwrap_or(1);
+        let language = travel.map(|travel| travel.language.min(0xFF) as u8).unwrap_or(0);
+
+        // 4. The block the world sends unasked, once the connection is scrambled.
+        let Some(map) = self.maps.iter().find(|map| map.id == map_id) else {
             self.say(
                 LogLevel::Error,
                 format!(
-                    "Gameplay connection from {peer} asks for map {}, which this world does not host ({} map(s) in the catalogue); closing it.",
-                    version.map_id,
+                    "Gameplay connection from {peer} asks for map {map_id}, which this world does not host ({} map(s) in the catalogue); closing it.",
                     self.maps.len()
                 ),
             );
@@ -345,8 +436,8 @@ impl WorldSession {
                     CREATION_AGENT,
                     map.id as u16,
                     is_explorable,
-                    1,
-                    0,
+                    district,
+                    language,
                     0,
                 ),
             ];
@@ -359,7 +450,7 @@ impl WorldSession {
                 Ok(()) => self.say(
                     LogLevel::Info,
                     format!(
-                        "Gameplay connection from {peer}: map {} ({}, type {}) is loading - {} message(s), {} bytes: the load head, the player-data start, the name '{}' and the instance's record.",
+                        "Gameplay connection from {peer}: map {} ({}, type {}) is loading - {} message(s), {} bytes: the load head, the player-data start, the name '{}' and the instance's record (district {district}, language {language}).",
                         map.id, map.name, map.kind, frames.len(), block.len(), name
                     ),
                 ),
@@ -584,18 +675,35 @@ impl WorldSession {
     /// The character's name, read from its row when the program opened a character database.
     ///
     /// The gameplay connection names the character by uuid in its version message, so the row is one
-    /// lookup away and no second source of truth is needed.
+    /// lookup away and no second source of truth is needed. The read goes through the pool's worker
+    /// queue: this runs inside the network's runtime, where the synchronous connection's own
+    /// `block_on` is not allowed (`database/src/Database/Pool.rs`).
     fn character_name(&self, version: &crate::server::protocol::GameVersion) -> Option<String> {
         let pool = self.characters.as_ref()?;
         let uuid = crate::characters::uuid_text(&version.character);
-        let rows = match pool.lock() {
-            Ok(mut pool) => pool
-                .query_with(
-                    "SELECT \"name\" FROM \"characters\" WHERE \"uuid\" = $1",
-                    &[&uuid],
-                )
-                .ok()?,
+        let reply = match pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "SELECT \"name\" FROM \"characters\" WHERE \"uuid\" = $1",
+                vec![database::database::Param::Text(uuid)],
+            ),
             Err(_) => return None,
+        };
+        let rows = match reply.recv() {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(error)) => {
+                self.say(
+                    LogLevel::Error,
+                    format!("the character's row cannot be read: {error}"),
+                );
+                return None;
+            }
+            Err(_) => {
+                self.say(
+                    LogLevel::Error,
+                    "the character database answered no query: it is shutting down",
+                );
+                return None;
+            }
         };
         rows.first()
             .map(|row| row.get::<usize, String>(0))
@@ -1312,6 +1420,151 @@ Logger.root = 6,Console
         reading.apply(&mut answered);
         assert_eq!(&answered[..player.len()], player.as_slice(), "the character's own body");
         assert_eq!(&answered[player.len()..], &[0x8E, 0x01], "and the load is over");
+
+        manager.stop_network();
+        log.shutdown();
+    }
+
+    #[test]
+    #[ignore = "needs the login and character databases"]
+    fn a_travel_record_decides_the_map_and_the_district() {
+        // The login writes a travel row when it answers a client's request for a map (`0x8029`), and
+        // this connection claims it once (`docs/port/06-world-plan.md`, "The three seams"). The
+        // version message names the creation instance on purpose: what loads must be the map the
+        // record names, with the district and language the request carried (R57).
+        use common::configuration::{Config, Policy};
+        use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
+        use database::updater::{collect_files, UpdateState};
+
+        let log = Log::new();
+        let config = Config::load_json("../worldserver/worldserver.json", false, Policy::default())
+            .expect("the world program's own configuration");
+
+        let settings = read_settings(&config, DatabaseKind::Login).expect("the login settings");
+        let mut pool = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log)
+            .expect("the login pool opens");
+        let schema = collect_files(
+            std::path::Path::new("../data/sql/base/db_auth"),
+            UpdateState::Released,
+        )
+        .expect("the login schema");
+        pool.apply_updates(&schema, &log).expect("the schema applies");
+        let login = Arc::new(std::sync::Mutex::new(pool));
+
+        let settings = read_settings(&config, DatabaseKind::Character)
+            .expect("the character settings");
+        let mut pool = DatabaseWorkerPool::open(DatabaseKind::Character, &settings, &log)
+            .expect("the character pool opens");
+        let schema = collect_files(
+            std::path::Path::new("../data/sql/base/db_characters"),
+            UpdateState::Released,
+        )
+        .expect("the character schema");
+        pool.apply_updates(&schema, &log).expect("the schema applies");
+        let characters = Arc::new(std::sync::Mutex::new(pool));
+
+        // The record the login would have written for this connection.
+        let account = [0xAAu8; 16];
+        crate::maps::DatabaseTravels::new(Arc::clone(&login), log.clone())
+            .record(&crate::maps::Travel {
+                account,
+                world: 2,
+                map_id: 148,
+                district: 3,
+                language: 2,
+                player_token: 0x1234,
+            })
+            .expect("the travel is recorded");
+
+        let world = Arc::new(world());
+        let master = [0x33u8; MASTER_SECRET_LEN];
+        let factory: shared::network::socket::SessionFactory = {
+            let log = log.clone();
+            let world = Arc::clone(&world);
+            let characters = Arc::clone(&characters);
+            let login = Arc::clone(&login);
+            Arc::new(move || {
+                Box::new(WorldSession::with_master_and_characters_and_login(
+                    log.clone(),
+                    &world,
+                    master,
+                    Arc::clone(&characters),
+                    Arc::clone(&login),
+                )) as Box<dyn Session>
+            })
+        };
+        let mut manager = shared::network::socket_mgr::SocketMgr::new(factory);
+        let port = manager.start_network("127.0.0.1", 0, 1).unwrap();
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+
+        // 1. The version message: the creation instance, and the token pair the login drew.
+        let version = GameVersion {
+            version: 39167,
+            h0008: 1,
+            map_token: 2,
+            map_id: 0,
+            player_token: 0x1234,
+            account,
+            character: [0xBB; 16],
+            h0038: 0,
+            h003c: 0,
+        };
+        client.write_all(&version.encode()).unwrap();
+
+        // 2. The seed exchange.
+        let mut public = [0u8; handshake::PUBLIC_LEN];
+        public[0] = 2;
+        let mut seed = CLIENT_SEED_HEADER.to_le_bytes().to_vec();
+        seed.extend_from_slice(&public);
+        client.write_all(&seed).unwrap();
+        let mut answer = [0u8; handshake::SERVER_SEED_LEN];
+        client.read_exact(&mut answer).unwrap();
+        let key: [u8; KEY_LEN] = handshake::derive_key(&master);
+        let mut reading = common::cryptography::Arc4::new(&key);
+        let mut sending = common::cryptography::Arc4::new(&key);
+
+        // 3. The block: the outpost's load, not the creation instance's, with the record's district
+        // and language.
+        let expected = [
+            instance_packets::instance_load_head(),
+            instance_packets::instance_player_data_start(),
+            instance_packets::instance_load_player_name("Player"),
+            instance_packets::instance_load_info(1, 148, 0, 3, 2, 0),
+        ];
+        let expected_bytes: usize = expected.iter().map(Vec::len).sum();
+        let mut block = vec![0u8; expected_bytes];
+        client.read_exact(&mut block).unwrap();
+        reading.apply(&mut block);
+        let mut whole = Vec::new();
+        for frame in &expected {
+            whole.extend_from_slice(frame);
+        }
+        assert_eq!(
+            block, whole,
+            "the travel's map, district and language, not the version message's"
+        );
+
+        // 4. Where it stands is map 148's own file, which the creation instance does not have.
+        let mut ask = vec![0x88, 0x80];
+        sending.apply(&mut ask);
+        client.write_all(&ask).unwrap();
+        let mut spawn = vec![0u8; 26];
+        client.read_exact(&mut spawn).unwrap();
+        reading.apply(&mut spawn);
+        assert_eq!(
+            &spawn[2..6],
+            &112_509u32.to_le_bytes(),
+            "the outpost's file, so the record decided the map"
+        );
+
+        // 5. The record is claimed once: a second claim finds nothing.
+        let claimed = crate::maps::DatabaseTravels::new(Arc::clone(&login), log.clone())
+            .claim(2, &crate::characters::uuid_text(&account), 0x1234)
+            .expect("the travel table reads");
+        assert!(claimed.is_none(), "the row was consumed by the connection");
 
         manager.stop_network();
         log.shutdown();

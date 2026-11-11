@@ -165,10 +165,10 @@ fn run(args: &[String]) -> Result<(), String> {
     // Stage 5. Reference: `StartDB()`, which opens the World and Character pools and runs the schema
     // updater on each - the stage the auth program has, twice.
     //
-    // The world program opens two databases rather than one. Neither schema is the reference's: the
-    // login database's `realmlist` transfers because a world list is a world list, but the world's
-    // content and a character's sheets are Tyria's, so both schemas start empty and are filled by
-    // the stages that own them.
+    // The world program opens three databases: the world's content, a character's sheets, and the
+    // login database's `travel` record - the hand-off a login writes and this program claims, which
+    // is why the two programs need not talk to each other (`docs/port/06-world-plan.md`, "The three
+    // seams"). The login schema is applied here too, so a world started first still finds its table.
     let (sql_trace, notes) = config
         .value_bool("Database.Trace", false)
         .map_err(|error| error.to_string())?;
@@ -176,10 +176,13 @@ fn run(args: &[String]) -> Result<(), String> {
         report(&note);
     }
 
+    config.mark_critical("LoginDatabaseInfo");
     let mut opened = Vec::new();
     let mut character_pool: Option<std::sync::Arc<std::sync::Mutex<DatabaseWorkerPool>>> = None;
     let mut world_pool: Option<std::sync::Arc<std::sync::Mutex<DatabaseWorkerPool>>> = None;
+    let mut login_pool: Option<std::sync::Arc<std::sync::Mutex<DatabaseWorkerPool>>> = None;
     for (kind, label, schema) in [
+        (DatabaseKind::Login, "Login", "data/sql/base/db_auth"),
         (DatabaseKind::World, "World", "data/sql/base/db_world"),
         (DatabaseKind::Character, "Character", "data/sql/base/db_characters"),
     ] {
@@ -213,6 +216,10 @@ fn run(args: &[String]) -> Result<(), String> {
         } else if kind == DatabaseKind::World {
             // The maps are rows, so the world pool is kept: the map catalogue is read from it below.
             world_pool = Some(std::sync::Arc::new(std::sync::Mutex::new(pool)));
+        } else if kind == DatabaseKind::Login {
+            // A connection claims its travel record from a session thread, so this pool is shared
+            // with the listener as well.
+            login_pool = Some(std::sync::Arc::new(std::sync::Mutex::new(pool)));
         } else {
             opened.push(pool);
         }
@@ -331,6 +338,7 @@ fn run(args: &[String]) -> Result<(), String> {
         game::server::WorldSocketMgr::start(
             std::sync::Arc::clone(&world),
             character_pool.clone(),
+            login_pool.clone(),
             log.clone(),
             &bind,
             port,
@@ -372,6 +380,16 @@ fn run(args: &[String]) -> Result<(), String> {
                 LogLevel::Error,
                 "server.worldserver",
                 "the character database pool was poisoned; it closes when the process ends",
+            ),
+        }
+    }
+    if let Some(pool) = login_pool {
+        match pool.lock() {
+            Ok(mut pool) => pool.close(),
+            Err(_) => log.out(
+                LogLevel::Error,
+                "server.worldserver",
+                "the login database pool was poisoned; it closes when the process ends",
             ),
         }
     }

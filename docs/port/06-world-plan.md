@@ -64,7 +64,7 @@ Two things the ledger settles before any stage starts:
 | 1 | `game/Pack/` - the archive | none: a client fact | - | - | a file id is read and checksums against the archive's own table |
 | 2 | **(in progress)** `game/Maps/` + the world schema - a map as a **definition**: id, type, name, spawn points (arrivals and portals arrive with the travel path, step 4) | R1, R13, R14, R21, R22, R29 | `0x017C`, `0x0186`, `0x017D`, `0x019A`, `0x0196`, `0x018E` | `map` + `map_spawn` rows (0001/0002 in `data/sql/base/db_world/`) | the gameplay connection of a client naming map 148 loads it - the head block in the measured order, a point of the map's own spawn list scattered per R13, and the load's last message after the players ask (`an_outpost_connection_is_loaded_with_its_entry_point`) |
 | 3 | `game/Districts/` - an **instance**: one running copy, its lifecycle, its district number | R2, R3, R4, R5, R16, R32, R35-R40, R57, R58 | `CtoS 177 TravelMission` (9 bytes, district 0 = unset, E220); `StoC 421 Redirect` (C5); the district counts (E29) | `instance` row: map, district number, language, opened at, empty since | a character enters the outpost and, when it leaves, the instance is disposed per R40 - or held 15 minutes per R37 for a network drop only |
-| 4 | **the travel pipeline** - the login records a travel, the world claims it, the character appears where R13 says | R9, R12, R13, R14, R21, R22, R47, R57 | `AUTH_CMSG_REQUEST_GAME_INSTANCE`, `AUTH_SMSG_GAME_SERVER_INFO`, the gameplay version message's token pair | `travel` row | a travel from the creation instance lands at a random spawn point of the destination, scattered per the setting, facing the point's angle |
+| 4 | **the travel pipeline** (done) - the login records a travel when it answers `0x8029`, the world claims it once when the version message presents the token pair, and R13 places the character | R9, R12, R13, R14, R21, R22, R47, R57 | `AUTH_CMSG_REQUEST_GAME_INSTANCE` (26 bytes, `map_id`/district/language its own), `AUTH_SMSG_GAME_SERVER_INFO` (42), the gameplay version message's token pair | `travel` row in `data/sql/base/db_auth/`, claimed once; the `map_spawn` row it lands on | the login's record decides the map and the district even when the version message names another map, and the connection is answered at a scattered point of it (`a_travel_record_decides_the_map_and_the_district`); the login's own answer records the row (`a_map_request_after_a_login_records_the_travel`), which a second claim cannot take |
 | 5 | `game/Terrain/` - walking | R34, R43 | movement messages | map blob | a walk follows the blob's own planes |
 | 6 | `game/Agents/` + `game/Movement/` - what is in a map, and the player's own agent | R29-R31, R34, R43 | agent families | spawn rows, agent state | a spawn from the map's own table appears and moves |
 | 7 | `game/Parties/` + `game/Heroes/` - the travel unit | R6-R11, R15, R17-R28, R45 | party messages | `party`, `party_member` rows; hero/henchman state | a party travels as one unit and a smaller cap truncates it leader-first |
@@ -91,11 +91,14 @@ Both go to the owner or to a capture, in that order of preference.
 Everything above fits inside one noun. These cross a boundary and each has one answer:
 
 1. **Travel, login to world.** The login records a travel when it answers `0x8029` - the account, the
-   world, the map, the player token - and the world claims it once when the gameplay connection presents
-   that pair. In this tree the record is a row: a `travel` table beside `account` and `realmlist`, written
-   by the auth program, read by the world through a repository of its own. That is the reference's own
-   arrangement (its worldserver reads its login database) and it keeps the two programs from talking to
-   each other.
+   world, the map, the district, the language and the player token - and the world claims it once, by
+   reading and deleting it in one statement, when the gameplay connection's version message presents
+   the same world, account and token. In this tree the record is a row: `travel` in the login database
+   beside `account` and `realmlist` (`data/sql/base/db_auth/travel.sql`), written by the auth program,
+   read by the world through `game/Maps/Travels.rs`. That is the reference's own arrangement (its
+   worldserver reads its login database) and it keeps the two programs from talking to each other. A
+   connection with no record - the character-creation instance - keeps the map its version message
+   names, which is how the screen worked before the record existed.
 2. **Characters and their parts.** The character row is written at the creation confirm and read by the
    login's list (`docs/decisions/0007-character-schema.md`). Every later stage that adds a part - a bag, a
    skill, a quest state, a last outpost - adds a table or a column, never a second repository.

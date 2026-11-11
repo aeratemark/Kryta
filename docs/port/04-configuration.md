@@ -114,6 +114,7 @@ added, and a field the file does not state keeps the table's value.
 | the portal: enabled, where it answers | `authserver.json` |
 | the login database: connection string, worker and synchronous connections, trace | `authserver.json` |
 | the character database: connection string, worker and synchronous connections | `authserver.json`, `worldserver.json`, under `CharacterDatabaseInfo` and `CharacterDatabase` |
+| the login database, in the world program: connection string, worker and synchronous connections | `worldserver.json`, under `LoginDatabaseInfo` and `LoginDatabase` - the world reads it for the travel record its own program cannot be told by another program |
 | the world list: every field of every world, including a world the table does not hold | `data/realms.json`, merged over `realmlist` |
 | the intervals this program reports and refreshes at | `authserver.json` |
 | the world's numbers, every one a game rule with a default (`docs/game-rules.md`): a district's allotment (R5), a party's cap (R15), the spawn scatter (R13), whether instances tick (R33), the compass range (R34), the disconnect hold (R37), the mission button (R56) | `worldserver.json`, the `World` section |

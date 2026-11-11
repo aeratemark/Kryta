@@ -312,8 +312,12 @@ The first thing a client sends on a gameplay connection, and the whole of what t
   the same fields in the same order (`Connection_ReadVersion`).
 - In this tree: `game/src/Server/Protocol/` - the first message of the game library's protocol, with
   the offsets spelled out in a test so a reordering fails a test rather than a client.
-- Not yet used for anything but routing: the token pair is what the world will compare against the
-  travel the login recorded, and the login does not record a travel yet.
+- What it is used for: the token pair (`map_token` with `player_token`) is what the world compares
+  against the travel the login recorded, and the record's `map_id` - not this message's - is the map
+  that gets loaded. A connection whose pair claims no record keeps the map named here, which is how
+  the character-creation instance arrives. The login records the row when it answers `0x8029`
+  (`data/sql/base/db_auth/travel.sql`), and the world claims it once (`game/src/Maps/Travels.rs`,
+  `docs/port/06-world-plan.md`, "The three seams").
 
 ## The first four bytes of a connection
 

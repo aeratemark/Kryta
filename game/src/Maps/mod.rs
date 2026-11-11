@@ -8,6 +8,11 @@
 //! What is **not** here: an instance. A map is a definition; a running copy with a district, a population
 //! and a clock is `game/Districts/`, and it is the half of the schema this repository does not read.
 
+#[path = "Travels.rs"]
+pub mod travels;
+
+pub use travels::{DatabaseTravels, Travel};
+
 use std::sync::{Arc, Mutex};
 
 use common::logging::{Log, LogLevel};

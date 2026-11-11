@@ -26,10 +26,13 @@ impl WorldSocketMgr {
     ///
     /// The world is shared with every session: each connection needs the world's id and its maps,
     /// and neither changes while the listener runs. The character pool is shared too, because a
-    /// creation screen's confirm writes a character row and nothing else may open a second one.
+    /// creation screen's confirm writes a character row and nothing else may open a second one. The
+    /// login pool is shared so a connection can claim the travel record its login wrote.
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         world: Arc<World>,
         characters: Option<Arc<Mutex<DatabaseWorkerPool>>>,
+        login: Option<Arc<Mutex<DatabaseWorkerPool>>>,
         log: Log,
         bind_ip: &str,
         port: u16,
@@ -40,14 +43,19 @@ impl WorldSocketMgr {
             let log = log.clone();
             let world = Arc::clone(&world);
             let characters = characters.clone();
+            let login = login.clone();
             Arc::new(move || {
-                let session = match characters.as_ref() {
-                    Some(characters) => WorldSession::with_characters(
+                let session = match (characters.as_ref(), login.as_ref()) {
+                    (Some(characters), Some(login)) => WorldSession::with_characters_and_login(
                         log.clone(),
                         &world,
                         Arc::clone(characters),
+                        Arc::clone(login),
                     ),
-                    None => WorldSession::new(log.clone(), &world),
+                    (Some(characters), None) => {
+                        WorldSession::with_characters(log.clone(), &world, Arc::clone(characters))
+                    }
+                    (None, _) => WorldSession::new(log.clone(), &world),
                 };
                 Box::new(session) as Box<dyn Session>
             })

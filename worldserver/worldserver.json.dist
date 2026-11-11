@@ -85,6 +85,22 @@
     "doc": "Where file appenders write. Empty means the working directory."
   },
 
+  "LoginDatabaseInfo": {
+    "value": "127.0.0.1;5432;kryta;change-me;kryta_login",
+    "doc": "host;port;user;password;database - the login's own tables: accounts, the world list, and the travel record a login writes and this program claims. The world reads this database the way the reference's world program reads its login database; the two programs never talk to each other."
+  },
+
+  "LoginDatabase": {
+    "WorkerThreads": {
+      "value": 2,
+      "doc": "Asynchronous connections to the login database."
+    },
+    "SynchThreads": {
+      "value": 1,
+      "doc": "Synchronous connections to it."
+    }
+  },
+
   "WorldDatabaseInfo": {
     "value": "127.0.0.1;5432;kryta;change-me;kryta_world",
     "doc": "host;port;user;password;database - the world's own tables, which is what the game is made of rather than what its players did. The fourth field is a password: it is masked in every log line, and this file is not committed with a real one."

@@ -295,6 +295,14 @@ fn run(args: &[String]) -> Result<(), String> {
     // which is what the reference's own `DirectQuery` callers hold too.
     let login = std::sync::Arc::new(std::sync::Mutex::new(login));
 
+    // The travel table in the login database: a `0x8029` answer records the hand-off here, and the
+    // world claims the same row once when the connection presents its token pair
+    // (`docs/port/06-world-plan.md`, "The three seams"). It is state, so it is a row.
+    let travels = std::sync::Arc::new(game::maps::DatabaseTravels::new(
+        std::sync::Arc::clone(&login),
+        log.clone(),
+    ));
+
     if worlds.is_empty() {
         // Reference: the three reasons the reference prints before it exits 1.
         log.out(
@@ -484,14 +492,18 @@ fn run(args: &[String]) -> Result<(), String> {
         let account_settings = account_settings.clone();
         let front_door = std::sync::Arc::clone(&front_door);
         let characters = std::sync::Arc::clone(&characters_store);
+        let travels = std::sync::Arc::clone(&travels);
         std::sync::Arc::new(move || {
-            Box::new(AuthSession::with_random_master(
-                log.clone(),
-                file_check.clone(),
-                account_settings.clone(),
-                Some(std::sync::Arc::clone(&front_door)),
-                Some(std::sync::Arc::clone(&characters)),
-            )) as Box<dyn Session>
+            Box::new(
+                AuthSession::with_random_master(
+                    log.clone(),
+                    file_check.clone(),
+                    account_settings.clone(),
+                    Some(std::sync::Arc::clone(&front_door)),
+                    Some(std::sync::Arc::clone(&characters)),
+                )
+                .with_travels(std::sync::Arc::clone(&travels)),
+            ) as Box<dyn Session>
         })
     };
 
