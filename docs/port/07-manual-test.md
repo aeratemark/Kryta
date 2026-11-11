@@ -76,5 +76,6 @@ The world half of this journey is also played automatically against the *program
 players, sends the travel request and reads the ticks - the same wire steps 5 to 8 do with a client.
 The login half is `cargo test -p authserver --test end_to_end -- --ignored --nocapture`, which starts
 the real `authserver` and performs the client's file check, version message, key exchange and portal
-login, reading the character list it answers with. Neither replaces the client: the client is still
-the judge of what it draws.
+login, reading the character list it answers with - and then the map request (`0x8029`), checking the
+world it names in the answer and the travel row it records (`0x0009` + `0x0003`, the hand-off the world
+claims). Neither replaces the client: the client is still the judge of what it draws.
