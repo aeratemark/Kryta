@@ -54,6 +54,22 @@
     }
   },
 
+  "WorldDatabaseInfo": {
+    "value": "",
+    "doc": "The world database, in the same shape: the maps, their spawn points and the running instances the world program reads. Empty leaves the content page switched off."
+  },
+
+  "WorldDatabase": {
+    "WorkerThreads": {
+      "value": 1,
+      "doc": "Asynchronous connections in the pool."
+    },
+    "SynchThreads": {
+      "value": 1,
+      "doc": "Synchronous connections in the pool."
+    }
+  },
+
   "LogsDir": {
     "value": "",
     "doc": "Where the appender writes. Empty means the working directory."

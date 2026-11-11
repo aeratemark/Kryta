@@ -25,6 +25,12 @@ use tokio::net::TcpListener;
 /// What the tool serves from: the account table, and the token a request must carry when one is set.
 pub struct Manage {
     accounts: Arc<game::accounts::DatabaseAccounts>,
+    /// The character database, when the tool opened one: the characters page.
+    characters: Option<Arc<game::characters::DatabaseCharacters>>,
+    /// The world database, when the tool opened one: the content page.
+    maps: Option<Arc<game::maps::DatabaseMaps>>,
+    /// The world list, read from `realmlist` and merged with `data/realms.json`.
+    worlds: Option<Arc<shared::worlds::WorldList>>,
     token: Option<String>,
     log: Log,
 }
@@ -39,6 +45,9 @@ impl Manage {
         match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/") => pages::dashboard(self),
             ("GET", "/accounts") => pages::accounts(self),
+            ("GET", "/characters") => pages::characters(self),
+            ("GET", "/worlds") => pages::worlds(self),
+            ("GET", "/content") => pages::content(self),
             ("POST", "/accounts/eula") => self.set_eula(request),
             ("POST", "/accounts/create") => self.create(request),
             ("POST", "/accounts/delete") => self.delete(request),
@@ -143,6 +152,24 @@ impl Manage {
     /// The accounts, for a page that lists them.
     pub fn list_accounts(&self) -> Result<Vec<game::accounts::Account>, String> {
         self.accounts.list()
+    }
+
+    /// The characters, when a character database is configured.
+    pub fn list_characters(&self) -> Option<Vec<game::characters::Character>> {
+        self.characters.as_ref().map(|characters| characters.list())
+    }
+
+    /// The world list, when the login database answered.
+    pub fn list_worlds(&self) -> Option<Vec<shared::worlds::Realm>> {
+        self.worlds
+            .as_ref()
+            .map(|worlds| worlds.worlds().values().cloned().collect())
+    }
+
+    /// The maps and their spawn points, when a world database is configured.
+    pub fn list_maps(&self) -> Option<(Vec<game::world::MapEntry>, Vec<game::maps::MapSpawn>)> {
+        let maps = self.maps.as_ref()?;
+        maps.load().ok()
     }
 
     fn say(&self, text: impl Into<String>) {
@@ -313,13 +340,78 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
     let mut pool = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log)?;
     pool.ping()
         .map_err(|error| format!("the login database does not answer: {error}"))?;
+
+    // The world list is the login's own reader, merged with the operator's file: the same rows the
+    // auth program sends a client to, not a second reading of them.
+    let mut world_list = shared::worlds::WorldList::new();
+    let loaded = world_list.load(pool.connection_mut(), &log)?;
+    log.out(
+        LogLevel::Info,
+        "manage",
+        format!("World list: {loaded} row(s) in the realmlist table."),
+    );
+    let (worlds_file, _) = config
+        .value_string("WorldsFile", "data/realms.json")
+        .map_err(|error| error.to_string())?;
+    if !worlds_file.is_empty() {
+        world_list.merge_file(&worlds_file, &log)?;
+    }
+    let login = Arc::new(Mutex::new(pool));
     let accounts = Arc::new(game::accounts::DatabaseAccounts::new(
-        Arc::new(Mutex::new(pool)),
+        Arc::clone(&login),
         log.clone(),
     ));
 
+    // The character database: what the login lists, read through the noun's own repository. A page
+    // without one says so rather than failing every request.
+    let characters = match config.value_string("CharacterDatabaseInfo", "") {
+        Ok((info, _)) if !info.is_empty() => {
+            let settings = read_settings(&config, DatabaseKind::Character)?;
+            match DatabaseWorkerPool::open(DatabaseKind::Character, &settings, &log) {
+                Ok(mut pool) => {
+                    pool.ping()
+                        .map_err(|error| format!("the character database does not answer: {error}"))?;
+                    Some(Arc::new(game::characters::DatabaseCharacters::new(
+                        Arc::new(Mutex::new(pool)),
+                        log.clone(),
+                    )))
+                }
+                Err(error) => {
+                    log.out(LogLevel::Warn, "manage", format!("the character database is off: {error}"));
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+
+    // The world database: the maps and their spawn points, read by the same repository the load uses.
+    let maps = match config.value_string("WorldDatabaseInfo", "") {
+        Ok((info, _)) if !info.is_empty() => {
+            let settings = read_settings(&config, DatabaseKind::World)?;
+            match DatabaseWorkerPool::open(DatabaseKind::World, &settings, &log) {
+                Ok(mut pool) => {
+                    pool.ping()
+                        .map_err(|error| format!("the world database does not answer: {error}"))?;
+                    Some(Arc::new(game::maps::DatabaseMaps::new(
+                        Arc::new(Mutex::new(pool)),
+                        log.clone(),
+                    )))
+                }
+                Err(error) => {
+                    log.out(LogLevel::Warn, "manage", format!("the world database is off: {error}"));
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+
     let manage = Arc::new(Manage {
         accounts,
+        characters,
+        maps,
+        worlds: Some(Arc::new(world_list)),
         token: Some(token),
         log: log.clone(),
     });
