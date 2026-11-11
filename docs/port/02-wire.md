@@ -146,6 +146,11 @@ working server's own trace of one login into map 146 (build 39112/39167), messag
 - In this tree: the builders are `game/src/Server/Packets/` (`InstancePackets`, `ItemPackets`,
   `CharacterPackets`, `MiscPackets`), the order and the answers are `WorldSession`'s `load_map`, and
   the rows are `game/Maps/`'s (`0009-world-schema.md`).
+- The builders' shapes are corroborated by ASURA's protocol crate
+  (`crates/asura-protocol/src/game/mod.rs`), written against the same client: the manifest phase is a
+  byte, the manifest end a byte, a word and a dword, the item stream a word and a byte, a bag a type,
+  a model and the bag's own item - the same headers and field orders this tree sends, which is why a
+  frame ported from the reference's trace and a frame ported from ASURA's records agree.
 - `0x0059`'s third dword is `0x03100000` in every emission measured - the reference's own log for
   map 449 and ASURA's session for map 148, two different names - so it is sent as measured; what the
   value means is not captured (`InstancePackets::player_create`).
