@@ -12,6 +12,11 @@ python tools/client/patch-gw.py "F:\GW\GW1\Gw.exe" tools/client/keys.txt --outpu
 python tools/client/hosts-redirect.py status
 ```
 
+The launch line below passes `-authsrv 127.0.0.1 -portal 127.0.0.1`, and the client dials the address it
+was launched with (measured; the front door exists because of it), so the hosts redirect can stay
+`disabled`. `hosts-redirect.py status` says which state it is in; this machine's is `disabled`, which is
+what the flags need.
+
 The databases are the ones the programs are configured for: `kryta_login`, `kryta_world`,
 `kryta_characters` on `127.0.0.1:5432` (the connection strings are in each program's own JSON, which is
 not committed when it holds a password).
