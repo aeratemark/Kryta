@@ -5,59 +5,65 @@ is not invented here: **every in-game system is described in detail on this mach
 is the plan for it: where each system's behaviour is described, which noun it becomes, what it needs from
 the schema and the settings, and the order the chain allows.
 
-## The three sources of functionality
+## The source of functionality: the owner's game-rules ledger
 
-| source | holds | measured |
-|---|---|---|
-| **Eden** `C:\Users\Apo\Documents\GitHub\Eden`, `docs/re/` | the client's own in-game systems, one document per system: movement, collision, combat, skills, skillbar, chat, quests, inventory, items, guilds, parties, maps, districts, animation, text, camera, the UI wire | **135 documents, 6.07 MB** |
-| **Rurik** `C:\Users\Apo\Documents\GitHub\Rurik` | the game's data model and a mod kit: `content/*.toml` (areas, maps, npcs, items, drops, quests, world, movecode, partycap, fog), `schema/messages.json` (**409 KB**), and **61 `studies/`** subjects - combat, skills, skillcast, castmech, monsterai, morale, quests, movement, terrain, mapdata, mapload, maprows, worldmaps, minimap, heroes, profession, itemmods, weapons and the rest | `content/` 12 files, `studies/` 61 subjects |
-| **ASURA** `C:\Users\Apo\Documents\GitHub\ASURA`, `docs/` | the wiring between them: `guidance/architecture.md`, `guidance/scripting-and-behavior.md`, `guidance/game-packs.md`, `work/world-simulation-plan.md` (its seven phases), `reference/instance-initialization.md`, `reference/inventory-model.md`, `reference/map-catalogue.md`, `reference/client-protocol.md`, `research/heroai-server-port.md`, `research/skill-mechanics-and-behavior.md` | the documents this tree already cites, plus the ones it does not yet |
+How the game works is described in **`docs/game-rules.md`** - the owner's own ledger: 58 asserted rules
+(R1-R58) and 220 evidenced facts, grouped by subject - travel, districts and instances; party, heroes and
+henchmen; items and commerce; quests and missions; characters, skills and movement; chat and social wire;
+death, resurrection and morale; guilds and alliance; aggro and monster AI; titles and character slots;
+combat numbers and skill mechanics; merchants, traders, trade and crafting. It also holds what is
+contradicted, what is suspect, and what the sources do not answer.
 
-**The rule this file takes from that:** functionality is **read** from those documents, the *arrangement*
-of a system comes from the reference (AzerothCore: which noun owns it, which manager drives it, how a
-service is arranged), the *placement of data* comes from this tree's test (rows for the world's state, a
-file for a setting, a constant for what the client dictates), and the *bytes* come from the captures. A
-system is not invented, and it is not copied from another project's file layout.
+That file is authoritative for *what the game does*. It is not a port order and not an architecture: this
+file maps each subject to the noun that owns it and the order the chain forces.
 
-## The nouns, and which document describes each
+Eden and Rurik are **sister projects**, not sources here: where the ledger cites one of them as the
+witness for an evidenced fact, the citation stays; nothing else is read from them.
+## The nouns, and which part of the ledger describes each
 
-| system | described in | noun | reference counterpart |
+| system | ledger rows that describe it (`docs/game-rules.md`) | noun | reference counterpart |
 |---|---|---|---|
-| the archive: file ids, chunks, compression | Rurik `studies/archivewrite`, `datwrite`, `templates`, `unitwrite`; Eden `asset-loading`, `binary-extraction` | `game/Pack/` | none - `Pack/` is this tree's own noun |
-| a map: blob, surfaces, chunks, spawns, portals | Eden `map-chunks`, `map-surfaces`, `map-bloat`, `map-drawing`, `world-map`, `map-altitude-query`; Rurik `studies/mapdata`, `mapload`, `maprows`, `terrain`, `minimap`, `worldmaps`; ASURA `reference/map-catalogue.md` | `game/Maps/` | `Maps/` |
-| geometry and walking | Eden `collision`, `collision-props-agents`, `pathfinding-collision-scope`; Rurik `studies/terrain`, `movecode`, `movement` | `game/Terrain/` | `Terrain/` <- `Grids/` |
-| things in a map: identity, properties, appearance, streams | Eden `agent-movement`, `agent-facing`, `agent-animation-state`, `agent-attr-updates`, `agent-text`, `agent-model-chain`, `keyboard-movement`; Rurik `studies/agentprops`, `unitassembly`, `unitmodels` | `game/Agents/` + `game/Movement/` | `Agents/` <- `Entities/`, `Movement/` |
-| instances and how a client enters one | ASURA `reference/instance-initialization.md` (the live sequence, in order), `guidance/architecture.md` (travel end to end); Eden `district-list`; Rurik `studies/customarea`, `presearing`, `isle` | `game/Districts/` | `Districts/` <- `Instances/` |
-| items, inventory, drops | Eden `inventory-storage`, `const-data-inventory`, `item-description`, `item-drop`, `packet-inventory`; Rurik `content/items.toml`, `content/drops.toml`, `studies/itemmods`, `weapons`; ASURA `reference/inventory-model.md` | `game/DataStores/` (definitions) + `game/Characters/` (what a character holds) | `DataStores/` (`ItemTemplate`), `Entities/Item` |
-| skills, casting, combat, enemy behaviour | Eden `skills-window`, `skillbar`, `skillbar-interaction`, `skill-tooltip`, `skill-upkeep`, `combat-hud`, `enemy-skill-indicator`; Rurik `studies/skills`, `skillcast`, `castmech`, `combat`, `monsterai`, `morale`; ASURA `research/skill-mechanics-and-behavior.md` | `game/Skills/`, `game/Combat/`, `game/Behaviour/` | `Skills/` <- `Spells/`, `Combat/`, `Behaviour/` <- `AI/` |
-| chat and commands | Eden `chat.md`; Rurik `studies/chat`, `cmsg` | `game/Chat/` | `Chat/` |
-| quests and missions | Eden `quest-log-window`, `quest-and-mission-ui`; Rurik `content/quests.toml`, `studies/quests` | `game/Quests/` | `Quests/` |
-| parties and guilds | Eden `party-window`, `guild-window`; Rurik `content/partycap.toml` | `game/Parties/`, `game/Guilds/` | `Parties/` <- `Groups/`, `Guilds/` |
-| heroes and scripted behaviour | ASURA `research/heroai-server-port.md`, `guidance/scripting-and-behavior.md`; Rurik `studies/heroes`, `monsterai` | `game/Heroes/` + `scripts/` | none - `Heroes/` is this tree's own noun |
+| a map is a definition, an instance is a running copy; outposts shared, explorables per party, districts, teardown | R1-R5, R10, R16, R29, R32-R40, R57-R58 | `game/Maps/`, `game/Districts/` | `Maps/`, `Districts/` <- `Instances/` |
+| where a character enters and faces when it arrives | R13, R14, R21, R22 | `game/Maps/` (spawn and arrival points) | spawn points on the map record |
+| what is in a map before anyone arrives, and what respawns | R29-R31, R34 | `game/Agents/`, `game/Behaviour/` | `Agents/` <- `Entities/`, `Behaviour/` <- `AI/` |
+| the travel unit: party, leader, heroes, henchmen, caps and truncation | R6-R11, R15, R17-R28 | `game/Parties/`, `game/Heroes/` | `Parties/` <- `Groups/` |
+| unlocks and campaign history gating travel | R12, R47 | `game/Maps/` (unlocks per character) | `Quests/` progression |
+| aggro, the compass bubble, monster behaviour | R30, R43, E11 | `game/Behaviour/`, `game/Agents/` | `Behaviour/` <- `AI/` |
+| combat numbers, death penalty, morale, resurrection | R44, E10-E15 | `game/Combat/`, `game/Agents/` | `Combat/` |
+| attributes, level, experience, skill points | R46, R48, R51, E13, E14 | `game/Characters/` (a character's progression) | `Characters/` |
+| skills: learning, capture, the skillbar | R50, E19 | `game/Skills/` | `Skills/` <- `Spells/` |
+| items: what a character holds, dyes, storage, drops | R45, R49, E9, E16-E20 | `game/DataStores/` (definitions) + `game/Characters/` (what a character holds) | `DataStores/`, `Entities/Item` |
+| merchants, traders, crafting, collectors | R54, E16-E18, E20 | `game/Trader/` <- `AuctionHouse/`, `game/Agents/` (NPCs) | `Trader/` |
+| quests and missions | R52, R55-R56, E15, E21 | `game/Quests/`, `game/Districts/` (missions) | `Quests/` |
+| chat and the social wire | the "Chat and social wire" section | `game/Chat/` | `Chat/` |
+| guilds, friends, alliance | the "Guilds, friends, and alliance" section | `game/Guilds/` | `Guilds/` |
+| titles and character slots | E22, E23 | `game/Characters/` | `Achievements/` (the reference's nearest) |
+| heroes as scripted behaviour | R23-R27, and ASURA `research/heroai-server-port.md` | `game/Heroes/` + `scripts/` | none - `Heroes/` is this tree's own noun |
 
-That table is the plan's spine: a stage is **one system**, its descriptor is named, and its noun is fixed
-before any code is written.
-
+Two subjects the ledger does not describe, and where their facts come from instead: the **archive's
+file format** (`Gw.dat`) and the **wire shapes** of every message. The first is read from ASURA's archive
+reader as a fact about the client's files; the second from the protocol table and the captures
+(`docs/port/02-wire.md`).
 ## The order, and what each stage proves
 
 The order is the chain the client itself forces: nothing can be shown before the content can be read,
 nothing can be walked before a map exists, nothing can fight before an agent is somewhere.
 
-| # | stage | descriptor to read first | proves |
+| # | stage | ledger rows to read first | proves |
 |---|---|---|---|
-| 1 | `game/Pack/` | Rurik `studies/archivewrite`, `datwrite`; Eden `asset-loading`, `binary-extraction` | a file id is read from the archive and its bytes checksum against the archive's own table |
-| 2 | `game/Maps/` + the world schema | ASURA `reference/map-catalogue.md`; Eden `map-chunks`, `map-surfaces`; Rurik `studies/mapdata`, `mapload` | the world hosts a real map: `0x017C` is answered with a blob from the archive and the client loads it instead of the creation instance |
-| 3 | `game/Terrain/` | Eden `collision`, `pathfinding-collision-scope`; Rurik `studies/terrain`, `movecode` | a walk follows the blob's own planes |
-| 4 | `game/Agents/` + `game/Movement/` | Eden `agent-movement`, `keyboard-movement`; Rurik `studies/agentprops` | a spawn from the map's own table appears, and the player's own agent moves |
-| 5 | `game/Districts/` + the travel seam | ASURA `reference/instance-initialization.md` | a character created in the creation instance is sent to an outpost and arrives there |
-| 6 | items: definitions and what a character holds | Eden `inventory-storage`, `const-data-inventory`; ASURA `reference/inventory-model.md` | a character's equipment is rows and it draws from them |
-| 7 | skills, casting and combat | Rurik `studies/skillcast`, `castmech`, `combat`; Eden `skillbar`, `combat-hud` | a skill is cast on an agent and its effect is what the descriptor says |
-| 8 | chat, quests, parties, guilds | Eden `chat.md`, `quest-log-window`; Rurik `content/quests.toml` | each per its own descriptor |
-| 9 | heroes and scripted behaviour | ASURA `research/heroai-server-port.md`, `guidance/scripting-and-behavior.md` | content written against hooks, out of tree |
+| 1 | `game/Pack/` | none - the archive's format is a client fact | a file id is read from the archive and its bytes checksum against the archive's own table |
+| 2 | `game/Maps/` + the world schema | R1, R2, R4, R13, R14, R21, R22, R29 | the world hosts a real map: `0x017C` is answered with a blob from the archive and the client loads it instead of the creation instance |
+| 3 | `game/Terrain/` | R34 (the compass range), R43 | a walk follows the blob's own planes |
+| 4 | `game/Agents/` + `game/Movement/` | R29-R31, R34 | a spawn from the map's own table appears, and the player's own agent moves |
+| 5 | `game/Districts/` + the travel seam | R1-R16, R32-R40, R52, R57-R58 | a character created in the creation instance is sent to an outpost and arrives where R13 says it should |
+| 6 | `game/Parties/` and `game/Heroes/` | R6-R11, R15, R17-R28 | a party travels as one unit, and a cap truncates it leader-first |
+| 7 | items: definitions and what a character holds | R45, R49, E9, E16-E20 | a character's equipment is rows and it draws from them |
+| 8 | skills, casting and combat | R43, R48, R50-R51, E10-E15, E19 | a skill is cast on an agent and its effect is what the ledger says |
+| 9 | quests, chat, guilds, titles | R52, R55-R56, E15, E21-E23 | each per its own rows |
+| 10 | heroes and scripted behaviour | R23-R27 | content written against hooks, out of tree |
 
-Stages 1-5 are the spine: without them a client can only sit in the creation instance. From 6 on, each
-stage is independent of the ones beside it and can be taken in any order once 5 lands.
-
+Stages 1-5 are the spine: without them a client can only sit in the creation instance. Stages 6-10 become
+possible once 5 lands, and each can be taken in its own order.
 ## The three seams
 
 Everything above fits inside one noun. These cross a boundary and each has one answer:

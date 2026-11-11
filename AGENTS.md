@@ -19,7 +19,7 @@ Guild Wars in place of Azeroth.
 | the design authority | `C:\Users\Apo\Documents\GitHub\WowWarband`, `github.com/mod-playerbots/azerothcore-wotlk` at `30a36ec4d`. Where a file goes, what a program starts, how a layer is arranged, what a service owns: this tree answers it. Its measured structure is `docs/port/01-structure.md`. |
 | the game | Guild Wars. Tyria's client, protocol, nouns and content replace Azeroth's. |
 | consulted per question | `C:\Users\Apo\Documents\GitHub\ASURA` at `ca9f532`, a previous server for this client, declared failed. Opened only when one specific in-game fact is needed - what this client sends, expects or does. Never for design, structure, process or planning. Its documents describe its own function; they are not rules here. |
-| the in-game functionality, described | **Eden** `C:\Users\Apo\Documents\GitHub\Eden` `docs/re/` - 135 documents, 6 MB, one per in-game system (movement, collision, combat, skills, chat, quests, inventory, maps, districts); **Rurik** `C:\Users\Apo\Documents\GitHub\Rurik` - `content/*.toml`, `schema/messages.json`, 61 `studies/` subjects; and ASURA's `docs/guidance`, `docs/reference` and `docs/research`. Read the descriptor before porting a system; `docs/port/06-world-plan.md` maps each system to the document that describes it and the noun it becomes. |
+| how the game works, described | **`docs/game-rules.md`** - the owner's game-rules ledger: 58 asserted rules and 220 evidenced facts, by subject (travel, districts and instances; party, heroes and henchmen; items and commerce; quests and missions; characters, skills and movement; chat; death and morale; guilds; aggro and monster AI; titles; combat numbers; merchants). Recovered from ASURA's history and kept here because it is the description this port is measured against. Read the subject before porting it; `docs/port/06-world-plan.md` maps each subject to the noun that owns it. |
 
 When the reference and another source disagree about design, the reference wins. When the question
 is what the client sends or expects, the client wins, and the captures in `recordings/` are where that
@@ -163,6 +163,7 @@ the client is the judge rather than a test.
 | every setting, where it is set, and what is not a setting | `docs/port/04-configuration.md` |
 | the tools: the client patch, the hosts setting, the imports, and what is still borrowed | `docs/port/05-tooling.md` |
 | porting the world: every piece, its noun, its schema and content, and the order the chain allows | `docs/port/06-world-plan.md` |
+| how the game works: the owner's rules and the evidence for them | `docs/game-rules.md` |
 | the settings reader | `common/src/Configuration/`, and `Json.rs` in it for the format |
 | a decision taken away from the reference, and why | `docs/decisions/` |
 | workspace, dependency order, lint policy | `Cargo.toml` |
