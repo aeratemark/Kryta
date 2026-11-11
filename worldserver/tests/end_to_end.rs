@@ -324,6 +324,29 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         let account = game::characters::uuid_bytes(&account_text).expect("the account's uuid");
         println!("the character is written under account {account_text}");
 
+        // A row this test left behind by an interrupted earlier run would make the confirm refuse
+        // the name, so the name is cleared first: the same three tables the cleanup removes from.
+        {
+            let mut pool = characters.lock().unwrap();
+            let rows = pool
+                .query_with(
+                    "SELECT \"uuid\" FROM \"characters\" WHERE \"name\" = $1",
+                    &[&name],
+                )
+                .expect("the character table is readable");
+            for row in &rows {
+                let uuid: String = row.get(0);
+                for statement in [
+                    "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1",
+                    "DELETE FROM \"character_unlock\" WHERE \"character_uuid\" = $1",
+                    "DELETE FROM \"characters\" WHERE \"uuid\" = $1",
+                ] {
+                    pool.query_with(statement, &[&uuid])
+                        .expect("the stale row is removable");
+                }
+            }
+        }
+
         // The creation screen, against the program.
         let (id, uuid_text) = create_character(port, account, name);
         *created.lock().unwrap() = Some(uuid_text.clone());
