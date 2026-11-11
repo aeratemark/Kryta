@@ -68,7 +68,7 @@ Two things the ledger settles before any stage starts:
 | 5 | `game/Terrain/` - walking | R34, R43 | movement messages | map blob | a walk follows the blob's own planes |
 | 6 | `game/Agents/` + `game/Movement/` - what is in a map, and the player's own agent | R29-R31, R34, R43 | agent families | spawn rows, agent state | a spawn from the map's own table appears and moves |
 | 7 | `game/Parties/` + `game/Heroes/` - the travel unit | R6-R11, R15, R17-R28, R45 | party messages | `party`, `party_member` rows; hero/henchman state | a party travels as one unit and a smaller cap truncates it leader-first |
-| 8 | items: definitions and what a character holds | R45, R49, E9, E16-E20 | the creation stream's shapes, extended by capture | `item_template`, `bag`, `item_instance` rows; loot as a setting | a character's equipment is rows and it draws from them |
+| 8 | **(in progress)** items: definitions and what a character holds | R45, R49, E9, E16-E20 | the creation stream's shapes, extended by capture | `item_template` rows (done - seeded at start-up, `game/DataStores/`; 176 templates from the record lists); `bag`, `item_instance` rows and loot as a setting (next) | a definition is a row the world seeds and the tool lists; a character's own items are still the creation record's set until `item_instance` lands |
 | 9 | skills, casting and combat | R43, R48, R50-R51, E10-E15, E19 | skill and combat messages | skill rows, effect state | a skill is cast on an agent and its effect is what the ledger says |
 | 10 | quests, chat, guilds, titles | R52, R55-R56, E15, E21-E23 | their families | their rows | each per its own rows |
 | 11 | heroes and scripted behaviour | R23-R27 | - | content in `scripts/` and `modules/` | scripted behaviour out of tree |
