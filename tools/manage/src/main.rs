@@ -78,6 +78,7 @@ impl Manage {
             ("GET", "/content") => pages::content(self),
             ("POST", "/content/spawn") => self.add_spawn(request),
             ("POST", "/content/spawn/remove") => self.remove_spawn(request),
+            ("POST", "/content/party-cap") => self.set_party_cap(request),
             ("GET", "/settings") => pages::settings(self),
             ("GET", "/schema") => pages::schema(self),
             ("POST", "/accounts/eula") => self.set_eula(request),
@@ -309,6 +310,45 @@ impl Manage {
             Ok(false) => Response::html(
                 404,
                 pages::message(&format!("Map {map_id} has no spawn point {index}.")),
+            ),
+            Err(error) => Response::html(
+                500,
+                pages::message(&format!("The world database said: {error}")),
+            ),
+        }
+    }
+
+    /// `POST /content/party-cap`: a map's own party cap, as a row (R15). `0` clears it, so the
+    /// world's `PartySizeCap` applies again.
+    pub fn set_party_cap(&self, request: &Request) -> Response {
+        let Some(maps) = self.maps.as_ref() else {
+            return Response::html(
+                503,
+                pages::message("No world database is configured in manage.json."),
+            );
+        };
+        let form = form_fields(&request.body_text());
+        let Some(map_id) = form.get("map_id").and_then(|value| value.parse::<u32>().ok()) else {
+            return Response::html(400, pages::message("The form names no map."));
+        };
+        let Some(cap) = form.get("cap").and_then(|value| value.parse::<u32>().ok()) else {
+            return Response::html(400, pages::message("A party cap is a number; 0 clears it."));
+        };
+        match maps.set_party_cap(map_id, cap) {
+            Ok(true) => {
+                self.say(format!(
+                    "map {map_id}: party cap {} (R15)",
+                    if cap == 0 {
+                        "cleared, the world's own applies".to_string()
+                    } else {
+                        cap.to_string()
+                    }
+                ));
+                pages::redirect("/content")
+            }
+            Ok(false) => Response::html(
+                404,
+                pages::message(&format!("No map is called {map_id}.")),
             ),
             Err(error) => Response::html(
                 500,

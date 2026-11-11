@@ -142,6 +142,22 @@ impl DatabaseMaps {
         Ok(cap.map(|value| value as u32))
     }
 
+    /// State a map's own party cap (R15), or clear it with 0 so the world's `PartySizeCap` applies.
+    ///
+    /// The world's data is rows, and this is the administration tool's edit of one: the column the
+    /// party stage (plan step 7) reads. Answers whether a map with that id is there.
+    pub fn set_party_cap(&self, map_id: u32, cap: u32) -> Result<bool, String> {
+        let rows = self.query_with(
+            "UPDATE \"map\" SET \"party_cap\" = NULLIF($2::bigint::int, 0) \
+             WHERE \"id\" = $1::bigint::int RETURNING 1",
+            vec![
+                Param::Integer(i64::from(map_id)),
+                Param::Integer(i64::from(cap)),
+            ],
+        )?;
+        Ok(!rows.is_empty())
+    }
+
     /// Add a spawn point to a map at its next free index, and answer that index.
     ///
     /// The world's content is rows, and this is the administration tool's edit of one: the same
@@ -252,6 +268,7 @@ mod tests {
     #[test]
     #[ignore = "needs the world database"]
     fn the_world_holds_the_outpost_it_seeded() {
+        let _serial = database::updater::apply::test_lock("world");
         let Some(maps) = repository() else {
             panic!("the world database is not reachable");
         };
@@ -295,5 +312,32 @@ mod tests {
         assert!(maps.remove_spawn(148, index).expect("the spawn point is removed"));
         let (_, after) = maps.load().expect("the map tables read");
         assert_eq!(after.len(), before.len(), "the point is gone again");
+    }
+
+    #[test]
+    #[ignore = "needs the world database"]
+    fn a_maps_own_party_cap_is_a_row_that_can_be_set_and_cleared() {
+        let _serial = database::updater::apply::test_lock("world");
+        let Some(maps) = repository() else {
+            panic!("the world database is not reachable");
+        };
+        assert!(maps.set_party_cap(148, 12).expect("the cap is written"));
+        assert_eq!(
+            maps.party_cap(148).expect("the cap is readable"),
+            Some(12),
+            "the map states its own cap (R15)"
+        );
+        assert!(maps.set_party_cap(148, 0).expect("the cap is cleared"));
+        assert_eq!(
+            maps.party_cap(148).expect("the cap is readable"),
+            None,
+            "0 clears it, so the world's own PartySizeCap applies"
+        );
+        assert!(
+            !maps
+                .set_party_cap(999_999, 4)
+                .expect("a map that is not there answers"),
+            "a map that is not there is not updated"
+        );
     }
 }

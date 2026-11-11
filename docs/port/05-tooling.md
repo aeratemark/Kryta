@@ -48,7 +48,7 @@ reaches the data through the nouns' own repositories, so what a page writes is w
 | `/accounts` | the rows the login reads: create, remove, and set the EULA version | done |
 | `/characters` | every row of the character table, as the login's list reads it, with how many items each holds and the maps it may travel to (R12) | done - read only; a character is written by the creation confirm |
 | `/worlds` | the realm list and `data/realms.json` merged over it | done - read only, from the login's own reader |
-| `/content` | the maps and their spawn points (editable), the item templates, and the copies the world has open | done - the load's own rows, edited where they matter; the running-instances table is the world's `instance` rows, the same ones its tick disposes |
+| `/content` | the maps and their spawn points (editable), each map's own party cap (editable, R15), the item templates, and the copies the world has open | done - the load's own rows, edited where they matter; the running-instances table is the world's `instance` rows, the same ones its tick disposes; `0` clears a map's cap so the world's `PartySizeCap` applies |
 | `/schema` | each database's own record of what its updater has applied, against the files on disk | done - read only; `changed` is the one to act on before a server refuses to start |
 | `/settings` | each program's own JSON, key by key, as the file states it | done - read only, passwords masked by the reader; `WorldConfigFile` and `AuthConfigFile` in `manage.json` say where the files are |
 

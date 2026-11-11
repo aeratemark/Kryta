@@ -262,7 +262,11 @@ pub fn content(manage: &Manage) -> Response {
              x <input type=\"text\" name=\"x\" size=\"8\"> \
              y <input type=\"text\" name=\"y\" size=\"8\"> \
              plane <input type=\"text\" name=\"plane\" size=\"3\" value=\"0\"> \
-             <button type=\"submit\">add a spawn point</button></form></td><td>{arrivals}</td></tr>\n",
+             <button type=\"submit\">add a spawn point</button></form>\
+             <form method=\"post\" action=\"/content/party-cap\">\
+             <input type=\"hidden\" name=\"map_id\" value=\"{id}\">\
+             cap <input type=\"text\" name=\"cap\" size=\"3\" value=\"0\"> \
+             <button type=\"submit\">set the party cap (0 = the world's)</button></form></td><td>{arrivals}</td></tr>\n",
             id = map.id,
             kind = map.kind,
             file_id = map.file_id,
