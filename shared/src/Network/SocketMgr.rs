@@ -26,6 +26,9 @@ pub struct SocketMgr {
     /// This is the number that answers "did anything reach us at all", which a session cannot: a
     /// connection that opens and closes without sending a byte never becomes one.
     accepted: Arc<AtomicUsize>,
+    /// How many connections are being served right now, across every thread: a session task
+    /// increments it as it starts and decrements it as it ends.
+    live: Arc<AtomicUsize>,
     /// Where a connection is reported as it arrives, at the layer that accepts it.
     log: Option<Log>,
     /// Where every byte is reported, when the caller asked for a trace.
@@ -40,6 +43,7 @@ impl SocketMgr {
             threads: Vec::new(),
             factory,
             accepted: Arc::new(AtomicUsize::new(0)),
+            live: Arc::new(AtomicUsize::new(0)),
             log: None,
             trace: None,
         }
@@ -74,6 +78,16 @@ impl SocketMgr {
         Arc::clone(&self.accepted)
     }
 
+    /// How many connections are being served right now, across every thread.
+    pub fn live_count(&self) -> usize {
+        self.live.load(Ordering::Relaxed)
+    }
+
+    /// A handle on the live count, for a thread that reports while the manager is busy serving.
+    pub fn live_handle(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.live)
+    }
+
     fn say(&self, level: LogLevel, text: impl Into<String>) {
         if let Some(log) = self.log.as_ref() {
             log.out(level, "network", text);
@@ -95,7 +109,7 @@ impl SocketMgr {
 
         let mut threads = Vec::with_capacity(thread_count);
         for index in 0..thread_count {
-            let thread = NetworkThread::start(index, self.trace.clone())
+            let thread = NetworkThread::start(index, self.trace.clone(), Arc::clone(&self.live))
                 .map_err(|error| format!("cannot start network thread {index}: {error}"))?;
             threads.push(thread);
         }

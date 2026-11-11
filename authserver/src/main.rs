@@ -632,6 +632,7 @@ fn run(args: &[String]) -> Result<(), String> {
     // machine by hand.
     let stop_status = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let accepted = sockets.accepted_handle();
+    let live = sockets.live_handle();
     let status_writer = {
         let log = log.clone();
         let stop_status = std::sync::Arc::clone(&stop_status);
@@ -648,9 +649,10 @@ fn run(args: &[String]) -> Result<(), String> {
                         LogLevel::Info,
                         "server.authserver",
                         format!(
-                            "status: up {} s, listening on {bind}:{bound}, {} connection(s) accepted.",
+                            "status: up {} s, listening on {bind}:{bound}, {} connection(s) accepted, {} live.",
                             started.elapsed().as_secs(),
-                            accepted.load(std::sync::atomic::Ordering::Relaxed)
+                            accepted.load(std::sync::atomic::Ordering::Relaxed),
+                            live.load(std::sync::atomic::Ordering::Relaxed)
                         ),
                     );
                 }

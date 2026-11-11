@@ -57,13 +57,21 @@ pub struct NetworkThread {
 }
 
 impl NetworkThread {
-    /// Start a thread with its own runtime.
+    /// Start a thread with its own runtime, and the counter every session it serves is counted on.
     ///
-    /// Reference: `NetworkThread::Start`, which spawns the thread that runs the io context.
-    pub fn start(index: usize, trace: Option<common::logging::Log>) -> std::io::Result<Self> {
+    /// Reference: `NetworkThread::Start`, which spawns the thread that runs the io context. The
+    /// `live` counter is shared by every thread, so a status writer can say what the whole listener
+    /// is serving right now - the accepted count says "something reached us", the live count says
+    /// "something is being served".
+    pub fn start(
+        index: usize,
+        trace: Option<common::logging::Log>,
+        live: Arc<AtomicUsize>,
+    ) -> std::io::Result<Self> {
         let (sender, mut receiver) = unbounded_channel::<Job>();
         let connections = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&connections);
+        let live_counter = Arc::clone(&live);
 
         let worker = std::thread::Builder::new()
             .name(format!("network-{index}"))
@@ -84,7 +92,9 @@ impl NetworkThread {
                         };
 
                         let counter = Arc::clone(&counter);
+                        let live = Arc::clone(&live_counter);
                         let trace = trace.clone();
+                        live.fetch_add(1, Ordering::Relaxed);
                         tokio::spawn(async move {
                             let mut io = SessionIo::new(stream);
                             if let Some(log) = trace {
@@ -92,6 +102,7 @@ impl NetworkThread {
                             }
                             session.run(io).await;
                             counter.fetch_sub(1, Ordering::Relaxed);
+                            live.fetch_sub(1, Ordering::Relaxed);
                         });
                     }
                 });

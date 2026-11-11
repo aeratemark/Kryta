@@ -88,6 +88,11 @@ impl WorldSocketMgr {
         self.sockets.accepted_handle()
     }
 
+    /// A handle on the live count - the connections being served right now - for a status writer.
+    pub fn live_handle(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+        self.sockets.live_handle()
+    }
+
     /// Close the listener and wait for its threads.
     ///
     /// Reference: `WorldSocketMgr::StopNetwork`.

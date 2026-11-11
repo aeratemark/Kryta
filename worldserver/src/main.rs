@@ -451,6 +451,7 @@ fn run(args: &[String]) -> Result<(), String> {
     // the maps it hosts and the instances it currently holds open.
     let stop_status = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let accepted = sockets.accepted_handle();
+    let live = sockets.live_handle();
     let status_writer = {
         let log = log.clone();
         let status_world = std::sync::Arc::clone(&world);
@@ -483,9 +484,10 @@ fn run(args: &[String]) -> Result<(), String> {
                         LogLevel::Info,
                         "server.worldserver",
                         format!(
-                            "status: up {} s, listening on {bind}:{bound} as world {realm}, {} connection(s) accepted, {} map(s) hosted, {} instance(s) open: {open}.",
+                            "status: up {} s, listening on {bind}:{bound} as world {realm}, {} connection(s) accepted, {} live, {} map(s) hosted, {} instance(s) open: {open}.",
                             started.elapsed().as_secs(),
                             accepted.load(std::sync::atomic::Ordering::Relaxed),
+                            live.load(std::sync::atomic::Ordering::Relaxed),
                             status_world.maps().len(),
                             instances.len()
                         ),
