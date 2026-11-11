@@ -115,6 +115,12 @@ pub struct WorldSession {
     /// here, once, and decides the map and the district the connection loads
     /// (`docs/port/06-world-plan.md`, "The three seams").
     login: Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
+    /// The world's running district copies, shared with every session: entering a map claims a place
+    /// in a district, and the connection gives it back when it ends.
+    districts: std::sync::Arc<std::sync::Mutex<crate::districts::Districts>>,
+    /// The district this connection entered, so [`Self::leave_district`] can give the place back.
+    /// `None` until a place has been entered.
+    entered: std::sync::Mutex<Option<(u32, u32)>>,
     /// The bags, items and profession sets a creation screen is built from, when the program read them.
     creation: Option<crate::creation::Tables>,
     /// The master secret to draw the exchange from, when the caller wants a known one. A program
@@ -133,6 +139,8 @@ impl WorldSession {
             settings: world.settings().clone(),
             characters: None,
             login: None,
+            districts: world.districts(),
+            entered: std::sync::Mutex::new(None),
             creation: Some(world.creation().clone()),
             master: None,
         }
@@ -395,9 +403,6 @@ impl WorldSession {
             None => None,
         };
         let map_id = travel.map(|travel| travel.map_id).unwrap_or(version.map_id);
-        // R57: the district the request named is honoured; a request that named none is answered
-        // with the first district, which is the only one before the district lifecycle exists (R16).
-        let district = travel.map(|travel| travel.district.max(1)).unwrap_or(1);
         let language = travel.map(|travel| travel.language.min(0xFF) as u8).unwrap_or(0);
 
         // 4. The block the world sends unasked, once the connection is scrambled.
@@ -418,6 +423,34 @@ impl WorldSession {
         // `reference/instance-initialization.md` measured on a live load, and the rows
         // `shared/src/Packets/../Tables.rs` names.
         if !map.is_creation() {
+            // The district the connection enters: the travel's own number when it named one (R57),
+            // otherwise the first with room (R22) - and a named full district is refused rather than
+            // moved (R58). The allotment is the world's setting (R5).
+            let entered = match self.districts.lock() {
+                Ok(mut districts) => districts.enter(
+                    map,
+                    travel.map(|travel| travel.district).unwrap_or(0),
+                    self.settings.district_allotment,
+                ),
+                Err(_) => Err("the world's district copies are poisoned".to_string()),
+            };
+            let district = match entered {
+                Ok(district) => district,
+                Err(refusal) => {
+                    self.say(
+                        LogLevel::Warn,
+                        format!(
+                            "Gameplay connection from {peer}: {refusal}; the connection is closed, because the refusal's own wire shape is not captured (R58)."
+                        ),
+                    );
+                    let _ = io.close().await;
+                    return;
+                }
+            };
+            if let Ok(mut entered) = self.entered.lock() {
+                *entered = Some((map.id, district));
+            }
+
             let name = self.character_name(&version).unwrap_or_else(|| {
                 self.say(
                     LogLevel::Warn,
@@ -1085,6 +1118,10 @@ impl Session for WorldSession {
     fn run(self: Box<Self>, mut io: SessionIo) -> SessionFuture {
         Box::pin(async move {
             self.converse(&mut io).await;
+            // The connection ended, whatever ended it: its place in the district is given back. The
+            // copy itself stays open - R37 holds an outpost for 15 minutes of inactivity and R40
+            // disposes exactly as the lifecycle says - so this only keeps the count honest.
+            self.leave_district();
         })
     }
 }
@@ -1100,6 +1137,26 @@ async fn read_exactly(io: &mut SessionIo, out: &mut [u8]) -> Result<(), String> 
         }
     }
     Ok(())
+}
+
+impl WorldSession {
+    /// The connection ended: its place in the district is given back.
+    ///
+    /// The copy itself stays open - R37 holds an outpost for 15 minutes of inactivity and R40
+    /// disposes exactly as the lifecycle says - so this only keeps the count honest; the lifecycle
+    /// that acts on an empty copy arrives with the instance table.
+    fn leave_district(&self) {
+        let entered = self
+            .entered
+            .lock()
+            .ok()
+            .and_then(|mut entered| entered.take());
+        if let Some((map_id, district)) = entered
+            && let Ok(mut districts) = self.districts.lock()
+        {
+            districts.leave(map_id, district);
+        }
+    }
 }
 
 #[cfg(test)]

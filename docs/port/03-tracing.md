@@ -82,6 +82,8 @@ client got inside the game:
 | `... names world W and this world is R; closing it.` | the client asked for another world; nothing else happens |
 | `... the exchange is answered. Everything after it is scrambled.` | the seed exchange completed on this socket |
 | `... the character-creation instance is opened, 8 bytes (load head and creation start).` | the unasked block went out and the creation screen may appear |
+| `... map M ('name', type T) is loading - N message(s), B bytes: ... (district D, language L).` | an outpost or explorable load went out, and D/L are the district and language `0x019A` reports - the district the copy the connection entered holds (R22, R57) |
+| `... district D of map M is full (...) and cannot be entered; the connection is closed ...` | a travel named a full district and R58 says it is refused; the refusal's own wire shape is not captured, so the connection is closed rather than lied to |
 | `... the travel record is claimed - map M, district D, language L.` | the token pair matched a record the login wrote, and that map - not the version message's - is the one loading |
 | `... no travel record was claimed; the map M is the one its own version message names.` | a connection with no hand-off: the creation screen, or a client that asked for nothing. Not a fault |
 | `... the travel table could not be read (...); the version message's map is used.` | the login database did not answer; the connection still loads, and this line is the fault to chase |

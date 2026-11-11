@@ -2,8 +2,9 @@
 //!
 //! Reference: `src/server/game/World/World.{h,cpp}`, whose `SetInitialWorldSettings` is the stage
 //! that loads everything the game is made of before the listener opens. This is that stage at the
-//! size this tree has reached: a catalogue of the maps a world can put a client in, and nothing else
-//! yet - no spawns, no items, no geometry.
+//! size this tree has reached: a catalogue of the maps a world can put a client in, where a
+//! character may stand on each, the creation screen's content, the numbers it runs by, and the
+//! district copies every session shares.
 //!
 //! What it is not: the map manager. A map's own state arrives with the stage that can host one.
 
@@ -11,6 +12,7 @@
 pub mod world_config;
 
 use common::logging::{Log, LogLevel};
+use std::sync::{Arc, Mutex};
 
 /// What kind of place a map is. The numbers are the client's, not this server's.
 pub mod map_kind {
@@ -55,6 +57,9 @@ pub struct World {
     /// The numbers this world runs by: a district's allotment, a party's cap, the spawn scatter and the
     /// rest of the rules that name a number (docs/game-rules.md, R53).
     settings: world_config::WorldConfig,
+    /// The running copies of maps: one outpost is one copy per district (R1, R4), and the district a
+    /// character enters is this world's state, so every session shares it.
+    districts: Arc<Mutex<crate::districts::Districts>>,
 }
 
 impl World {
@@ -66,6 +71,7 @@ impl World {
             creation: crate::creation::Tables::default(),
             spawns: Vec::new(),
             settings: world_config::WorldConfig::default(),
+            districts: Arc::new(Mutex::new(crate::districts::Districts::new())),
         }
     }
 
@@ -84,6 +90,11 @@ impl World {
     /// The numbers this world runs by.
     pub fn settings(&self) -> &world_config::WorldConfig {
         &self.settings
+    }
+
+    /// The running district copies, shared by every session.
+    pub fn districts(&self) -> Arc<Mutex<crate::districts::Districts>> {
+        Arc::clone(&self.districts)
     }
 
     /// Set the numbers this world runs by, after the program read its file.
