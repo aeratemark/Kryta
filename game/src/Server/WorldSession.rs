@@ -1168,7 +1168,11 @@ impl WorldSession {
                     std::sync::Arc::clone(pool),
                     self.log.clone(),
                 );
-                match characters.write_starting_items(&crate::characters::uuid_text(&id), &inventory) {
+                match characters.write_starting_items(
+                    &crate::characters::uuid_text(&id),
+                    &inventory,
+                    &self.templates,
+                ) {
                     Ok(written) => self.say(
                         LogLevel::Info,
                         format!(
@@ -1365,6 +1369,7 @@ mod tests {
             .load_creation("../data/inventory.json", "../data/equipment.json", &Log::new())
             .expect("the creation data");
         assert_eq!((bags, items, sets), (6, 9, 32), "the reference's own counts");
+        world.set_templates(templates_from(world.creation().definitions()));
         world
     }
 
@@ -1372,6 +1377,31 @@ mod tests {
         Arc::new(move || {
             Box::new(WorldSession::with_master(log.clone(), &world, master)) as Box<dyn Session>
         })
+    }
+
+    /// The templates a test's world runs with, built from the creation content's own definitions: what
+    /// the world program reads back from its table, without a database.
+    fn templates_from(items: Vec<crate::creation::Item>) -> Vec<crate::data_stores::ItemDefinition> {
+        items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| crate::data_stores::ItemDefinition {
+                id: index as i64 + 1,
+                file_id: item.file_id,
+                item_type: item.item_type,
+                dye_tint: item.dye_tint,
+                dye_colors: item.dye_colors,
+                materials: item.materials,
+                unk1: item.unk1,
+                flags: item.flags,
+                value: item.value,
+                model_id: item.model_id,
+                quantity: item.quantity,
+                profession: item.profession,
+                name: item.name.clone(),
+                modifiers: item.modifiers.clone(),
+            })
+            .collect()
     }
 
     #[test]
@@ -1761,7 +1791,43 @@ Logger.root = 6,Console
             })
             .expect("the travel is recorded");
 
-        let world = Arc::new(world());
+        // The character the connection names: its row, and the items a confirm would have written.
+        let character = [0xBBu8; 16];
+        let character_text = crate::characters::uuid_text(&character);
+        let prepared_world = world();
+        let starting = prepared_world.creation().inventory(0, 1);
+        {
+            let mut pool = characters.lock().unwrap();
+            pool.query_with(
+                "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1",
+                &[&character_text],
+            )
+            .unwrap();
+            pool.query_with(
+                "DELETE FROM \"characters\" WHERE \"uuid\" = $1",
+                &[&character_text],
+            )
+            .unwrap();
+            pool.query_with(
+                "INSERT INTO \"characters\" (\"uuid\", \"account_uuid\", \"name\", \"appearance\", \"primary_profession\", \"unlocked_professions\", \"campaign\", \"level\") \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                &[
+                    &character_text,
+                    &crate::characters::uuid_text(&account),
+                    &"Travelled One",
+                    &0i64,
+                    &1i64,
+                    &2i64,
+                    &0i64,
+                    &1i64,
+                ],
+            )
+            .unwrap();
+        }
+        crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
+            .write_starting_items(&character_text, &starting, prepared_world.templates())
+            .expect("the character's items are written");
+        let world = Arc::new(prepared_world);
         let master = [0x33u8; MASTER_SECRET_LEN];
         let factory: shared::network::socket::SessionFactory = {
             let log = log.clone();
@@ -1812,11 +1878,11 @@ Logger.root = 6,Console
         let mut sending = common::cryptography::Arc4::new(&key);
 
         // 3. The block: the outpost's load, not the creation instance's, with the record's district
-        // and language.
+        // and language, and the character's own name.
         let expected = [
             instance_packets::instance_load_head(),
             instance_packets::instance_player_data_start(),
-            instance_packets::instance_load_player_name("Player"),
+            instance_packets::instance_load_player_name("Travelled One"),
             instance_packets::instance_load_info(1, 148, 0, 3, 2, 0),
         ];
         let expected_bytes: usize = expected.iter().map(Vec::len).sum();
@@ -1832,12 +1898,39 @@ Logger.root = 6,Console
             "the travel's map, district and language, not the version message's"
         );
 
-        // 4. The ping pair, then where it stands is map 148's own file, which the creation
-        // instance does not have.
+        // 4. The ping pair, then the character's own items - the rows the confirm wrote, drawn the
+        // same way the creation set would be - and then where it stands on map 148's own file.
         let mut ping = vec![0u8; 8];
         client.read_exact(&mut ping).unwrap();
         reading.apply(&mut ping);
         assert_eq!(ping.len(), 8, "the measured ping pair");
+
+        let mut ask = vec![0x91, 0x80, 0x00, 0x00];
+        sending.apply(&mut ask);
+        client.write_all(&ask).unwrap();
+        let mut expected_items = crate::creation::load_item_stream(&starting);
+        expected_items.push(misc_packets::hard_mode_unlocked(1));
+        expected_items.push(character_packets::character_update_info());
+        expected_items.push(misc_packets::map_update_current(148, 0));
+        expected_items.push(instance_packets::ready_for_map_spawn(0));
+        expected_items.push(instance_packets::instance_manifest_phase(0));
+        expected_items.push(instance_packets::instance_manifest_phase(1));
+        expected_items.push(instance_packets::instance_manifest_done(2, 877, 0));
+        expected_items.push(instance_packets::instance_manifest_phase(0));
+        expected_items.push(instance_packets::instance_manifest_phase(1));
+        expected_items.push(instance_packets::instance_manifest_done(0, 148, 0));
+        let expected_bytes: usize = expected_items.iter().map(Vec::len).sum();
+        let mut items = vec![0u8; expected_bytes];
+        client.read_exact(&mut items).unwrap();
+        reading.apply(&mut items);
+        let mut whole = Vec::new();
+        for frame in &expected_items {
+            whole.extend_from_slice(frame);
+        }
+        assert_eq!(
+            items, whole,
+            "the character's held items, drawn from its rows, in the measured order"
+        );
 
         let mut ask = vec![0x88, 0x80];
         sending.apply(&mut ask);
@@ -1857,6 +1950,18 @@ Logger.root = 6,Console
             .claim(2, &crate::characters::uuid_text(&account), 0x1234)
             .expect("the travel table reads");
         assert!(claimed.is_none(), "the row was consumed by the connection");
+
+        // The test's own character and its items go, leaving the databases as they were found.
+        {
+            let mut pool = characters.lock().unwrap();
+            pool.query_with(
+                "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1",
+                &[&character_text],
+            )
+            .unwrap();
+            pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&character_text])
+                .unwrap();
+        }
 
         manager.stop_network();
         log.shutdown();
@@ -2015,27 +2120,7 @@ Logger.root = 6,Console
             expected.items.len(),
             "one row per item the set carries"
         );
-        let templates: Vec<crate::data_stores::ItemDefinition> = world
-            .creation()
-            .definitions()
-            .iter()
-            .map(|item| crate::data_stores::ItemDefinition {
-                id: 0,
-                file_id: item.file_id,
-                item_type: item.item_type,
-                dye_tint: item.dye_tint,
-                dye_colors: item.dye_colors,
-                materials: item.materials,
-                unk1: item.unk1,
-                flags: item.flags,
-                value: item.value,
-                model_id: item.model_id,
-                quantity: item.quantity,
-                profession: item.profession,
-                name: item.name.clone(),
-                modifiers: item.modifiers.clone(),
-            })
-            .collect();
+        let templates = templates_from(world.creation().definitions());
         let from_rows = crate::creation::inventory_from_held(
             crate::creation::bags(world.creation()),
             &held,

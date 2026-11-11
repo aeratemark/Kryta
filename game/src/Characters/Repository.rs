@@ -25,18 +25,20 @@ const SELECT_CHARACTERS: &str = "SELECT \"uuid\", \"name\", \"appearance\", \"pr
 \"secondary_profession\", \"campaign\", \"level\", \"is_pvp\", \"helm_status\", \"last_outpost\" \
 FROM \"characters\"";
 
-const INSERT_HELD_ITEM: &str = "INSERT INTO \"item_instance\" (\"character_uuid\", \"file_id\", \
-\"dye_tint\", \"dye_colors\", \"item_id\", \"bag_id\", \"slot\", \"quantity\", \"profession\") \
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)";
+const INSERT_HELD_ITEM: &str = "INSERT INTO \"item_instance\" (\"character_uuid\", \"template_id\", \
+\"file_id\", \"dye_tint\", \"dye_colors\", \"item_id\", \"bag_id\", \"slot\", \"quantity\", \
+\"profession\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)";
 
 const SELECT_HELD_ITEMS: &str = "SELECT \"file_id\"::bigint, \"dye_tint\"::bigint, \
 \"dye_colors\"::bigint, \"item_id\"::bigint, \"bag_id\"::bigint, \"slot\"::bigint, \
-\"quantity\"::bigint, \"profession\"::bigint FROM \"item_instance\" \
+\"quantity\"::bigint, \"profession\"::bigint, \"template_id\"::bigint FROM \"item_instance\" \
 WHERE \"character_uuid\" = $1 ORDER BY \"bag_id\", \"slot\"";
 
-/// One item a character holds: the definition's key, the item's own id, and where it sits.
+/// One item a character holds: which template it is, the item's own id, and where it sits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeldItem {
+    /// The `item_template` row the item was written from; 0 for a row written before the column.
+    pub template_id: i64,
     /// The `Gw.dat` file id of the definition.
     pub file_id: u32,
     /// Which dye slot mask applies.
@@ -148,18 +150,52 @@ impl DatabaseCharacters {
         }
     }
 
-    /// Write the items a new character starts with: one row per item, and where it sits.
+    /// Write the items a new character starts with: one row per item, where it sits and which
+    /// template it was written from.
     ///
     /// The list comes from the creation record set the screen drew (`Inventory`), which is a setting;
-    /// what this writes is the character's own state - the rows the load then draws from.
-    pub fn write_starting_items(&self, uuid: &str, inventory: &Inventory) -> Result<usize, String> {
+    /// what this writes is the character's own state - the rows the load then draws from. An item the
+    /// templates do not describe is reported and not written: the client cannot be drawn an item the
+    /// world does not know.
+    pub fn write_starting_items(
+        &self,
+        uuid: &str,
+        inventory: &Inventory,
+        templates: &[crate::data_stores::ItemDefinition],
+    ) -> Result<usize, String> {
         let mut written = 0usize;
         for item in &inventory.items {
+            let Some(template) = templates.iter().find(|template| {
+                template.file_id == item.file_id
+                    && template.item_type == item.item_type
+                    && template.dye_tint == item.dye_tint
+                    && template.dye_colors == item.dye_colors
+                    && template.materials == item.materials
+                    && template.unk1 == item.unk1
+                    && template.flags == item.flags
+                    && template.value == item.value
+                    && template.model_id == item.model_id
+                    && template.quantity == item.quantity
+                    && template.profession == item.profession
+                    && template.name == item.name
+                    && template.modifiers == item.modifiers
+            }) else {
+                self.log.out(
+                    LogLevel::Warn,
+                    "server.characters",
+                    format!(
+                        "The creation set names item {} (file {}), which no item template describes; it is not written.",
+                        item.id, item.file_id
+                    ),
+                );
+                continue;
+            };
             let reply = match self.pool.lock() {
                 Ok(pool) => pool.query_reply(
                     INSERT_HELD_ITEM,
                     vec![
                         Param::Text(uuid.to_string()),
+                        Param::Integer(template.id),
                         Param::Integer(i64::from(item.file_id)),
                         Param::Integer(i64::from(item.dye_tint)),
                         Param::Integer(i64::from(item.dye_colors)),
@@ -229,6 +265,7 @@ impl DatabaseCharacters {
                     slot: column(5)? as u8,
                     quantity: column(6)? as u32,
                     profession: column(7)? as u8,
+                    template_id: column(8)?,
                 })
             })
             .collect()

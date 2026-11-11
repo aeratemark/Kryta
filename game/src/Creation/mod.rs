@@ -214,14 +214,13 @@ impl Tables {
     /// The world's start-up seeds its `item_template` rows from these (`game/DataStores/Items.rs`):
     /// a template is what an item *is*, and a set naming it again is the same item.
     pub fn definitions(&self) -> Vec<Item> {
-        let mut seen = std::collections::HashSet::new();
-        let mut definitions = Vec::new();
+        let mut definitions: Vec<Item> = Vec::new();
         for item in self
             .items
             .iter()
             .chain(self.sets.iter().flat_map(|set| set.items.iter()))
         {
-            if seen.insert((item.file_id, item.dye_tint, item.dye_colors)) {
+            if !definitions.contains(item) {
                 definitions.push(item.clone());
             }
         }
@@ -485,11 +484,16 @@ pub fn inventory_from_held(
     let mut held: Vec<crate::characters::HeldItem> = held.to_vec();
     held.sort_by_key(|row| row.item_id);
     for row in &held {
-        let Some(template) = templates.iter().find(|template| {
-            template.file_id == row.file_id
-                && template.dye_tint == row.dye_tint
-                && template.dye_colors == row.dye_colors
-        }) else {
+        // The row names its template by id; a row written before the column keeps 0 and is found by
+        // the key columns it already carries.
+        let template = templates.iter().find(|template| {
+            (row.template_id != 0 && template.id == row.template_id)
+                || (row.template_id == 0
+                    && template.file_id == row.file_id
+                    && template.dye_tint == row.dye_tint
+                    && template.dye_colors == row.dye_colors)
+        });
+        let Some(template) = template else {
             log.out(
                 LogLevel::Warn,
                 "server.worldserver",

@@ -58,7 +58,9 @@ const UPSERT_TEMPLATE: &str = "INSERT INTO \"item_template\" (\"file_id\", \"ite
 \"dye_tint\", \"dye_colors\", \"materials\", \"unk1\", \"flags\", \"value\", \"model_id\", \
 \"quantity\", \"profession\", \"name\", \"modifiers\") \
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
-ON CONFLICT (\"file_id\", \"dye_tint\", \"dye_colors\") DO NOTHING RETURNING 1";
+ON CONFLICT (\"file_id\", \"item_type\", \"dye_tint\", \"dye_colors\", \"materials\", \"unk1\", \
+\"flags\", \"value\", \"model_id\", \"quantity\", \"profession\", \"name\", \"modifiers\") \
+DO NOTHING RETURNING 1";
 
 const SELECT_TEMPLATES: &str = "SELECT \"id\"::bigint, \"file_id\"::bigint, \"item_type\"::bigint, \
 \"dye_tint\"::bigint, \"dye_colors\"::bigint, \"materials\"::bigint, \"unk1\"::bigint, \
