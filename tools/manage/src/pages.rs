@@ -50,7 +50,7 @@ pub fn dashboard(manage: &Manage) -> Response {
          <tr><td>accounts</td><td><code>kryta_login.account</code></td><td>{} row(s), {accepted} with an EULA accepted</td></tr>\n\
          <tr><td>characters</td><td><code>kryta_characters.characters</code></td><td>a page is next</td></tr>\n\
          <tr><td>worlds</td><td><code>realmlist</code> + <code>data/realms.json</code></td><td>a page is next</td></tr>\n\
-         <tr><td>content</td><td><code>data/maps.json</code>, <code>data/inventory.json</code>, <code>data/equipment.json</code></td><td>a page is next</td></tr>\n\
+         <tr><td>content</td><td>the world database's rows (<code>map</code>, <code>map_spawn</code>) and the creation screen's files</td><td>a page is next</td></tr>\n\
          </table>\n\
          <p class=\"note\">The tool serves this machine only, by default. A token in \
          <code>manage.json</code> makes it require one.</p>",

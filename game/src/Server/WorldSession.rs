@@ -22,7 +22,7 @@ use shared::cryptography::AuthCrypt;
 use shared::network::socket::{Session, SessionFuture, SessionIo};
 
 use crate::server::packets::{
-    character_packets, creation_load_block, misc_packets,
+    character_packets, creation_load_block, instance_packets, misc_packets,
 };
 use crate::server::protocol::GameVersion;
 use crate::server::protocol::FrameError;
@@ -104,6 +104,10 @@ pub struct WorldSession {
     realm: u32,
     /// The maps the world hosts, so a connection can be told what it may enter.
     maps: Vec<crate::world::MapEntry>,
+    /// Where a character may stand on each map, for the entry placement of R13.
+    spawns: Vec<crate::maps::MapSpawn>,
+    /// The numbers this world runs by: the spawn scatter and the rest.
+    settings: crate::world::world_config::WorldConfig,
     /// The character database, when the program opened one: a creation screen's confirm writes a row
     /// there. A session without it can draw the screen but cannot finish it.
     characters: Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
@@ -121,6 +125,8 @@ impl WorldSession {
             log,
             realm: world.realm(),
             maps: world.maps().to_vec(),
+            spawns: world.spawns().to_vec(),
+            settings: world.settings().clone(),
             characters: None,
             creation: Some(world.creation().clone()),
             master: None,
@@ -316,15 +322,62 @@ impl WorldSession {
             return;
         };
 
+        // A map that is a place is loaded: the head, the player-data start, the character's name and the
+        // instance's own record, unasked - the order `docs/evidence/` and ASURA's
+        // `reference/instance-initialization.md` measured on a live load, and the rows
+        // `shared/src/Packets/../Tables.rs` names.
         if !map.is_creation() {
-            self.say(
-                LogLevel::Error,
-                format!(
-                    "Gameplay connection from {peer} asks for map {} (type {}), which this world cannot load yet: only the character-creation instance has a block.",
-                    map.id, map.kind
+            let name = self.character_name(&version).unwrap_or_else(|| {
+                self.say(
+                    LogLevel::Warn,
+                    format!(
+                        "Gameplay connection from {peer}: the character's row could not be read, so the load names it 'Player'."
+                    ),
+                );
+                "Player".to_string()
+            });
+            let is_explorable = u8::from(map.kind == crate::world::map_kind::EXPLORABLE);
+            let frames = vec![
+                instance_packets::instance_load_head(),
+                instance_packets::instance_player_data_start(),
+                instance_packets::instance_load_player_name(&name),
+                instance_packets::instance_load_info(
+                    CREATION_AGENT,
+                    map.id as u16,
+                    is_explorable,
+                    1,
+                    0,
+                    0,
                 ),
-            );
-            let _ = io.close().await;
+            ];
+            let mut block = Vec::new();
+            for frame in &frames {
+                block.extend_from_slice(frame);
+            }
+            crypt.encrypt(&mut block);
+            match io.write_all(&block).await {
+                Ok(()) => self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Gameplay connection from {peer}: map {} ({}, type {}) is loading - {} message(s), {} bytes: the load head, the player-data start, the name '{}' and the instance's record.",
+                        map.id, map.name, map.kind, frames.len(), block.len(), name
+                    ),
+                ),
+                Err(error) => {
+                    self.say(
+                        LogLevel::Warn,
+                        format!("Gameplay connection from {peer} could not be sent its load block: {error}"),
+                    );
+                    let _ = io.close().await;
+                    return;
+                }
+            }
+
+            // What the client asks next, and what a load answers: where it stands, and then its own
+            // body and the end of the load.
+            let mut pending_name = name;
+            self.load_map(io, &peer, map, &mut pending_name, &mut crypt, &version)
+                .await;
             return;
         }
 
@@ -526,6 +579,182 @@ impl WorldSession {
             }
             _ => None,
         }
+    }
+
+    /// The character's name, read from its row when the program opened a character database.
+    ///
+    /// The gameplay connection names the character by uuid in its version message, so the row is one
+    /// lookup away and no second source of truth is needed.
+    fn character_name(&self, version: &crate::server::protocol::GameVersion) -> Option<String> {
+        let pool = self.characters.as_ref()?;
+        let uuid = crate::characters::uuid_text(&version.character);
+        let rows = match pool.lock() {
+            Ok(mut pool) => pool
+                .query_with(
+                    "SELECT \"name\" FROM \"characters\" WHERE \"uuid\" = $1",
+                    &[&uuid],
+                )
+                .ok()?,
+            Err(_) => return None,
+        };
+        rows.first()
+            .map(|row| row.get::<usize, String>(0))
+    }
+
+    /// The rest of a map's load: where the character stands, its own body, and the end of the load.
+    ///
+    /// The client asks; the world answers. `0x8088` is the spawn request and is answered with `0x0196`,
+    /// a point of this map's own list scattered per R13; `0x8090` is the players request, which ends
+    /// with the load's last message. Everything else is logged by the name the protocol table gives it,
+    /// which is what says what is still missing.
+    async fn load_map(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        map: &crate::world::MapEntry,
+        name: &mut String,
+        crypt: &mut AuthCrypt,
+        version: &crate::server::protocol::GameVersion,
+    ) {
+        let _ = version;
+        let mut pending: Vec<u8> = Vec::new();
+        let mut buffer = vec![0u8; 1024];
+
+        loop {
+            while let Some(bytes) = pending.first_chunk::<2>() {
+                let header = u16::from_le_bytes(*bytes);
+                let used = match crate::server::protocol::decode_game_message(&pending, true) {
+                    Ok((_, used)) => used,
+                    Err(FrameError::Incomplete { .. }) => break,
+                    Err(error) => {
+                        self.say(
+                            LogLevel::Warn,
+                            format!(
+                                "Gameplay connection from {peer}: a message could not be framed ({error}); the load stops here."
+                            ),
+                        );
+                        let _ = io.close().await;
+                        return;
+                    }
+                };
+                let message: Vec<u8> = pending.drain(..used).collect();
+
+                match header {
+                    // The spawn request: a random point of this map's own list, scattered (R13).
+                    instance_packets::CLIENT_LOAD_REQUEST_SPAWN => {
+                        let frames = match self.entry_point(map) {
+                            Some(point) => vec![instance_packets::instance_load_spawn_point(
+                                map.file_id,
+                                point.0,
+                                point.1,
+                                point.2,
+                            )],
+                            None => {
+                                self.say(
+                                    LogLevel::Warn,
+                                    format!(
+                                        "Gameplay connection from {peer}: map {} has no spawn point, so the client is told nothing."
+                                        , map.id
+                                    ),
+                                );
+                                Vec::new()
+                            }
+                        };
+                        if let Some(point) = self.entry_point(map) {
+                            self.say(
+                                LogLevel::Info,
+                                format!(
+                                    "Gameplay connection from {peer}: the character stands at {:.2}, {:.2} (plane {}) on map {}.",
+                                    point.0, point.1, point.2, map.id
+                                ),
+                            );
+                        }
+                        self.send(io, peer, crypt, &frames, "the entry position").await;
+                    }
+                    // The players request: the character's own body, then the load is over.
+                    instance_packets::CLIENT_LOAD_REQUEST_PLAYERS => {
+                        let frames = vec![
+                            instance_packets::player_create(CREATION_AGENT, name),
+                            instance_packets::instance_load_finish(),
+                        ];
+                        self.send(io, peer, crypt, &frames, "the player and the load's last message")
+                            .await;
+                        self.say(
+                            LogLevel::Info,
+                            format!(
+                                "Gameplay connection from {peer}: map {} is loaded - the character '{name}' is in it.",
+                                map.id
+                            ),
+                        );
+                        let _ = message;
+                        return;
+                    }
+                    other => {
+                        self.log.out(
+                            LogLevel::Info,
+                            "server.worldserver",
+                            format!(
+                                "Gameplay connection from {peer}: message {} ({} bytes) during the load, which this world does not answer yet.",
+                                crate::server::protocol::label(other),
+                                message.len()
+                            ),
+                        );
+                    }
+                }
+            }
+
+            match io.read(&mut buffer).await {
+                Ok(0) => return,
+                Ok(read) => {
+                    // The asks after the seed are scrambled with the key both sides derive, the
+                    // same as in the run loop above.
+                    let mut plain = buffer[..read].to_vec();
+                    crypt.decrypt(&mut plain);
+                    pending.extend_from_slice(&plain);
+                }
+                Err(error) => {
+                    self.say(
+                        LogLevel::Warn,
+                        format!("Gameplay connection from {peer} could not be read: {error}"),
+                    );
+                    return;
+                }
+            }
+        }
+    }
+
+    /// One point of a map's own spawn list, scattered by the world's setting (R13).
+    ///
+    /// The game's rule: every entry takes a random point of that map's list, lands up to `spawn_scatter`
+    /// units around it, and faces the point's angle. The scatter is a setting, never a constant.
+    fn entry_point(&self, map: &crate::world::MapEntry) -> Option<(f32, f32, u16)> {
+        let points: Vec<crate::maps::MapSpawn> = self
+            .spawns
+            .iter()
+            .filter(|spawn| spawn.map_id == map.id)
+            .copied()
+            .collect();
+        if points.is_empty() {
+            return None;
+        }
+        let mut pick = [0u8; 8];
+        let choice = if getrandom::getrandom(&mut pick).is_ok() {
+            (u64::from_le_bytes(pick) % points.len() as u64) as usize
+        } else {
+            0
+        };
+        let point = points[choice];
+        let scatter = self.settings.spawn_scatter;
+        let mut angle = [0u8; 8];
+        let (dx, dy) = if getrandom::getrandom(&mut angle).is_ok() {
+            let raw = u64::from_le_bytes(angle);
+            let radians = (raw % 360) as f32 * std::f32::consts::PI / 180.0;
+            let radius = ((raw / 360) % scatter.max(1.0) as u64) as f32;
+            (radius * radians.cos(), radius * radians.sin())
+        } else {
+            (0.0, 0.0)
+        };
+        Some((point.x + dx, point.y + dy, point.plane.max(0) as u16))
     }
 
     /// The creation screen's confirm: write the character, and say whether it was written.
@@ -775,23 +1004,33 @@ mod tests {
     use std::io::{Read, Write};
     use std::sync::Arc;
 
-    /// The world a test serves: world 2, the character-creation instance.
+    /// The world a test serves: world 2, the character-creation instance and one outpost.
     fn world() -> World {
         let mut world = World::new(2);
-        // A directory per test thread: two tests in one process would otherwise remove each other's
-        // catalogue between the write and the read.
-        let dir = std::env::temp_dir().join(format!(
-            "kryta-ww-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("maps.json");
-        std::fs::write(&path, r#"{"maps": [{"id": 0, "type": 11}]}"#).unwrap();
-
-        world.load_maps(&path, &Log::new()).unwrap();
-        assert_eq!(world.maps(), &[MapEntry { id: 0, kind: map_kind::CREATION }]);
+        world.set_maps(
+            vec![
+                MapEntry {
+                    id: 0,
+                    kind: map_kind::CREATION,
+                    file_id: 0,
+                    name: "Character creation".to_string(),
+                },
+                MapEntry {
+                    id: 148,
+                    kind: map_kind::OUTPOST,
+                    file_id: 112_509,
+                    name: "Ascalon City (pre-Searing)".to_string(),
+                },
+            ],
+            vec![crate::maps::MapSpawn {
+                map_id: 148,
+                index: 0,
+                x: 9541.87,
+                y: 4796.46,
+                plane: 0,
+            }],
+        );
+        assert_eq!(world.maps().len(), 2);
 
         // And the creation content, which the same start-up pass reads: a screen with no items has no
         // inventory model to draw.
@@ -960,6 +1199,119 @@ mod tests {
             total += read;
         }
         assert_eq!(total, 0, "a connection for another world is closed without a word");
+
+        manager.stop_network();
+        log.shutdown();
+    }
+
+    /// A connection for a real map is loaded: the head block, the entry position and the end of the
+    /// load. Played against a listener with no database, because a load needs no row - the name falls
+    /// back to "Player" and says so.
+    #[test]
+    fn an_outpost_connection_is_loaded_with_its_entry_point() {
+        // A console logger, so the session's own words are visible while this is being proven.
+        let log = Log::new();
+        log.initialize(&common::configuration::Config::parse(
+            "Appender.Console = 1,6,0
+Logger.root = 6,Console
+",
+            std::path::PathBuf::from("test.conf"),
+            common::configuration::Policy::default(),
+        ))
+        .expect("the test can speak");
+        let world = Arc::new(world());
+        let master = [0x5Au8; MASTER_SECRET_LEN];
+        let factory = factory(log.clone(), Arc::clone(&world), master);
+        let mut manager = shared::network::socket_mgr::SocketMgr::new(factory);
+        let port = manager.start_network("127.0.0.1", 0, 1).unwrap();
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+
+        // 1. The version message, naming map 148 - the outpost - and a character id no row holds.
+        let version = GameVersion {
+            version: 39167,
+            h0008: 1,
+            map_token: 2,
+            map_id: 148,
+            player_token: 0x1234,
+            account: [0xAA; 16],
+            character: [0xBB; 16],
+            h0038: 0,
+            h003c: 0,
+        };
+        client.write_all(&version.encode()).unwrap();
+
+        // 2. The seed exchange.
+        let mut public = [0u8; handshake::PUBLIC_LEN];
+        public[0] = 2;
+        let mut seed = CLIENT_SEED_HEADER.to_le_bytes().to_vec();
+        seed.extend_from_slice(&public);
+        client.write_all(&seed).unwrap();
+
+        let mut answer = [0u8; handshake::SERVER_SEED_LEN];
+        client.read_exact(&mut answer).unwrap();
+        let key: [u8; KEY_LEN] = handshake::derive_key(&master);
+        let mut reading = common::cryptography::Arc4::new(&key);
+        let mut sending = common::cryptography::Arc4::new(&key);
+
+        // 3. The head block: load head, player-data start, the name, the instance's record.
+        let expected = [
+            instance_packets::instance_load_head(),
+            instance_packets::instance_player_data_start(),
+            instance_packets::instance_load_player_name("Player"),
+            instance_packets::instance_load_info(1, 148, 0, 1, 0, 0),
+        ];
+        let expected_bytes: usize = expected.iter().map(Vec::len).sum();
+        let mut block = vec![0u8; expected_bytes];
+        client.read_exact(&mut block).unwrap();
+        reading.apply(&mut block);
+        let mut whole = Vec::new();
+        for frame in &expected {
+            whole.extend_from_slice(frame);
+        }
+        assert_eq!(block, whole, "the load's head, in the measured order");
+        let headers: Vec<u16> = expected
+            .iter()
+            .map(|frame| u16::from_le_bytes([frame[0], frame[1]]))
+            .collect();
+        assert_eq!(headers, vec![0x017C, 0x0186, 0x017D, 0x019A]);
+
+        // 4. The spawn request: the world answers with the map file and a point of its own list.
+        let mut ask = vec![0x88, 0x80];
+        sending.apply(&mut ask);
+        client.write_all(&ask).unwrap();
+
+        let mut spawn = vec![0u8; 26];
+        client.read_exact(&mut spawn).unwrap();
+        reading.apply(&mut spawn);
+        assert_eq!(&spawn[..2], &[0x96, 0x01], "the entry position");
+        assert_eq!(
+            &spawn[2..6],
+            &112_509u32.to_le_bytes(),
+            "map 148's file id, as the recording carried it"
+        );
+        // The point is scattered around the map's own spawn, so it is near it and not equal to it.
+        let x = f32::from_le_bytes([spawn[6], spawn[7], spawn[8], spawn[9]]);
+        let y = f32::from_le_bytes([spawn[10], spawn[11], spawn[12], spawn[13]]);
+        assert!(
+            (x - 9541.87).abs() <= 250.0 + 1.0 && (y - 4796.46).abs() <= 250.0 + 1.0,
+            "the point {x}, {y} is within the scatter of the map's own"
+        );
+
+        // 5. The players request: the character's body and the load's last message.
+        let mut ask = vec![0x90, 0x80, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
+                           0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0x00];
+        sending.apply(&mut ask);
+        client.write_all(&ask).unwrap();
+
+        let player = instance_packets::player_create(1, "Player");
+        let mut answered = vec![0u8; player.len() + 2];
+        client.read_exact(&mut answered).unwrap();
+        reading.apply(&mut answered);
+        assert_eq!(&answered[..player.len()], player.as_slice(), "the character's own body");
+        assert_eq!(&answered[player.len()..], &[0x8E, 0x01], "and the load is over");
 
         manager.stop_network();
         log.shutdown();

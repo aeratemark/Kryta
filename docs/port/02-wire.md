@@ -109,6 +109,30 @@ The frames, with the reference's own wire sizes:
 - In this tree: `game/src/Server/Packets/`, the size table in `WorldSession`, and the row the confirm
   writes (`docs/decisions/0007-character-schema.md`).
 
+## The load of a real map
+
+Once the character has been chosen - or when a connection names a map it is not creating a character
+on - the same connection runs the load. Measured from `recordings/gwps/world/load-stream.log`, a
+working server's own trace of one login:
+
+| # | direction | message | wire | is |
+|---|---|---|---|---|
+| 1 | server -> client | `0x017C` | 6 | the load begins |
+| 2 | server -> client | `0x0186` | 2 | the player-data stream opens |
+| 3 | server -> client | `0x017D` | 4 + 2n | the character's name, a counted UTF-16 string: 14 bytes for "Appok" (5 units) |
+| 4 | server -> client | `0x019A` | 16 | the instance: its id, the map id, the district, and two flag bytes |
+| 5 | client -> server | `0x8088` | 2 | it asks where it stands |
+| 6 | server -> client | `0x0196` | 26 | the answer: the map's file id, x, y, plane, and 8 inert bytes |
+| 7 | client -> server | `0x8090` | 19 | it asks for the map's players: a 16-byte blob and one byte |
+| 8 | server -> client | `0x0059` | 25 + 2n | the character's own body, its name a counted UTF-16 string |
+| 9 | server -> client | `0x018E` | 2 | the load is over |
+
+- The position is a point of the map's own list, scattered per R13 (`docs/game-rules.md`), so
+  `0x0196`'s x and y differ from run to run; the file id and plane are the map's, from its row.
+- `0x017D`'s name is the character row's `name`, as the creation confirm wrote it.
+- In this tree: the builders are `game/src/Server/Packets/InstancePackets.rs`, the order and the
+  answers are `WorldSession`'s `load_map`, and the rows are `game/Maps/`'s (`0009-world-schema.md`).
+
 ## The file check
 
 Before the version message, on the same socket, the client asks which game files it should have:

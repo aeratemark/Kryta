@@ -10,7 +10,6 @@
 #[path = "WorldConfig.rs"]
 pub mod world_config;
 
-use common::configuration::json::Document;
 use common::logging::{Log, LogLevel};
 
 /// What kind of place a map is. The numbers are the client's, not this server's.
@@ -25,12 +24,16 @@ pub mod map_kind {
 }
 
 /// One map this world can put a client in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MapEntry {
     /// The client's own id for the map.
     pub id: u32,
     /// Which kind of place it is, from [`map_kind`].
     pub kind: u8,
+    /// The `Gw.dat` file id the client loads the map from (`0x0196`).
+    pub file_id: u32,
+    /// What the map is called, for a log line and the administration tool.
+    pub name: String,
 }
 
 impl MapEntry {
@@ -47,6 +50,8 @@ pub struct World {
     maps: Vec<MapEntry>,
     /// The bags, items and profession sets a character-creation screen is built from.
     creation: crate::creation::Tables,
+    /// Where a character may stand on entry, per map (R13).
+    spawns: Vec<crate::maps::MapSpawn>,
     /// The numbers this world runs by: a district's allotment, a party's cap, the spawn scatter and the
     /// rest of the rules that name a number (docs/game-rules.md, R53).
     settings: world_config::WorldConfig,
@@ -59,6 +64,7 @@ impl World {
             realm,
             maps: Vec::new(),
             creation: crate::creation::Tables::default(),
+            spawns: Vec::new(),
             settings: world_config::WorldConfig::default(),
         }
     }
@@ -109,40 +115,45 @@ impl World {
         self.maps.iter().find(|map| map.id == id)
     }
 
-    /// Load what the world is made of, and report it.
+    /// Read the maps, and where a character may stand on each, from the world database.
     ///
-    /// Reference: `sWorld->SetInitialWorldSettings`, which loads maps, creatures, quests, items and
-    /// the rest in one long sequence. Here it is one catalogue, read from the file the program names,
-    /// and the log says how many maps came from it - zero is a statement, not a failure.
-    pub fn load_maps(&mut self, path: impl AsRef<std::path::Path>, log: &Log) -> Result<usize, String> {
-        let path = path.as_ref();
-        if !path.exists() {
-            log.out(
-                LogLevel::Warn,
-                "server.worldserver",
-                format!("No map catalogue at {}: this world hosts no map.", path.display()),
-            );
-            return Ok(0);
-        }
-
-        let document = Document::read(path).map_err(|error| error.to_string())?;
-        let records = document.records("maps")?;
-
-        let mut maps = Vec::with_capacity(records.len());
-        for record in records {
-            let id: u32 = record
-                .required("id")?
-                .parse()
-                .map_err(|_| format!("{}: 'id' is not a number", record.at()))?;
-            let kind: u8 = record
-                .required("type")?
-                .parse()
-                .map_err(|_| format!("{}: 'type' is not a number", record.at()))?;
-            maps.push(MapEntry { id, kind });
-        }
-
-        self.maps = maps;
+    /// Reference: the same `SetInitialWorldSettings` pass - a world that opens with no map hosts nothing,
+    /// and says so rather than pretending.
+    pub fn load_maps(&mut self, maps: &crate::maps::DatabaseMaps, log: &Log) -> Result<usize, String> {
+        let (records, spawns) = maps.load()?;
+        self.maps = records;
+        self.spawns = spawns;
+        log.out(
+            LogLevel::Info,
+            "server.worldserver",
+            format!(
+                "{} map(s) and {} spawn point(s) read from the world database.",
+                self.maps.len(),
+                self.spawns.len()
+            ),
+        );
         Ok(self.maps.len())
+    }
+
+    /// Give the world its maps and their spawn points directly: what a test does, and what a program
+    /// that read them some other way would do.
+    pub fn set_maps(&mut self, maps: Vec<MapEntry>, spawns: Vec<crate::maps::MapSpawn>) {
+        self.maps = maps;
+        self.spawns = spawns;
+    }
+
+    /// Every spawn point this world holds.
+    pub fn spawns(&self) -> &[crate::maps::MapSpawn] {
+        &self.spawns
+    }
+
+    /// Where a character may stand on entry, for one map (R13).
+    pub fn spawns_of(&self, map_id: u32) -> Vec<crate::maps::MapSpawn> {
+        self.spawns
+            .iter()
+            .filter(|spawn| spawn.map_id == map_id)
+            .copied()
+            .collect()
     }
 }
 
@@ -150,50 +161,58 @@ impl World {
 mod tests {
     use super::*;
 
-    fn temp_file(name: &str, text: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("kryta-world-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("maps.json");
-        std::fs::write(&path, text).unwrap();
-        path
+    /// A world with two maps and one spawn point, as the database would give it.
+    fn world() -> World {
+        let mut world = World::new(2);
+        world.set_maps(
+            vec![
+                MapEntry {
+                    id: 0,
+                    kind: map_kind::CREATION,
+                    file_id: 0,
+                    name: "Character creation".to_string(),
+                },
+                MapEntry {
+                    id: 148,
+                    kind: map_kind::OUTPOST,
+                    file_id: 112_509,
+                    name: "Ascalon City (pre-Searing)".to_string(),
+                },
+            ],
+            vec![crate::maps::MapSpawn {
+                map_id: 148,
+                index: 0,
+                x: 9541.87,
+                y: 4796.46,
+                plane: 0,
+            }],
+        );
+        world
     }
 
     #[test]
-    fn a_catalogue_is_read_and_the_creation_instance_is_recognised() {
-        let log = Log::new();
-        let mut world = World::new(2);
-        let path = temp_file(
-            "one",
-            r#"{"maps": [{"id": 0, "type": 11}, {"id": 148, "type": 0}]}"#,
-        );
-
-        assert_eq!(world.load_maps(&path, &log).unwrap(), 2);
+    fn the_creation_instance_is_recognised_and_an_outpost_is_not() {
+        let world = world();
         assert_eq!(world.realm(), 2);
         assert!(world.map(0).unwrap().is_creation());
         assert!(!world.map(148).unwrap().is_creation());
         assert!(world.map(999).is_none());
-
-        log.shutdown();
+        assert_eq!(world.map(148).unwrap().file_id, 112_509);
     }
 
     #[test]
-    fn a_world_with_no_catalogue_hosts_nothing_and_says_so() {
-        let log = Log::new();
-        let mut world = World::new(2);
-        let missing = std::env::temp_dir().join("kryta-world-nothing-maps.json");
-        assert_eq!(world.load_maps(&missing, &log).unwrap(), 0);
+    fn a_map_carries_the_points_a_character_may_stand_on() {
+        let world = world();
+        let spawns = world.spawns_of(148);
+        assert_eq!(spawns.len(), 1);
+        assert_eq!(spawns[0].x, 9541.87);
+        assert!(world.spawns_of(0).is_empty(), "the creation instance has no point to stand on");
+    }
+
+    #[test]
+    fn a_world_with_no_map_hosts_nothing() {
+        let world = World::new(2);
         assert!(world.maps().is_empty());
-        log.shutdown();
-    }
-
-    #[test]
-    fn a_row_without_a_type_names_itself() {
-        let log = Log::new();
-        let mut world = World::new(2);
-        let path = temp_file("bad", r#"{"maps": [{"id": 0}]}"#);
-        let error = world.load_maps(&path, &log).unwrap_err();
-        assert!(error.contains("maps[1]"), "{error}");
-        log.shutdown();
+        assert!(world.spawns_of(148).is_empty());
     }
 }

@@ -178,6 +178,7 @@ fn run(args: &[String]) -> Result<(), String> {
 
     let mut opened = Vec::new();
     let mut character_pool: Option<std::sync::Arc<std::sync::Mutex<DatabaseWorkerPool>>> = None;
+    let mut world_pool: Option<std::sync::Arc<std::sync::Mutex<DatabaseWorkerPool>>> = None;
     for (kind, label, schema) in [
         (DatabaseKind::World, "World", "data/sql/base/db_world"),
         (DatabaseKind::Character, "Character", "data/sql/base/db_characters"),
@@ -209,6 +210,9 @@ fn run(args: &[String]) -> Result<(), String> {
             // A creation confirm writes a character from a session thread, so the character pool is
             // shared with the listener the way the login program shares its own with the portal.
             character_pool = Some(std::sync::Arc::new(std::sync::Mutex::new(pool)));
+        } else if kind == DatabaseKind::World {
+            // The maps are rows, so the world pool is kept: the map catalogue is read from it below.
+            world_pool = Some(std::sync::Arc::new(std::sync::Mutex::new(pool)));
         } else {
             opened.push(pool);
         }
@@ -225,23 +229,30 @@ fn run(args: &[String]) -> Result<(), String> {
     }
 
     let mut world = game::world::World::new(realm);
-    let (maps_file, notes) = config
-        .value_string("MapsFile", "data/maps.json")
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
-    let maps = world.load_maps(&maps_file, &log)?;
+    // The maps are rows in the world database (`docs/decisions/0009-world-schema.md`), read the way the
+    // reference reads its map records at `SetInitialWorldSettings`: one query, held for the life of the
+    // program. A world started against an empty database hosts no map, and says so.
+    let world_maps = match world_pool.as_ref() {
+        Some(pool) => {
+            let maps = game::maps::DatabaseMaps::new(std::sync::Arc::clone(pool), log.clone());
+            Some(maps)
+        }
+        None => None,
+    };
+    let maps = match world_maps.as_ref() {
+        Some(maps) => world.load_maps(maps, &log)?,
+        None => 0,
+    };
     log.out(
         LogLevel::Info,
         "server.worldserver",
         format!(
-            "World of {} map(s) loaded from {maps_file}: {}.",
+            "World of {} map(s): {}.",
             maps,
             world
                 .maps()
                 .iter()
-                .map(|map| format!("{} (type {})", map.id, map.kind))
+                .map(|map| format!("{} '{}' (type {})", map.id, map.name, map.kind))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),

@@ -31,6 +31,38 @@ pub const INSTANCE_PLAYER_DATA_DONE: u16 = 0x018A;
 /// info, the agent) belongs to a map that has geometry, and the creation instance has none.
 pub const CHAR_CREATION_START: u16 = 0x0189;
 
+/// `GAME_SMSG_INSTANCE_LOAD_PLAYER_NAME` (`0x017D`): the character's name, as a counted UTF-16 string.
+pub const INSTANCE_LOAD_PLAYER_NAME: u16 = 0x017D;
+
+/// `GAME_SMSG_INSTANCE_LOAD_INFO` (`0x019A`): which instance this is, and which agent the client
+/// controls in it.
+pub const INSTANCE_LOAD_INFO: u16 = 0x019A;
+
+/// `GAME_SMSG_INSTANCE_LOAD_SPAWN_POINT` (`0x0196`): where the character stands, and which map file to
+/// load.
+///
+/// Evidence for the layout and the numbers: a working server's own recording,
+/// `recordings/asura/feature/travel/first-crossing-20261031.jsonl` seq 125 - a 26-byte frame whose
+/// fields are, after the header, `map file id`, an x/y pair of floats, the plane, two bytes and eight
+/// zero bytes. That frame's own values are map 148's: file id `0x0001B97D`, x `9541.87`, y `4796.46`,
+/// plane 0.
+pub const INSTANCE_LOAD_SPAWN_POINT: u16 = 0x0196;
+
+/// `GAME_CMSG_INSTANCE_LOAD_REQUEST_SPAWN` (`0x8088`): the client asks where it stands.
+pub const CLIENT_LOAD_REQUEST_SPAWN: u16 = 0x8088;
+
+/// `GAME_CMSG_INSTANCE_LOAD_REQUEST_PLAYERS` (`0x8090`): the client asks for the bodies in the map,
+/// and the load ends with the answer.
+pub const CLIENT_LOAD_REQUEST_PLAYERS: u16 = 0x8090;
+
+/// `GAME_SMSG_INSTANCE_LOAD_FINISH` (`0x018E`): the last message of the load; the client stops loading
+/// on it.
+pub const INSTANCE_LOAD_FINISH: u16 = 0x018E;
+
+/// `GAME_SMSG_PLAYER_CREATE` (`0x0059`): one body the client is told about - for a load of our own, the
+/// player's own agent.
+pub const PLAYER_CREATE: u16 = 0x0059;
+
 /// A frame: the `u16` header and then the body.
 fn frame(header: u16, body: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(2 + body.len());
@@ -60,6 +92,76 @@ pub fn instance_player_data_done() -> Vec<u8> {
     frame(INSTANCE_PLAYER_DATA_DONE, &[])
 }
 
+/// `0x017D`: the character's name, as a counted string of at most twenty units.
+pub fn instance_load_player_name(name: &str) -> Vec<u8> {
+    let units: Vec<u16> = name.encode_utf16().take(20).collect();
+    let mut body = Vec::with_capacity(2 + units.len() * 2);
+    body.extend_from_slice(&(units.len() as u16).to_le_bytes());
+    for unit in &units {
+        body.extend_from_slice(&unit.to_le_bytes());
+    }
+    frame(INSTANCE_LOAD_PLAYER_NAME, &body)
+}
+
+/// `0x019A`: the agent the client controls, the map it is in, whether the client runs an explorable's
+/// load, the district, the language and two bytes.
+pub fn instance_load_info(
+    agent: u32,
+    map_id: u16,
+    is_explorable: u8,
+    district: u32,
+    language: u8,
+    is_observer: u8,
+) -> Vec<u8> {
+    let mut body = Vec::with_capacity(14);
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&map_id.to_le_bytes());
+    body.push(is_explorable);
+    body.extend_from_slice(&district.to_le_bytes());
+    body.push(language);
+    body.push(is_observer);
+    body.push(0);
+    frame(INSTANCE_LOAD_INFO, &body)
+}
+
+/// `0x0196`: the map file to load, where the character stands, the plane, two bytes and eight zeros.
+pub fn instance_load_spawn_point(map_file_id: u32, x: f32, y: f32, plane: u16) -> Vec<u8> {
+    let mut body = Vec::with_capacity(24);
+    body.extend_from_slice(&map_file_id.to_le_bytes());
+    body.extend_from_slice(&x.to_le_bytes());
+    body.extend_from_slice(&y.to_le_bytes());
+    body.extend_from_slice(&plane.to_le_bytes());
+    body.push(0); // unk0
+    body.push(0); // is_cinematic
+    body.extend_from_slice(&[0u8; 8]);
+    frame(INSTANCE_LOAD_SPAWN_POINT, &body)
+}
+
+/// `0x018E`: the load is over - the header alone.
+pub fn instance_load_finish() -> Vec<u8> {
+    frame(INSTANCE_LOAD_FINISH, &[])
+}
+
+/// `0x0059`: the player's own agent, as the client is told about it at a load.
+///
+/// The field set is the ported row's: an id, the agent, a dword, a byte, two dwords and the name. The
+/// values a load sends are the reference's own defaults until an agent's state exists to fill them.
+pub fn player_create(agent: u32, name: &str) -> Vec<u8> {
+    let units: Vec<u16> = name.encode_utf16().take(20).collect();
+    let mut body = Vec::with_capacity(21 + units.len() * 2);
+    body.extend_from_slice(&agent.to_le_bytes()); // the id the client keys the body by
+    body.extend_from_slice(&agent.to_le_bytes()); // the agent
+    body.extend_from_slice(&0u32.to_le_bytes());
+    body.push(0);
+    body.extend_from_slice(&0u32.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes());
+    body.extend_from_slice(&(units.len() as u16).to_le_bytes());
+    for unit in &units {
+        body.extend_from_slice(&unit.to_le_bytes());
+    }
+    frame(PLAYER_CREATE, &body)
+}
+
 /// What a character-creation connection is answered with, in the reference's order.
 pub fn creation_load_block() -> Vec<u8> {
     let mut block = instance_load_head();
@@ -70,6 +172,48 @@ pub fn creation_load_block() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_spawn_point_is_the_recordings_twenty_six_bytes() {
+        // Map 148's own frame, from `recordings/asura/feature/travel/first-crossing-20261031.jsonl`:
+        // `96 01 | 7d b9 01 00 | 7e 17 15 46 | a6 e3 95 45 | 00 00 | 00 00 | 8 zeros`.
+        let frame = instance_load_spawn_point(0x0001_B97D, 9541.87, 4796.46, 0);
+        assert_eq!(frame.len(), 26, "the recording's size");
+        assert_eq!(&frame[..2], &[0x96, 0x01]);
+        assert_eq!(&frame[2..6], &0x0001_B97Du32.to_le_bytes(), "the map file id");
+        assert_eq!(&frame[6..10], &9541.87f32.to_le_bytes());
+        assert_eq!(&frame[10..14], &4796.46f32.to_le_bytes());
+        assert_eq!(&frame[14..16], &0u16.to_le_bytes(), "the plane");
+        assert_eq!(&frame[16..], &[0u8; 10], "two bytes and eight zeros");
+    }
+
+    #[test]
+    fn the_load_info_is_sixteen_bytes_and_names_the_map_and_the_district() {
+        let frame = instance_load_info(1, 148, 0, 1, 0, 0);
+        assert_eq!(frame.len(), 16, "the table's declared size");
+        assert_eq!(&frame[2..6], &1u32.to_le_bytes(), "the agent");
+        assert_eq!(&frame[6..8], &148u16.to_le_bytes(), "the map");
+        assert_eq!(frame[8], 0, "an outpost runs the outpost's load");
+        assert_eq!(&frame[9..13], &1u32.to_le_bytes(), "the district");
+    }
+
+    #[test]
+    fn the_player_name_is_counted_and_the_finish_is_bare() {
+        let frame = instance_load_player_name("Aeris");
+        assert_eq!(&frame[..2], &[0x7D, 0x01]);
+        assert_eq!(&frame[2..4], &5u16.to_le_bytes());
+        assert_eq!(frame.len(), 4 + 10);
+        assert_eq!(instance_load_finish(), vec![0x8E, 0x01]);
+    }
+
+    #[test]
+    fn a_player_create_carries_the_agent_and_a_counted_name() {
+        let frame = player_create(1, "Aeris");
+        assert_eq!(&frame[..2], &[0x59, 0x00]);
+        assert_eq!(&frame[2..6], &1u32.to_le_bytes(), "the id");
+        assert_eq!(&frame[6..10], &1u32.to_le_bytes(), "the agent");
+        assert!(frame.len() > 20);
+    }
 
     #[test]
     fn the_load_head_is_the_traced_six_bytes() {
