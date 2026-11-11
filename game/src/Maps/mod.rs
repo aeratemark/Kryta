@@ -124,6 +124,24 @@ impl DatabaseMaps {
             .collect()
     }
 
+    /// The party cap a map states, or `None` when the world's own setting applies (R15).
+    ///
+    /// The plan's map row carries the cap: "a map row overrides the world's own" - so the world's
+    /// `PartySizeCap` is the default and this column is the exception a map makes.
+    pub fn party_cap(&self, map_id: u32) -> Result<Option<u32>, String> {
+        let rows = self.query_with(
+            "SELECT \"party_cap\"::bigint FROM \"map\" WHERE \"id\" = $1::bigint::int",
+            vec![Param::Integer(i64::from(map_id))],
+        )?;
+        let Some(row) = rows.first() else {
+            return Err(format!("no map has id {map_id}"));
+        };
+        let cap: Option<i64> = row
+            .try_get(0)
+            .map_err(|error| format!("column party_cap: {error}"))?;
+        Ok(cap.map(|value| value as u32))
+    }
+
     /// Add a spawn point to a map at its next free index, and answer that index.
     ///
     /// The world's content is rows, and this is the administration tool's edit of one: the same
@@ -248,6 +266,12 @@ mod tests {
             spawns.iter().any(|spawn| spawn.map_id == 148),
             "and it has a point to stand on"
         );
+        assert_eq!(
+            maps.party_cap(148).expect("the cap is readable"),
+            None,
+            "the seed states no cap, so the world's own applies (R15)"
+        );
+        assert!(maps.party_cap(999_999).is_err(), "a map that is not there is not read");
     }
 
     #[test]

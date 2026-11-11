@@ -191,7 +191,7 @@ pub fn content(manage: &Manage) -> Response {
             .collect();
         rows.push_str(&format!(
             "<tr><td>{id}</td><td>{kind}</td><td><code>{file_id}</code></td>\
-             <td>{name}</td><td>{points}<br><form method=\"post\" action=\"/content/spawn\">\
+             <td>{name}</td><td>{party_cap}</td><td>{points}<br><form method=\"post\" action=\"/content/spawn\">\
              <input type=\"hidden\" name=\"map_id\" value=\"{id}\">\
              x <input type=\"text\" name=\"x\" size=\"8\"> \
              y <input type=\"text\" name=\"y\" size=\"8\"> \
@@ -201,6 +201,10 @@ pub fn content(manage: &Manage) -> Response {
             kind = map.kind,
             file_id = map.file_id,
             name = escape(&map.name),
+            party_cap = match manage.party_cap(map.id) {
+                Some(cap) => cap.to_string(),
+                None => "<em>the world's</em>".to_string(),
+            },
             points = if points.is_empty() {
                 "<em>none</em>".to_string()
             } else {
@@ -256,8 +260,8 @@ pub fn content(manage: &Manage) -> Response {
          <code>kryta_world.map</code> and <code>kryta_world.map_spawn</code>. A spawn point added \
          here is where every entry may place a character, scattered per R13; one removed is one the \
          load will not pick again.</p>\n\
-         <table>\n<tr><th>id</th><th>kind</th><th>file id</th><th>name</th><th>spawn points</th>\
-         <th>arrivals</th></tr>\n\
+         <table>\n<tr><th>id</th><th>kind</th><th>file id</th><th>name</th><th>party cap</th>\
+         <th>spawn points</th><th>arrivals</th></tr>\n\
          {rows}</table>\n\
          <p class=\"note\">{maps} map(s), {spawns} spawn point(s). Kinds: 0 outpost, 1 explorable, \
          11 character creation.</p>\n\

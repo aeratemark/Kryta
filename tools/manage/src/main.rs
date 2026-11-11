@@ -209,6 +209,11 @@ impl Manage {
         self.maps.as_ref()?.arrivals().ok()
     }
 
+    /// The party cap a map states, or `None` when the world's own setting applies (R15).
+    pub fn party_cap(&self, map_id: u32) -> Option<u32> {
+        self.maps.as_ref()?.party_cap(map_id).ok().flatten()
+    }
+
     /// The item templates, when a world database is configured.
     pub fn list_items(&self) -> Option<Vec<game::data_stores::ItemDefinition>> {
         let items = self.items.as_ref()?;
