@@ -1,17 +1,18 @@
-//! The end-to-end run: the client's login conversation against the auth **program**.
+//! The end-to-end run: the client's login, and then the world it is sent to, against the two
+//! programs.
 //!
-//! The session tests in this crate play the conversation against a socket manager a test builds.
-//! This test plays it against the binary `authserver` itself: it spawns the program from this
-//! package, waits for its own READY line, then performs the client's own sequence - the file check,
-//! the auth version message, the key exchange, and the portal login message - and reads the answer:
-//! the character list the login composes from the character database.
+//! The session tests in this crate play the conversations against socket managers a test builds.
+//! This test plays them against the binaries: it spawns `authserver` from this package and
+//! `worldserver` from the sibling package, waits for each READY line, performs the client's own
+//! sequence - the file check, the auth version message, the key exchange, the portal login, the map
+//! request - and then, with the address and tokens the login answered, connects to the world and
+//! reads the load block it claims the travel with. The seam is the hand-off row the login writes and
+//! the world claims (R9, `docs/port/06-world-plan.md`, "The three seams").
 //!
-//! It is `#[ignore]` because it needs the login and character databases the program's configuration
-//! names. It writes nothing: a login only reads.
+//! It is `#[ignore]` because it needs the databases the programs' configurations name, and because
+//! it binds the world program's own port: run it with the two servers stopped.
 //!
-//! Run with `cargo test -p authserver --test end_to_end -- --ignored --nocapture`, with the two
-//! servers of the same databases not running: this test binds its own port, but the portal's 6601 is
-//! not available while another auth program holds it.
+//! Run with `cargo test -p authserver --test end_to_end -- --ignored --nocapture`.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
@@ -22,6 +23,8 @@ use std::time::{Duration, Instant};
 use common::configuration::{Config, Policy};
 use common::logging::Log;
 use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
+use game::server::packets::instance_packets;
+use game::server::protocol::GameVersion;
 use shared::cryptography::handshake::{
     self, CLIENT_SEED_HEADER, MASTER_SECRET_LEN, PUBLIC_LEN, SERVER_SEED_LEN,
 };
@@ -130,6 +133,100 @@ fn read_quiet(stream: &mut TcpStream, reading: &mut common::cryptography::Arc4) 
     }
 }
 
+/// The key exchange both connections start with: the client's public value, the server's seed, and
+/// the two ciphers both sides derive from the master the seed carries.
+fn exchange(stream: &mut TcpStream) -> (common::cryptography::Arc4, common::cryptography::Arc4) {
+    let mut public = [0u8; PUBLIC_LEN];
+    public[0] = 2;
+    let mut seed = CLIENT_SEED_HEADER.to_le_bytes().to_vec();
+    seed.extend_from_slice(&public);
+    stream.write_all(&seed).expect("the seed message");
+    let answer = read_exact(stream, SERVER_SEED_LEN);
+    assert_eq!(
+        &answer[..2],
+        &handshake::SERVER_SEED_HEADER.to_le_bytes(),
+        "the server's seed message"
+    );
+    let shared = handshake::shared_secret(&public).expect("the exchange's own arithmetic");
+    let mut master = [0u8; MASTER_SECRET_LEN];
+    for index in 0..MASTER_SECRET_LEN {
+        master[index] = answer[2 + index] ^ shared[index];
+    }
+    let key = handshake::derive_key(&master);
+    (
+        common::cryptography::Arc4::new(&key),
+        common::cryptography::Arc4::new(&key),
+    )
+}
+
+/// Start the world program from the sibling package (cargo builds it if it is not built), and
+/// answer the port it bound. The world is where the login's answer says it is: the realmlist's own
+/// address, so the world program's port is its configuration's and this test binds it.
+fn start_world() -> (Child, Receiver<String>, u16) {
+    let mut child = Command::new("cargo")
+        .args([
+            "run",
+            "-q",
+            "-p",
+            "worldserver",
+            "--",
+            "-c",
+            "worldserver/worldserver.json",
+        ])
+        .current_dir("..")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("cargo starts the world program");
+    let (tx, rx) = channel();
+    let stdout = child.stdout.take().expect("the program's stdout is piped");
+    let stderr = child.stderr.take().expect("cargo's own output is piped");
+    let drain = |stream: Box<dyn Read + Send>, tx: std::sync::mpsc::Sender<String>| {
+        std::thread::spawn(move || {
+            for line in BufReader::new(stream).lines() {
+                let Ok(line) = line else {
+                    return;
+                };
+                if tx.send(line).is_err() {
+                    return;
+                }
+            }
+        });
+    };
+    drain(Box::new(stdout), tx.clone());
+    drain(Box::new(stderr), tx);
+    let ready = wait_for(&rx, "READY: listening on", Duration::from_secs(120));
+    // "READY: listening on 127.0.0.1:6113 as world 2; ..." - the address is the fourth word.
+    let address = ready
+        .split_whitespace()
+        .nth(3)
+        .expect("the READY line names the address it bound");
+    let port: u16 = address
+        .rsplit(':')
+        .next()
+        .expect("the address has a port")
+        .trim_end_matches(';')
+        .parse()
+        .expect("the port is a number");
+    (child, rx, port)
+}
+
+/// Remove the copies of map 148 a test's world opened, so the world database is as it was found.
+fn remove_instances(map_id: u32) {
+    let log = Log::new();
+    let config = Config::load_json("../worldserver/worldserver.json", false, Policy::default())
+        .expect("the world program's own configuration");
+    let settings = read_settings(&config, DatabaseKind::World).expect("the world settings");
+    let mut pool = DatabaseWorkerPool::open(DatabaseKind::World, &settings, &log)
+        .expect("the world pool opens");
+    let map = i64::from(map_id);
+    let _ = pool.query_with(
+        "DELETE FROM \"instance\" WHERE \"map_id\"::bigint = $1",
+        &[&map],
+    );
+}
+
 /// The account the login presents: the owner's own row, read from the login database.
 fn account_of(user: &str) -> [u8; 16] {
     let log = Log::new();
@@ -223,7 +320,7 @@ fn write_character(account: &[u8; 16], name: &str) -> String {
     uuid.to_string()
 }
 
-/// Remove the row `write_character` wrote.
+/// Remove the row `write_character` wrote, with everything the world then wrote for it.
 fn remove_character(uuid: &str) {
     let log = Log::new();
     let config = Config::load_json("authserver.json", false, Policy::default())
@@ -231,7 +328,13 @@ fn remove_character(uuid: &str) {
     let settings = read_settings(&config, DatabaseKind::Character).expect("the character settings");
     let mut pool = DatabaseWorkerPool::open(DatabaseKind::Character, &settings, &log)
         .expect("the character pool opens");
-    let _ = pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&uuid]);
+    for statement in [
+        "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1",
+        "DELETE FROM \"character_unlock\" WHERE \"character_uuid\" = $1",
+        "DELETE FROM \"characters\" WHERE \"uuid\" = $1",
+    ] {
+        let _ = pool.query_with(statement, &[&uuid]);
+    }
 }
 
 /// The 62-byte settings block the login carries for one character: the row's own, read back through
@@ -267,8 +370,8 @@ fn world_server_port() -> u16 {
 }
 
 #[test]
-#[ignore = "needs the login and character databases the auth program's configuration names"]
-fn an_end_to_end_login_against_the_live_program() {
+#[ignore = "needs the databases the programs' configurations name, and the world's port free"]
+fn an_end_to_end_login_and_load_against_the_live_programs() {
     let (mut child, lines, port) = start_auth();
     println!("the auth program is listening on port {port}");
 
@@ -299,25 +402,7 @@ fn an_end_to_end_login_against_the_live_program() {
 
     // 3. The key exchange: the client's public value, the server's seed, and the master secret
     // recovered from it - the same arithmetic the two programs run.
-    let mut public = [0u8; PUBLIC_LEN];
-    public[0] = 2;
-    let mut seed = CLIENT_SEED_HEADER.to_le_bytes().to_vec();
-    seed.extend_from_slice(&public);
-    stream.write_all(&seed).expect("the seed message");
-    let answer = read_exact(&mut stream, SERVER_SEED_LEN);
-    assert_eq!(
-        &answer[..2],
-        &handshake::SERVER_SEED_HEADER.to_le_bytes(),
-        "the server's seed message"
-    );
-    let shared = handshake::shared_secret(&public).expect("the exchange's own arithmetic");
-    let mut master = [0u8; MASTER_SECRET_LEN];
-    for index in 0..MASTER_SECRET_LEN {
-        master[index] = answer[2 + index] ^ shared[index];
-    }
-    let key = handshake::derive_key(&master);
-    let mut reading = common::cryptography::Arc4::new(&key);
-    let mut sending = common::cryptography::Arc4::new(&key);
+    let (mut reading, mut sending) = exchange(&mut stream);
 
     // The greeting: the session info and the heartbeat, sixteen bytes, the first scrambled bytes.
     let mut greeting = read_exact(&mut stream, 16);
@@ -462,6 +547,78 @@ fn an_end_to_end_login_against_the_live_program() {
         Some((148, 1, 0)),
         "the travel the login recorded: {travels:?}"
     );
+
+    // 7. The world: the answer named the address and the tokens, and the connection that presents
+    // them claims the travel the login recorded (R9). The block it answers is map 148's, in the
+    // district and language the request carried - the seam between the two programs, end to end.
+    let map_id = u32::from_le_bytes([answered[10], answered[11], answered[12], answered[13]]);
+    assert_eq!(map_id, 148, "the answer names the map the request named");
+    let player_token = u32::from_le_bytes([answered[38], answered[39], answered[40], answered[41]]);
+    let (mut world, world_lines, world_port) = start_world();
+    assert_eq!(
+        world_port,
+        world_server_port(),
+        "the world is where the login said it is"
+    );
+
+    let created_id = game::characters::uuid_bytes(&created).expect("the character's uuid");
+    let version = GameVersion {
+        version: 39167,
+        h0008: 1,
+        map_token: 2,
+        map_id: 0,
+        player_token,
+        account,
+        character: created_id,
+        h0038: 0,
+        h003c: 0,
+    };
+    let mut world_stream =
+        TcpStream::connect(("127.0.0.1", world_port)).expect("the world accepts the connection");
+    world_stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("the socket reads with a timeout");
+    world_stream
+        .write_all(&version.encode())
+        .expect("the world's version message");
+    let (mut world_reading, _world_sending) = exchange(&mut world_stream);
+
+    // The block: head, player-data start, the name, the instance's record. Its record names map
+    // 148 - the travel's, not the version message's own - which is the hand-off working.
+    let block_size = instance_packets::instance_load_head().len()
+        + instance_packets::instance_player_data_start().len()
+        + instance_packets::instance_load_player_name(character_name).len()
+        + instance_packets::instance_load_info(1, 148, 0, 1, 0, 0).len();
+    let mut block = read_exact(&mut world_stream, block_size);
+    world_reading.apply(&mut block);
+    assert_eq!(
+        &block[..2],
+        &[0x7C, 0x01],
+        "the world's load block: {}",
+        shared::network::socket::hex(&block)
+    );
+    let name_at = instance_packets::instance_load_head().len()
+        + instance_packets::instance_player_data_start().len();
+    let name_size = instance_packets::instance_load_player_name(character_name).len();
+    assert_eq!(
+        &block[name_at + name_size..],
+        instance_packets::instance_load_info(1, 148, 0, 1, 0, 0).as_slice(),
+        "the travel decided the map: 148, an outpost, district 1"
+    );
+    // The hand-off row is consumed by the claim: a second claim finds nothing.
+    assert!(
+        travel_rows(&account).is_empty(),
+        "the world claimed the travel the login recorded"
+    );
+    let _ = world_stream.shutdown(std::net::Shutdown::Both);
+    let _ = world.kill();
+    let _ = world.wait();
+    while let Ok(line) = world_lines.try_recv() {
+        if line.contains("travel record is claimed") || line.contains("is loading") {
+            println!("world> {line}");
+        }
+    }
+    remove_instances(148);
 
     let _ = stream.shutdown(std::net::Shutdown::Both);
     let _ = child.kill();

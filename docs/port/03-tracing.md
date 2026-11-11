@@ -32,8 +32,9 @@ Then, while it runs:
 | `Connection from ADDRESS: auth version N` | the client said what build it is |
 | `Connection from ADDRESS: file check answered with 32 bytes` | the client's file check was answered |
 | `Connection from ADDRESS: the plaintext half of the exchange is answered` | the seed exchange completed |
-| `Connection from ADDRESS: first encrypted message is 0x8038 ... the key derivation matches` | the client's first scrambled message read back as the login message |
-| `status: up N s, listening on ADDRESS:PORT, N connection(s) accepted` | every `StatusInterval` seconds |
+| `Connection from ADDRESS: greeted with the session info and a heartbeat, N bytes` | the two messages the reference sends before the client asks for anything |
+| `Connection from ADDRESS: login request N, user UUID session UUID character '...' type '...'` | the client's first scrambled message, read back as the portal login |
+| `status: up N s, listening on ADDRESS:PORT, N connection(s) accepted, L live` | every `StatusInterval` seconds; `live` is what is being served now |
 | `Portal: listening on ADDRESS:PORT.` | when the portal is enabled, on the address it bound |
 | `ADDRESS: GET /Spawned/WebGate/session/create.xml -> 200 (N bytes)` | one line per portal request, with its status |
 | `Stopped. N connection(s) were accepted while it ran.` | on shutdown |
@@ -87,8 +88,8 @@ client got inside the game:
 | `... a ping on the loaded map, N bytes.` | the client is awake on a loaded map; the reference answers it with nothing, and so does this |
 | `... item N is not the character's, so its move to bag B slot S is refused.` | a drag that names an item the character does not hold: nothing is written, and the client is told nothing |
 | `... the client asks to travel to map M (territory T, district D, language L, flag F); the redirect's own wire is not captured yet, so the connection stays where it is.` | a door or the world map asked for a travel; the request is read (E220's nine bytes) and the answer it needs is the one piece of this path without a capture |
-| the world sends `0x001E` every 100 ms once a map is loaded | the simulation's tick; its absence is a client whose world time is frozen |
-| `status: up N s, listening on ADDRESS:PORT as world W, K connection(s) accepted, M map(s) hosted, I instance(s) open: ...` | the world's own heartbeat, once per `StatusInterval`: what it hosts and which copies are open, answerable from the log alone |
+| the world sends `0x001E` every `World.SimulationTickMs` (105 ms by default) once a map is loaded | the simulation's tick; its absence is a client whose world time is frozen |
+| `status: up N s, listening on ADDRESS:PORT as world W, K connection(s) accepted, L live, M map(s) hosted, I instance(s) open: ...` | the world's own heartbeat, once per `StatusInterval`: what it hosts and which copies are open, answerable from the log alone; `live` is what is being served now |
 | `World list refreshed: world W at ADDRESS:PORT online` / `... offline` | the `RealmsStateUpdateDelay` pass found the realmlist changed since the last refresh: a world came back online or was marked offline, and the front door follows. An unchanged refresh says nothing |
 | `... was empty for H s and is disposed (R37, R40).` | the instance tick found a copy that had nobody inside past the hold, and its row is deleted - the count in the world's status line drops |
 | `Disposed N instance row(s) left by an earlier run; a fresh world has nobody inside it.` | start-up found copies a previous run opened; they cannot have members, so they are disposed rather than held |

@@ -80,4 +80,8 @@ The login half is `cargo test -p authserver --test end_to_end -- --ignored --noc
 the real `authserver` and performs the client's file check, version message, key exchange and portal
 login, reading the character list it answers with - and then the map request (`0x8029`), checking the
 world it names in the answer and the travel row it records (`0x0009` + `0x0003`, the hand-off the world
-claims). Neither replaces the client: the client is still the judge of what it draws.
+claims). It then starts the real `worldserver` as well, presents the tokens the login answered with -
+the world's port and the travel's player token - and checks that the world claims that travel and
+answers a load block for the travel's map: the seam between the two programs. Run it with both servers
+stopped, because it binds the world's own port. Neither replaces the client: the client is still the
+judge of what it draws.
