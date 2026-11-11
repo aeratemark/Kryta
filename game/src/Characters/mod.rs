@@ -7,7 +7,13 @@
 //!
 //! The blob is built here rather than in either program because both need it: the login sends it, and
 //! the world writes what it is made of at a character's creation
-//! (`docs/decisions/0007-character-schema.md`).
+//! (`docs/decisions/0007-character-schema.md`). The repository that reads the row is here for the
+//! same reason: two programs and the administration tool read the same table.
+
+#[path = "Repository.rs"]
+pub mod repository;
+
+pub use repository::DatabaseCharacters;
 
 use std::fmt;
 
