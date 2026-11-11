@@ -18,11 +18,42 @@ use common::logging::{Log, LogLevel};
 use database::database::{DatabaseWorkerPool, Param};
 
 use crate::characters::{uuid_bytes, Character, CharacterSettings};
+use crate::creation::Inventory;
 
 /// The columns the list shows, in the order the list builds a character from them.
 const SELECT_CHARACTERS: &str = "SELECT \"uuid\", \"name\", \"appearance\", \"primary_profession\", \
 \"secondary_profession\", \"campaign\", \"level\", \"is_pvp\", \"helm_status\", \"last_outpost\" \
 FROM \"characters\"";
+
+const INSERT_HELD_ITEM: &str = "INSERT INTO \"item_instance\" (\"character_uuid\", \"file_id\", \
+\"dye_tint\", \"dye_colors\", \"item_id\", \"bag_id\", \"slot\", \"quantity\", \"profession\") \
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)";
+
+const SELECT_HELD_ITEMS: &str = "SELECT \"file_id\"::bigint, \"dye_tint\"::bigint, \
+\"dye_colors\"::bigint, \"item_id\"::bigint, \"bag_id\"::bigint, \"slot\"::bigint, \
+\"quantity\"::bigint, \"profession\"::bigint FROM \"item_instance\" \
+WHERE \"character_uuid\" = $1 ORDER BY \"bag_id\", \"slot\"";
+
+/// One item a character holds: the definition's key, the item's own id, and where it sits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeldItem {
+    /// The `Gw.dat` file id of the definition.
+    pub file_id: u32,
+    /// Which dye slot mask applies.
+    pub dye_tint: u8,
+    /// The four packed dye colours.
+    pub dye_colors: u16,
+    /// The runtime id the client keys the item by.
+    pub item_id: u32,
+    /// The bag it sits in.
+    pub bag_id: u16,
+    /// Its slot in that bag.
+    pub slot: u8,
+    /// How many are in the stack.
+    pub quantity: u32,
+    /// The profession the item was made for, or zero.
+    pub profession: u8,
+}
 
 /// The character database, as a program uses it.
 pub struct DatabaseCharacters {
@@ -115,6 +146,92 @@ impl DatabaseCharacters {
                 Vec::new()
             }
         }
+    }
+
+    /// Write the items a new character starts with: one row per item, and where it sits.
+    ///
+    /// The list comes from the creation record set the screen drew (`Inventory`), which is a setting;
+    /// what this writes is the character's own state - the rows the load then draws from.
+    pub fn write_starting_items(&self, uuid: &str, inventory: &Inventory) -> Result<usize, String> {
+        let mut written = 0usize;
+        for item in &inventory.items {
+            let reply = match self.pool.lock() {
+                Ok(pool) => pool.query_reply(
+                    INSERT_HELD_ITEM,
+                    vec![
+                        Param::Text(uuid.to_string()),
+                        Param::Integer(i64::from(item.file_id)),
+                        Param::Integer(i64::from(item.dye_tint)),
+                        Param::Integer(i64::from(item.dye_colors)),
+                        Param::Integer(i64::from(item.id)),
+                        Param::Integer(i64::from(item.bag_id.unwrap_or(0))),
+                        Param::Integer(i64::from(item.slot.unwrap_or(0))),
+                        Param::Integer(i64::from(item.quantity)),
+                        Param::Integer(i64::from(item.profession)),
+                    ],
+                ),
+                Err(_) => {
+                    return Err(
+                        "the character database pool is poisoned; the items were not written"
+                            .to_string(),
+                    );
+                }
+            };
+            match reply.recv() {
+                Ok(Ok(rows)) => written += rows.len(),
+                Ok(Err(error)) => {
+                    return Err(format!("an item row cannot be written: {error}"));
+                }
+                Err(_) => {
+                    return Err(
+                        "the character database answered no query: it is shutting down".to_string(),
+                    );
+                }
+            }
+        }
+        Ok(written)
+    }
+
+    /// What a character holds, as its rows say: the definition's key and where each item sits.
+    pub fn items_of(&self, uuid: &str) -> Result<Vec<HeldItem>, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(SELECT_HELD_ITEMS, vec![Param::Text(uuid.to_string())]),
+            Err(_) => return Err("the character database pool is poisoned".to_string()),
+        };
+        let rows = match reply.recv() {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    format!("Cannot read the items of {uuid}: {error}"),
+                );
+                return Err(error);
+            }
+            Err(_) => {
+                return Err(
+                    "the character database answered no query: it is shutting down".to_string(),
+                );
+            }
+        };
+        rows.iter()
+            .map(|row| {
+                let column = |at: usize| {
+                    row.try_get::<usize, i64>(at)
+                        .map_err(|error| format!("column {at}: {error}"))
+                };
+                Ok(HeldItem {
+                    file_id: column(0)? as u32,
+                    dye_tint: column(1)? as u8,
+                    dye_colors: column(2)? as u16,
+                    item_id: column(3)? as u32,
+                    bag_id: column(4)? as u16,
+                    slot: column(5)? as u8,
+                    quantity: column(6)? as u32,
+                    profession: column(7)? as u8,
+                })
+            })
+            .collect()
     }
 
     /// One row, as the list reads it.

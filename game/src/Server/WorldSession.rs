@@ -38,13 +38,14 @@ use crate::world::World;
 /// number is the world's to give, and nothing else reads it until a map exists.
 pub(crate) const CREATION_AGENT: u32 = 1;
 
-/// What a load reads from the character's own row: the name it shows, and the campaign and
-/// profession whose starting set its item stream carries.
+/// What a load reads from the character's own row: the name it shows, the campaign and profession
+/// whose starting set its item stream carries, and the id its items are recorded under.
 #[derive(Debug, Clone)]
 pub(crate) struct CharacterSheet {
     pub name: String,
     pub campaign: u8,
     pub profession: u8,
+    pub uuid: [u8; 16],
 }
 
 /// The client's asks on a gameplay connection, as the reference's dispatch reads them.
@@ -134,6 +135,8 @@ pub struct WorldSession {
     entered: std::sync::Mutex<Option<(u32, u32)>>,
     /// The bags, items and profession sets a creation screen is built from, when the program read them.
     creation: Option<crate::creation::Tables>,
+    /// The item templates the world holds, so a load can resolve a character's held items.
+    templates: Vec<crate::data_stores::ItemDefinition>,
     /// The master secret to draw the exchange from, when the caller wants a known one. A program
     /// leaves it empty and every connection draws its own.
     master: Option<[u8; shared::cryptography::handshake::MASTER_SECRET_LEN]>,
@@ -153,6 +156,7 @@ impl WorldSession {
             districts: world.districts(),
             entered: std::sync::Mutex::new(None),
             creation: Some(world.creation().clone()),
+            templates: world.templates().to_vec(),
             master: None,
         }
     }
@@ -241,6 +245,43 @@ impl WorldSession {
             login: Some(login),
             ..Self::with_master(log, world, master)
         }
+    }
+
+    /// The inventory a load draws: the character's own rows when it has them - what a confirm wrote -
+    /// and the creation record set otherwise, which is what every character starts from.
+    fn load_inventory(&self, sheet: &CharacterSheet) -> crate::creation::Inventory {
+        if let Some(pool) = self.characters.as_ref() {
+            let characters = crate::characters::DatabaseCharacters::new(
+                std::sync::Arc::clone(pool),
+                self.log.clone(),
+            );
+            match characters.items_of(&crate::characters::uuid_text(&sheet.uuid)) {
+                Ok(held) if !held.is_empty() => {
+                    let bags = self
+                        .creation
+                        .as_ref()
+                        .map(crate::creation::bags)
+                        .unwrap_or(&[]);
+                    return crate::creation::inventory_from_held(
+                        bags,
+                        &held,
+                        &self.templates,
+                        &self.log,
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => self.say(
+                    LogLevel::Warn,
+                    format!(
+                        "The character's items cannot be read ({error}); the creation record's set is drawn instead."
+                    ),
+                ),
+            }
+        }
+        self.creation
+            .as_ref()
+            .map(|tables| tables.inventory(sheet.campaign, sheet.profession))
+            .unwrap_or_default()
     }
 
     fn say(&self, level: LogLevel, text: impl Into<String>) {
@@ -738,6 +779,7 @@ impl WorldSession {
             name: "Player".to_string(),
             campaign: 0,
             profession: character_packets::DEFAULT_PROFESSION,
+            uuid: version.character,
         };
         let Some(pool) = self.characters.as_ref() else {
             return fallback;
@@ -772,6 +814,7 @@ impl WorldSession {
                 name: row.get::<usize, String>(0),
                 campaign: row.get::<usize, i64>(1) as u8,
                 profession: row.get::<usize, i64>(2) as u8,
+                uuid: version.character,
             })
             .unwrap_or(fallback)
     }
@@ -806,6 +849,7 @@ impl WorldSession {
 
         let mut pending: Vec<u8> = Vec::new();
         let mut buffer = vec![0u8; 1024];
+        let inventory = self.load_inventory(sheet);
 
         loop {
             while let Some(bytes) = pending.first_chunk::<2>() {
@@ -830,14 +874,7 @@ impl WorldSession {
                     // The items ask: the inventory stream and the map's record, measured in one
                     // block. The manifest pair that ends it names the map in its second form.
                     instance_packets::CLIENT_LOAD_REQUEST_ITEMS => {
-                        let mut frames = match self.creation.as_ref() {
-                            Some(tables) => crate::creation::load_item_stream(
-                                tables,
-                                sheet.campaign,
-                                sheet.profession,
-                            ),
-                            None => Vec::new(),
-                        };
+                        let mut frames = crate::creation::load_item_stream(&inventory);
                         frames.push(misc_packets::hard_mode_unlocked(1));
                         frames.push(character_packets::character_update_info());
                         frames.push(misc_packets::map_update_current(map.id as u16, 0));
@@ -1119,6 +1156,33 @@ impl WorldSession {
                         creation.campaign
                     ),
                 );
+
+                // The character's starting items are its own rows now: what a load draws from. The
+                // set comes from the creation record list, which is a setting; the rows are state.
+                let inventory = self
+                    .creation
+                    .as_ref()
+                    .map(|tables| tables.inventory(creation.campaign, creation.profession))
+                    .unwrap_or_default();
+                let characters = crate::characters::DatabaseCharacters::new(
+                    std::sync::Arc::clone(pool),
+                    self.log.clone(),
+                );
+                match characters.write_starting_items(&crate::characters::uuid_text(&id), &inventory) {
+                    Ok(written) => self.say(
+                        LogLevel::Info,
+                        format!(
+                            "Gameplay connection from {peer}: the character's {written} starting item row(s) are written."
+                        ),
+                    ),
+                    Err(error) => self.say(
+                        LogLevel::Error,
+                        format!(
+                            "Gameplay connection from {peer}: the character was created but its items are not written: {error}"
+                        ),
+                    ),
+                }
+
                 let settings = crate::characters::CharacterSettings {
                     last_outpost: 0,
                     appearance,
@@ -1556,11 +1620,10 @@ Logger.root = 6,Console
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
 
-        let mut expected_items = crate::creation::load_item_stream(
-            world.creation(),
-            0,
-            character_packets::DEFAULT_PROFESSION,
-        );
+        let inventory = world
+            .creation()
+            .inventory(0, character_packets::DEFAULT_PROFESSION);
+        let mut expected_items = crate::creation::load_item_stream(&inventory);
         expected_items.push(misc_packets::hard_mode_unlocked(1));
         expected_items.push(character_packets::character_update_info());
         expected_items.push(misc_packets::map_update_current(148, 0));
@@ -1930,8 +1993,8 @@ Logger.root = 6,Console
             id.copy_from_slice(&answered[2..18]);
             id
         });
-        let mut pool = pool.lock().unwrap();
-        let rows = pool
+        let mut guard = pool.lock().unwrap();
+        let rows = guard
             .query_with(
                 "SELECT \"name\", \"appearance\" FROM \"characters\" WHERE \"uuid\" = $1",
                 &[&uuid_text],
@@ -1939,6 +2002,51 @@ Logger.root = 6,Console
             .expect("the row is readable");
         assert_eq!(rows.len(), 1, "one row was written");
         assert_eq!(rows[0].get::<usize, String>(0), name);
+        drop(guard);
+
+        // The character's items are rows now, and the rows draw the same stream the creation
+        // record's set draws: one row per item, and the load's block is byte-identical.
+        let characters = crate::characters::DatabaseCharacters::new(Arc::clone(&pool), log.clone());
+        let held = characters.items_of(&uuid_text).expect("the item rows are readable");
+        assert!(!held.is_empty(), "the confirm writes the character's starting items");
+        let expected = world.creation().inventory(0, character_packets::DEFAULT_PROFESSION);
+        assert_eq!(
+            held.len(),
+            expected.items.len(),
+            "one row per item the set carries"
+        );
+        let templates: Vec<crate::data_stores::ItemDefinition> = world
+            .creation()
+            .definitions()
+            .iter()
+            .map(|item| crate::data_stores::ItemDefinition {
+                id: 0,
+                file_id: item.file_id,
+                item_type: item.item_type,
+                dye_tint: item.dye_tint,
+                dye_colors: item.dye_colors,
+                materials: item.materials,
+                unk1: item.unk1,
+                flags: item.flags,
+                value: item.value,
+                model_id: item.model_id,
+                quantity: item.quantity,
+                profession: item.profession,
+                name: item.name.clone(),
+                modifiers: item.modifiers.clone(),
+            })
+            .collect();
+        let from_rows = crate::creation::inventory_from_held(
+            crate::creation::bags(world.creation()),
+            &held,
+            &templates,
+            &log,
+        );
+        assert_eq!(
+            crate::creation::load_item_stream(&from_rows),
+            crate::creation::load_item_stream(&expected),
+            "the rows draw the same item stream the set does"
+        );
         log.shutdown();
     }
 

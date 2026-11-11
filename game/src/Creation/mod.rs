@@ -438,13 +438,12 @@ pub fn inventory_block(inventory: &Inventory) -> Vec<Vec<u8>> {
 /// `recordings/gwps/world/load-stream.log` - `0x0144`, `0x0148`, the bag and item frames, `0x0147`
 /// four times, `0x0141`, then `0x00EA` to `0x00ED`. A map load carries no player-data end (`0x018A`):
 /// the reference sends the creation screen's wrapper and a map's stream do not share it.
-pub fn load_item_stream(tables: &Tables, campaign: u8, profession: u8) -> Vec<Vec<u8>> {
-    let inventory = tables.inventory(campaign, profession);
+pub fn load_item_stream(inventory: &Inventory) -> Vec<Vec<u8>> {
     let mut frames = vec![
         item_packets::item_stream_create(item_packets::ITEM_STREAM, 0),
         item_packets::item_set_active_weapon_set(item_packets::ITEM_STREAM, 0),
     ];
-    frames.extend(inventory_block(&inventory));
+    frames.extend(inventory_block(inventory));
     for slot in 0..4u8 {
         frames.push(item_packets::item_weapon_set(
             item_packets::ITEM_STREAM,
@@ -463,6 +462,70 @@ pub fn load_item_stream(tables: &Tables, campaign: u8, profession: u8) -> Vec<Ve
         frames.push(character_packets::faction_max(header, 10_000));
     }
     frames
+}
+
+/// The inventory a load draws when the character's items are rows: the client's bags (the setting)
+/// and each row's definition resolved from the world's templates.
+///
+/// A row whose definition the templates do not hold is left out and reported: the item exists in the
+/// character's state, and the client cannot be drawn an item the world does not know.
+pub fn inventory_from_held(
+    bags: &[Bag],
+    held: &[crate::characters::HeldItem],
+    templates: &[crate::data_stores::ItemDefinition],
+    log: &Log,
+) -> Inventory {
+    let mut inventory = Inventory {
+        bags: bags.to_vec(),
+        items: Vec::with_capacity(held.len()),
+    };
+    // The rows come back grouped by where the items sit; the stream is drawn in the order the
+    // runtime ids were allocated, which is the order the set listed them, so the block a load
+    // sends is the block the creation screen sent.
+    let mut held: Vec<crate::characters::HeldItem> = held.to_vec();
+    held.sort_by_key(|row| row.item_id);
+    for row in &held {
+        let Some(template) = templates.iter().find(|template| {
+            template.file_id == row.file_id
+                && template.dye_tint == row.dye_tint
+                && template.dye_colors == row.dye_colors
+        }) else {
+            log.out(
+                LogLevel::Warn,
+                "server.worldserver",
+                format!(
+                    "The character holds item {} (file {}), which no item template describes; it is left out of the load.",
+                    row.item_id, row.file_id
+                ),
+            );
+            continue;
+        };
+        inventory.items.push(Item {
+            id: row.item_id,
+            bag_id: Some(row.bag_id),
+            slot: Some(row.slot),
+            file_id: template.file_id,
+            item_type: template.item_type,
+            dye_tint: template.dye_tint,
+            dye_colors: template.dye_colors,
+            materials: template.materials,
+            unk1: template.unk1,
+            flags: template.flags,
+            value: template.value,
+            model_id: template.model_id,
+            quantity: row.quantity,
+            profession: row.profession,
+            name: template.name.clone(),
+            modifiers: template.modifiers.clone(),
+        });
+    }
+    inventory
+}
+
+/// The bags a load draws the client's inventory model from: the setting's own list, whatever the
+/// character holds.
+pub fn bags(tables: &Tables) -> &[Bag] {
+    &tables.bags
 }
 
 /// An item as `CREATE_NAMED_ITEM` carries it.

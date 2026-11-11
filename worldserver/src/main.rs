@@ -363,6 +363,22 @@ fn run(args: &[String]) -> Result<(), String> {
                 format!("The item templates could not be seeded: {error}"),
             ),
         }
+        // And back into memory: a load resolves a character's held items against these rows.
+        match items.list() {
+            Ok(templates) => {
+                log.out(
+                    LogLevel::Info,
+                    "server.worldserver",
+                    format!("Item templates read back: {} row(s) held in memory.", templates.len()),
+                );
+                world.set_templates(templates);
+            }
+            Err(error) => log.out(
+                LogLevel::Error,
+                "server.worldserver",
+                format!("The item templates cannot be read back: {error}"),
+            ),
+        }
     }
     let world = std::sync::Arc::new(world);
 

@@ -13,7 +13,7 @@
 #[path = "Repository.rs"]
 pub mod repository;
 
-pub use repository::DatabaseCharacters;
+pub use repository::{DatabaseCharacters, HeldItem};
 
 use std::fmt;
 

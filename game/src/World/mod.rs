@@ -60,6 +60,9 @@ pub struct World {
     /// The running copies of maps: one outpost is one copy per district (R1, R4), and the district a
     /// character enters is this world's state, so every session shares it.
     districts: Arc<Mutex<crate::districts::Districts>>,
+    /// The item templates the world database holds, read once at start-up: what a load resolves a
+    /// character's held items against.
+    templates: Vec<crate::data_stores::ItemDefinition>,
 }
 
 impl World {
@@ -72,6 +75,7 @@ impl World {
             spawns: Vec::new(),
             settings: world_config::WorldConfig::default(),
             districts: Arc::new(Mutex::new(crate::districts::Districts::new())),
+            templates: Vec::new(),
         }
     }
 
@@ -85,6 +89,16 @@ impl World {
     /// The maps this world hosts.
     pub fn maps(&self) -> &[MapEntry] {
         &self.maps
+    }
+
+    /// The item templates this world runs with.
+    pub fn templates(&self) -> &[crate::data_stores::ItemDefinition] {
+        &self.templates
+    }
+
+    /// Set the item templates, after the program read them from its world database.
+    pub fn set_templates(&mut self, templates: Vec<crate::data_stores::ItemDefinition>) {
+        self.templates = templates;
     }
 
     /// The numbers this world runs by.
