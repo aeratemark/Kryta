@@ -44,26 +44,48 @@ Two subjects the ledger does not describe, and where their facts come from inste
 file format** (`Gw.dat`) and the **wire shapes** of every message. The first is read from ASURA's archive
 reader as a fact about the client's files; the second from the protocol table and the captures
 (`docs/port/02-wire.md`).
-## The order, and what each stage proves
+## The next steps, in the ledger's order
 
-The order is the chain the client itself forces: nothing can be shown before the content can be read,
-nothing can be walked before a map exists, nothing can fight before an agent is somewhere.
+Two things the ledger settles before any stage starts:
 
-| # | stage | ledger rows to read first | proves |
-|---|---|---|---|
-| 1 | `game/Pack/` | none - the archive's format is a client fact | a file id is read from the archive and its bytes checksum against the archive's own table |
-| 2 | `game/Maps/` + the world schema | R1, R2, R4, R13, R14, R21, R22, R29 | the world hosts a real map: `0x017C` is answered with a blob from the archive and the client loads it instead of the creation instance |
-| 3 | `game/Terrain/` | R34 (the compass range), R43 | a walk follows the blob's own planes |
-| 4 | `game/Agents/` + `game/Movement/` | R29-R31, R34 | a spawn from the map's own table appears, and the player's own agent moves |
-| 5 | `game/Districts/` + the travel seam | R1-R16, R32-R40, R52, R57-R58 | a character created in the creation instance is sent to an outpost and arrives where R13 says it should |
-| 6 | `game/Parties/` and `game/Heroes/` | R6-R11, R15, R17-R28 | a party travels as one unit, and a cap truncates it leader-first |
-| 7 | items: definitions and what a character holds | R45, R49, E9, E16-E20 | a character's equipment is rows and it draws from them |
-| 8 | skills, casting and combat | R43, R48, R50-R51, E10-E15, E19 | a skill is cast on an agent and its effect is what the ledger says |
-| 9 | quests, chat, guilds, titles | R52, R55-R56, E15, E21-E23 | each per its own rows |
-| 10 | heroes and scripted behaviour | R23-R27 | content written against hooks, out of tree |
+- **R53: every number and threshold is configurable, with the game's value as the default.** So the world's
+  numbers are **settings**, not constants, and they come before the code that uses them. The rows that
+  name a number: R5 (district allotment, starts at 100), R15 (party size: 8 common, 12 and 25 exist), R13
+  (`spawn_scatter`, 250 units - the ledger names it as a config key), R33 (whether an instance ticks), R34
+  (compass range, 10,000 units), R37 (15-minute teardown), R56 (whether the mission button is presented).
+- **R1-R5 and R32-R40: the instance is the unit of work, not the map.** A map is a definition; an instance
+  is one running copy; outposts are shared, explorables are per party; a district is a numbered copy of an
+  outpost; an instance lives while a party is inside it and is disposed when they leave (with the one
+  15-minute exception for a network disconnect).
 
-Stages 1-5 are the spine: without them a client can only sit in the creation instance. Stages 6-10 become
-possible once 5 lands, and each can be taken in its own order.
+| step | what it is | ledger rows | wire | data | proves |
+|---|---|---|---|---|---|
+| 0 | **the world's settings** - one JSON file's worth of the numbers above, read at start-up | R5, R13, R15, R33, R34, R37, R53, R56 | - | a settings file per program, rows for the rest | the program logs each number it read, and a changed value changes behaviour |
+| 1 | `game/Pack/` - the archive | none: a client fact | - | - | a file id is read and checksums against the archive's own table |
+| 2 | `game/Maps/` + the world schema - a map as a **definition**: id, type, name, spawn points, arrivals, portals | R1, R13, R14, R21, R22, R29 | `0x017C`, `0x0186`, `0x008A`/`0x008B` (cartography), the load order | `map` + `map_spawn` + `map_arrival` + `map_portal` rows | the client loads a real outpost instead of the creation instance |
+| 3 | `game/Districts/` - an **instance**: one running copy, its lifecycle, its district number | R2, R3, R4, R5, R16, R32, R35-R40, R57, R58 | `CtoS 177 TravelMission` (9 bytes, district 0 = unset, E220); `StoC 421 Redirect` (C5); the district counts (E29) | `instance` row: map, district number, language, opened at, empty since | a character enters the outpost and, when it leaves, the instance is disposed per R40 - or held 15 minutes per R37 for a network drop only |
+| 4 | **the travel pipeline** - the login records a travel, the world claims it, the character appears where R13 says | R9, R12, R13, R14, R21, R22, R47, R57 | `AUTH_CMSG_REQUEST_GAME_INSTANCE`, `AUTH_SMSG_GAME_SERVER_INFO`, the gameplay version message's token pair | `travel` row | a travel from the creation instance lands at a random spawn point of the destination, scattered per the setting, facing the point's angle |
+| 5 | `game/Terrain/` - walking | R34, R43 | movement messages | map blob | a walk follows the blob's own planes |
+| 6 | `game/Agents/` + `game/Movement/` - what is in a map, and the player's own agent | R29-R31, R34, R43 | agent families | spawn rows, agent state | a spawn from the map's own table appears and moves |
+| 7 | `game/Parties/` + `game/Heroes/` - the travel unit | R6-R11, R15, R17-R28, R45 | party messages | `party`, `party_member` rows; hero/henchman state | a party travels as one unit and a smaller cap truncates it leader-first |
+| 8 | items: definitions and what a character holds | R45, R49, E9, E16-E20 | the creation stream's shapes, extended by capture | `item_template`, `bag`, `item_instance` rows; loot as a setting | a character's equipment is rows and it draws from them |
+| 9 | skills, casting and combat | R43, R48, R50-R51, E10-E15, E19 | skill and combat messages | skill rows, effect state | a skill is cast on an agent and its effect is what the ledger says |
+| 10 | quests, chat, guilds, titles | R52, R55-R56, E15, E21-E23 | their families | their rows | each per its own rows |
+| 11 | heroes and scripted behaviour | R23-R27 | - | content in `scripts/` and `modules/` | scripted behaviour out of tree |
+
+Steps 0-4 are the spine: without them a client can only sit in the creation instance, and each of them is
+**behaviour the ledger states**, not a guess. Steps 5-11 follow, each in its own rows.
+
+## Where the ledger says we do not know
+
+Two open items, and they are not ours to invent:
+
+- **how a refused travel reports itself** (R58: a full or closing district cannot be entered) - the wire
+  shape of the refusal is not captured.
+- **the first word of `409 MapData`** - measured but not named.
+
+Both go to the owner or to a capture, in that order of preference.
+
 ## The three seams
 
 Everything above fits inside one noun. These cross a boundary and each has one answer:
