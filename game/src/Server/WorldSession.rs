@@ -1656,6 +1656,8 @@ Logger.root = 6,Console
         use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
         use database::updater::{collect_files, UpdateState};
 
+        let _serial_auth = database::updater::apply::test_lock("auth");
+        let _serial_characters = database::updater::apply::test_lock("characters");
         let log = Log::new();
         let config = Config::load_json("../worldserver/worldserver.json", false, Policy::default())
             .expect("the world program's own configuration");
@@ -1808,6 +1810,7 @@ Logger.root = 6,Console
         use database::updater::{collect_files, UpdateState};
 
         // A console appender, so the session's own words are visible in this test's output.
+        let _serial = database::updater::apply::test_lock("characters");
         let log = Log::new();
         let speaking = Config::parse(
             "Appender.Console = 1,6,0

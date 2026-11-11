@@ -111,6 +111,7 @@ mod tests {
     #[test]
     #[ignore = "needs the world database"]
     fn a_copy_is_opened_emptied_and_disposed() {
+        let _serial = database::updater::apply::test_lock("world");
         let log = Log::new();
         let Some(config) =
             Config::load_json("../worldserver/worldserver.json", false, Policy::default()).ok()

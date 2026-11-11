@@ -1395,6 +1395,7 @@ mod tests {
         let log = Log::new();
         let master = [0x6Au8; MASTER_SECRET_LEN];
 
+        let _serial = database::updater::apply::test_lock("auth");
         let config = common::configuration::Config::load_json(
             "../authserver/authserver.json",
             false,
