@@ -25,7 +25,7 @@ fn page(title: &str, body: &str) -> Response {
          </style></head><body>\n\
          <nav><a href=\"/\">overview</a><a href=\"/accounts\">accounts</a>\
          <a href=\"/characters\">characters</a><a href=\"/worlds\">worlds</a>\
-         <a href=\"/content\">content</a></nav>\n\
+         <a href=\"/content\">content</a><a href=\"/schema\">schema</a></nav>\n\
          <h1>{title}</h1>\n{body}\n</body></html>\n"
     );
     Response::html(200, html)
@@ -75,6 +75,7 @@ pub fn dashboard(manage: &Manage) -> Response {
          <tr><td>characters</td><td><code>kryta_characters.characters</code></td><td>{characters_state}</td></tr>\n\
          <tr><td>worlds</td><td><code>realmlist</code> + <code>data/realms.json</code></td><td>{worlds_state}</td></tr>\n\
          <tr><td>content</td><td>the world database's rows (<code>map</code>, <code>map_spawn</code>)</td><td>{content_state}</td></tr>\n\
+         <tr><td>schema</td><td>each database's <code>updates</code> record</td><td><a href=\"/schema\">open</a></td></tr>\n\
          </table>\n\
          <p class=\"note\">The tool serves this machine only, by default. A token in \
          <code>manage.json</code> makes it require one.</p>",
@@ -256,6 +257,35 @@ pub fn accounts(manage: &Manage) -> Response {
          two values, and a login is checked against them.</p>"
     );
     page("accounts", &body)
+}
+
+/// The schema: each database's own record of the files it has applied, against the files on disk.
+pub fn schema(manage: &Manage) -> Response {
+    let mut sections = String::new();
+    for (label, files) in manage.schema_page() {
+        let mut rows = String::new();
+        for file in &files {
+            rows.push_str(&format!(
+                "<tr><td><code>{name}</code></td><td>{state}</td></tr>\n",
+                name = escape(&file.name),
+                state = file.state
+            ));
+        }
+        sections.push_str(&format!(
+            "<h2>{label}</h2>\n<table>\n<tr><th>file</th><th>state</th></tr>\n{rows}</table>\n\
+             <p class=\"note\">{} file(s).</p>\n",
+            files.len()
+        ));
+    }
+
+    let body = format!(
+        "<p class=\"note\">A database records each schema file it has had in its own \
+         <code>updates</code> table. A file listed as <em>new</em> has not been applied yet; \
+         <em>changed</em> means the file was edited after it was applied, which the updater refuses \
+         to apply again until an operator resolves it; <em>recorded, not on disk</em> means the \
+         database holds a record for a file this checkout does not carry.</p>\n{sections}"
+    );
+    page("schema", &body)
 }
 
 /// A short page saying one thing.

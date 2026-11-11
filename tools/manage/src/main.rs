@@ -22,6 +22,24 @@ use shared::network::http::{HttpError, Request, Response, read_request, write_re
 use shared::network::socket::{Session, SessionFuture, SessionIo};
 use tokio::net::TcpListener;
 
+/// One database the schema page reads: its label, the pool, and where its files live.
+pub struct DatabaseSchema {
+    /// What the page calls it.
+    pub label: &'static str,
+    /// The database itself.
+    pub pool: Arc<Mutex<DatabaseWorkerPool>>,
+    /// The directory its schema files live in.
+    pub dir: &'static str,
+}
+
+/// One schema file, as the database's own record and the disk agree or not.
+pub struct SchemaFile {
+    /// The file's name, the one the updater records.
+    pub name: String,
+    /// `applied`, `changed`, `new`, or `recorded, not on disk`.
+    pub state: &'static str,
+}
+
 /// What the tool serves from: the account table, and the token a request must carry when one is set.
 pub struct Manage {
     accounts: Arc<game::accounts::DatabaseAccounts>,
@@ -31,6 +49,8 @@ pub struct Manage {
     maps: Option<Arc<game::maps::DatabaseMaps>>,
     /// The world list, read from `realmlist` and merged with `data/realms.json`.
     worlds: Option<Arc<shared::worlds::WorldList>>,
+    /// The databases whose updater records the schema page shows.
+    schemas: Vec<DatabaseSchema>,
     token: Option<String>,
     log: Log,
 }
@@ -48,6 +68,7 @@ impl Manage {
             ("GET", "/characters") => pages::characters(self),
             ("GET", "/worlds") => pages::worlds(self),
             ("GET", "/content") => pages::content(self),
+            ("GET", "/schema") => pages::schema(self),
             ("POST", "/accounts/eula") => self.set_eula(request),
             ("POST", "/accounts/create") => self.create(request),
             ("POST", "/accounts/delete") => self.delete(request),
@@ -170,6 +191,52 @@ impl Manage {
     pub fn list_maps(&self) -> Option<(Vec<game::world::MapEntry>, Vec<game::maps::MapSpawn>)> {
         let maps = self.maps.as_ref()?;
         maps.load().ok()
+    }
+
+    /// Each database's schema files, with what its own `updates` record says about them.
+    ///
+    /// The record is the database's, read by the updater's own reader; the files are the ones on
+    /// disk. A file recorded with another hash has been edited after it was applied - the updater
+    /// refuses to apply it again, and this page is where that is seen before a server refuses to start.
+    pub fn schema_page(&self) -> Vec<(&'static str, Vec<SchemaFile>)> {
+        let mut out = Vec::new();
+        for database in &self.schemas {
+            let applied = match database.pool.lock() {
+                Ok(pool) => database::updater::apply::read_applied(&pool).unwrap_or_default(),
+                Err(_) => Vec::new(),
+            };
+            let files = database::updater::collect_files(
+                database.dir,
+                database::updater::UpdateState::Released,
+            )
+            .unwrap_or_default();
+            let mut rows = Vec::new();
+            for file in &files {
+                let name = file.name();
+                let state = match applied.iter().find(|(recorded, _)| *recorded == name) {
+                    Some((_, hash)) => {
+                        let text = std::fs::read_to_string(&file.path).unwrap_or_default();
+                        if database::updater::apply::sha1_hex(&text).eq_ignore_ascii_case(hash) {
+                            "applied"
+                        } else {
+                            "changed"
+                        }
+                    }
+                    None => "new",
+                };
+                rows.push(SchemaFile { name, state });
+            }
+            for (name, _) in &applied {
+                if !files.iter().any(|file| file.name() == *name) {
+                    rows.push(SchemaFile {
+                        name: name.clone(),
+                        state: "recorded, not on disk",
+                    });
+                }
+            }
+            out.push((database.label, rows));
+        }
+        out
     }
 
     fn say(&self, text: impl Into<String>) {
@@ -364,17 +431,14 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
 
     // The character database: what the login lists, read through the noun's own repository. A page
     // without one says so rather than failing every request.
-    let characters = match config.value_string("CharacterDatabaseInfo", "") {
+    let character_pool = match config.value_string("CharacterDatabaseInfo", "") {
         Ok((info, _)) if !info.is_empty() => {
             let settings = read_settings(&config, DatabaseKind::Character)?;
             match DatabaseWorkerPool::open(DatabaseKind::Character, &settings, &log) {
                 Ok(mut pool) => {
                     pool.ping()
                         .map_err(|error| format!("the character database does not answer: {error}"))?;
-                    Some(Arc::new(game::characters::DatabaseCharacters::new(
-                        Arc::new(Mutex::new(pool)),
-                        log.clone(),
-                    )))
+                    Some(Arc::new(Mutex::new(pool)))
                 }
                 Err(error) => {
                     log.out(LogLevel::Warn, "manage", format!("the character database is off: {error}"));
@@ -384,19 +448,22 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         }
         _ => None,
     };
+    let characters = character_pool.as_ref().map(|pool| {
+        Arc::new(game::characters::DatabaseCharacters::new(
+            Arc::clone(pool),
+            log.clone(),
+        ))
+    });
 
     // The world database: the maps and their spawn points, read by the same repository the load uses.
-    let maps = match config.value_string("WorldDatabaseInfo", "") {
+    let world_pool = match config.value_string("WorldDatabaseInfo", "") {
         Ok((info, _)) if !info.is_empty() => {
             let settings = read_settings(&config, DatabaseKind::World)?;
             match DatabaseWorkerPool::open(DatabaseKind::World, &settings, &log) {
                 Ok(mut pool) => {
                     pool.ping()
                         .map_err(|error| format!("the world database does not answer: {error}"))?;
-                    Some(Arc::new(game::maps::DatabaseMaps::new(
-                        Arc::new(Mutex::new(pool)),
-                        log.clone(),
-                    )))
+                    Some(Arc::new(Mutex::new(pool)))
                 }
                 Err(error) => {
                     log.out(LogLevel::Warn, "manage", format!("the world database is off: {error}"));
@@ -406,12 +473,40 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         }
         _ => None,
     };
+    let maps = world_pool.as_ref().map(|pool| {
+        Arc::new(game::maps::DatabaseMaps::new(
+            Arc::clone(pool),
+            log.clone(),
+        ))
+    });
+
+    // The schema page: each database's own record of what it has applied, against the files on disk.
+    let mut schemas = vec![DatabaseSchema {
+        label: "login",
+        pool: Arc::clone(&login),
+        dir: "data/sql/base/db_auth",
+    }];
+    if let Some(pool) = character_pool {
+        schemas.push(DatabaseSchema {
+            label: "characters",
+            pool,
+            dir: "data/sql/base/db_characters",
+        });
+    }
+    if let Some(pool) = world_pool {
+        schemas.push(DatabaseSchema {
+            label: "world",
+            pool,
+            dir: "data/sql/base/db_world",
+        });
+    }
 
     let manage = Arc::new(Manage {
         accounts,
         characters,
         maps,
         worlds: Some(Arc::new(world_list)),
+        schemas,
         token: Some(token),
         log: log.clone(),
     });

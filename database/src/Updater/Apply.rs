@@ -147,6 +147,30 @@ fn read_recorded(
     }
 }
 
+/// What a pool's database records as applied, in name order.
+///
+/// The administration tool's schema page reads this: whether each database has had each schema file
+/// is the database's own answer, and nothing else can know it. A database with no `updates` table
+/// yet has had nothing, so the answer is empty rather than an error.
+pub fn read_applied(
+    pool: &crate::database::DatabaseWorkerPool,
+) -> Result<Vec<(String, String)>, String> {
+    let sql = format!("SELECT \"name\", \"hash\" FROM \"{UPDATES_TABLE}\" ORDER BY \"name\"");
+    let reply = pool.query_reply(sql, Vec::new());
+    match reply.recv() {
+        Ok(Ok(rows)) => Ok(rows
+            .iter()
+            .map(|row| {
+                let name: String = row.get(0);
+                let hash: String = row.get(1);
+                (name, hash)
+            })
+            .collect()),
+        Ok(Err(_)) => Ok(Vec::new()),
+        Err(_) => Err("the database answered no query: it is shutting down".to_string()),
+    }
+}
+
 /// A file's sha1, which is what the record holds.
 ///
 /// Reference: `UpdateFetcher::CalculateHash`, whose 40 hexadecimal characters are the same ones.
