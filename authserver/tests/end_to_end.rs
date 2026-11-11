@@ -514,6 +514,30 @@ fn an_end_to_end_login_and_load_against_the_live_programs() {
     assert_eq!(answered[6], 11, "eleven language pairs");
     assert_eq!(&answered[7..9], &[0, 1], "language 0 has one district");
 
+    // 5c. The character click (`0x800A`): the client picks a character on the list, and the login
+    // answers the request with status 0 when the name is on the account.
+    let mut choose = vec![0u8; 8 + character_name.len() * 2];
+    choose[0..2].copy_from_slice(&0x800Au16.to_le_bytes());
+    choose[2..6].copy_from_slice(&9u32.to_le_bytes());
+    choose[6..8].copy_from_slice(&(character_name.encode_utf16().count() as u16).to_le_bytes());
+    for (index, unit) in character_name.encode_utf16().enumerate() {
+        let at = 8 + index * 2;
+        choose[at..at + 2].copy_from_slice(&unit.to_le_bytes());
+    }
+    let mut scrambled = choose;
+    sending.apply(&mut scrambled);
+    stream.write_all(&scrambled).expect("the character click");
+    let answered = read_quiet(&mut stream, &mut reading);
+    assert_eq!(
+        answered.len(),
+        10,
+        "the request response: {}",
+        shared::network::socket::hex(&answered)
+    );
+    assert_eq!(&answered[..2], &[0x03, 0x00], "the request response");
+    assert_eq!(&answered[2..6], &9u32.to_le_bytes(), "the request is echoed");
+    assert_eq!(&answered[6..10], &0u32.to_le_bytes(), "the name is on the account");
+
     // 6. The map request: the client names the map it wants, and the login answers with the world it
     // was told to dial and records the hand-off the world claims (R9). The wire is the traced six
     // dwords: request, map type, map, region, district, language.

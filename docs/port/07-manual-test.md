@@ -79,9 +79,10 @@ players, sends the travel request and reads the ticks - the same wire steps 5 to
 The login half is `cargo test -p authserver --test end_to_end -- --ignored --nocapture`, which starts
 the real `authserver` and performs the client's file check, version message, key exchange and portal
 login, reading the character list it answers with - then the district list (`0x800B`, one district in
-language 0, R16) and the map request (`0x8029`), checking the world it names in the answer and the
-travel row it records (`0x0009` + `0x0003`, the hand-off the world claims). It then starts the real
-`worldserver` as well, presents the tokens the login answered with - the world's port and the travel's
-player token - and checks that the world claims that travel and answers a load block for the travel's
-map: the seam between the two programs. Run it with both servers stopped, because it binds the world's
-own port. Neither replaces the client: the client is still the judge of what it draws.
+language 0, R16), the character click (`0x800A`, answered with status 0 for a name on the account) and
+the map request (`0x8029`), checking the world it names in the answer and the travel row it records
+(`0x0009` + `0x0003`, the hand-off the world claims). It then starts the real `worldserver` as well,
+presents the tokens the login answered with - the world's port and the travel's player token - and
+checks that the world claims that travel and answers a load block for the travel's map: the seam
+between the two programs. Run it with both servers stopped, because it binds the world's own port.
+Neither replaces the client: the client is still the judge of what it draws.
