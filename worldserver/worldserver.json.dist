@@ -59,6 +59,10 @@
       "value": true,
       "doc": "Whether an instance keeps a clock at all (R33). The game ticks one; an operator may choose not to, and nothing that does not tick can be simulated."
     },
+    "SimulationTickMs": {
+      "value": 105,
+      "doc": "How often one connection's simulation is ticked (R33), in milliseconds. 105 is the game's measured cadence (one 0x001E every 90-110 ms over 1780 ticks in the reference's own crossing); an operator may run faster or slower."
+    },
     "CompassRange": {
       "value": 10000,
       "doc": "The range at which an enemy is simulated (R34), in the game's own units. Outside it, enemies are not ticked - most enemies only exist while inside it."

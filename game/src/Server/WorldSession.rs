@@ -77,10 +77,11 @@ const CLIENT_LAST_POS_BEFORE_MOVE_CANCELED: u16 = 0x8047;
 /// The client's in-game travel request - `PARTY_TRAVEL`, `0x00B1`, nine bytes (E220, E28).
 const CLIENT_PARTY_TRAVEL: u16 = 0x00B1;
 
-/// The simulation's tick period: the reference sent one `0x001E` every 90-110 ms (average 105 ms over
-/// 1780 ticks, `recordings/asura/feature/travel/first-crossing-20261031.jsonl`), so this ticks at
-/// 100 ms and says nothing of its own: the client's world time is this world's tick.
-const SIMULATION_TICK_MS: u64 = 100;
+// The simulation's tick period is a setting (R33): `World.SimulationTickMs` (default 105 - the
+// reference sent one `0x001E` every 90-110 ms, average 105 ms over 1780 ticks,
+// `recordings/asura/feature/travel/first-crossing-20261031.jsonl`; the client's world time is this
+// world's tick, so the cadence is an operator's number, not a law). `WorldConfig::simulation_tick_ms`
+// carries it and the program logs it.
 
 /// The statement a creation confirm runs.
 ///
@@ -1356,13 +1357,12 @@ impl WorldSession {
                 }
             }
 
-            // The simulation's tick (R33): while the map is loaded, one every hundred milliseconds -
-            // the reference's own cadence, ~105 ms over 1780 ticks in
-            // `recordings/asura/feature/travel/first-crossing-20261031.jsonl`.
+            // The simulation's tick (R33): while the map is loaded, one every
+            // `World.SimulationTickMs` milliseconds (105 by default, the reference's measured cadence).
             let read = io
                 .read_timeout(
                     &mut buffer,
-                    std::time::Duration::from_millis(SIMULATION_TICK_MS),
+                    std::time::Duration::from_millis(u64::from(self.settings.simulation_tick_ms)),
                 )
                 .await;
             match read {
