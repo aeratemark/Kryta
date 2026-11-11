@@ -74,5 +74,7 @@ The world half of this journey is also played automatically against the *program
 `cargo test -p worldserver --test end_to_end -- --ignored --nocapture`: it starts the real
 `worldserver`, performs the creation screen, loads map 148, asks for the items, the spawn point and the
 players, sends the travel request and reads the ticks - the same wire steps 5 to 8 do with a client.
-The login half is `cargo test -p authserver -- --ignored`. Neither replaces the client: the client is
-still the judge of what it draws.
+The login half is `cargo test -p authserver --test end_to_end -- --ignored --nocapture`, which starts
+the real `authserver` and performs the client's file check, version message, key exchange and portal
+login, reading the character list it answers with. Neither replaces the client: the client is still
+the judge of what it draws.
