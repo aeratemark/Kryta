@@ -149,6 +149,45 @@ fn account_of(user: &str) -> [u8; 16] {
     game::characters::uuid_bytes(&text).expect("the account's uuid")
 }
 
+/// The travel rows the account has, as (map, district, language).
+fn travel_rows(account: &[u8; 16]) -> Vec<(i64, i64, i64)> {
+    let log = Log::new();
+    let config = Config::load_json("authserver.json", false, Policy::default())
+        .expect("the auth program's own configuration");
+    let settings = read_settings(&config, DatabaseKind::Login).expect("the login settings");
+    let mut pool = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log)
+        .expect("the login pool opens");
+    let account_text = game::characters::uuid_text(account);
+    let rows = pool
+        .query_with(
+            "SELECT \"map_id\"::bigint, \"district\"::bigint, \"language\"::bigint \
+             FROM \"travel\" WHERE \"account\" = $1 ORDER BY \"id\" DESC",
+            &[&account_text],
+        )
+        .expect("the travel table is readable");
+    rows.iter()
+        .map(|row| {
+            (
+                row.get::<usize, i64>(0),
+                row.get::<usize, i64>(1),
+                row.get::<usize, i64>(2),
+            )
+        })
+        .collect()
+}
+
+/// Remove every travel row the account has: the test's own hand-off.
+fn remove_travel(account: &[u8; 16]) {
+    let log = Log::new();
+    let config = Config::load_json("authserver.json", false, Policy::default())
+        .expect("the auth program's own configuration");
+    let settings = read_settings(&config, DatabaseKind::Login).expect("the login settings");
+    let mut pool = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log)
+        .expect("the login pool opens");
+    let account_text = game::characters::uuid_text(account);
+    let _ = pool.query_with("DELETE FROM \"travel\" WHERE \"account\" = $1", &[&account_text]);
+}
+
 /// A character of this test's own, written for the account and removed afterwards: the login's list
 /// is composed from the character database's rows, and a row the test owns proves it without
 /// depending on what a client created by hand.
@@ -323,10 +362,50 @@ fn an_end_to_end_login_against_the_live_program() {
         shared::network::socket::hex(&answered)
     );
 
+    // 6. The map request: the client names the map it wants, and the login answers with the world it
+    // was told to dial and records the hand-off the world claims (R9). The wire is the traced six
+    // dwords: request, map type, map, region, district, language.
+    remove_travel(&account);
+    let mut request = vec![0u8; 26];
+    request[0..2].copy_from_slice(&0x8029u16.to_le_bytes());
+    request[2..6].copy_from_slice(&3u32.to_le_bytes());
+    request[6..10].copy_from_slice(&1u32.to_le_bytes());
+    request[10..14].copy_from_slice(&148u32.to_le_bytes());
+    request[18..22].copy_from_slice(&1u32.to_le_bytes());
+    let mut scrambled = request;
+    sending.apply(&mut scrambled);
+    stream.write_all(&scrambled).expect("the map request");
+    let answered = read_quiet(&mut stream, &mut reading);
+    assert!(
+        answered.len() >= 52,
+        "the map answer is 42 bytes and the response 10: {}",
+        shared::network::socket::hex(&answered)
+    );
+    assert_eq!(
+        &answered[..2],
+        &[0x09, 0x00],
+        "the game server info: {}",
+        shared::network::socket::hex(&answered[..answered.len().min(24)])
+    );
+    assert_eq!(
+        &answered[42..44],
+        &[0x03, 0x00],
+        "the request response follows the info"
+    );
+    // The login recorded the hand-off for the world it names: the map it was asked for, and the
+    // district and language the request carried.
+    let travels = travel_rows(&account);
+    assert_eq!(
+        travels.first().copied(),
+        Some((148, 1, 0)),
+        "the travel the login recorded: {travels:?}"
+    );
+
     let _ = stream.shutdown(std::net::Shutdown::Both);
     let _ = child.kill();
     let _ = child.wait();
     remove_character(&created);
+    remove_travel(&account);
     while let Ok(line) = lines.try_recv() {
         if line.contains("Connection from") || line.contains("login") || line.contains("listed") {
             println!("auth> {line}");
