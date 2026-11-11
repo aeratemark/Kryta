@@ -189,14 +189,19 @@ pub fn ready_for_map_spawn(dword: u32) -> Vec<u8> {
 
 /// `0x0059`: the player's own agent, as the client is told about it at a load.
 ///
-/// The field set is the ported row's: an id, the agent, a dword, a byte, two dwords and the name. The
-/// values a load sends are the reference's own defaults until an agent's state exists to fill them.
+/// The field set is the ported row's: an id, the agent, a dword, a byte, two dwords and the name.
+/// The dword is `0x03100000` in every emission measured - the reference's own send log
+/// (`recordings/gwps/world/load-stream.log`, `SEND 0x0059 35 bytes : 59 00 01 00 00 00 01 00
+/// 00 00 00 00 10 03 ...`) and ASURA's session (`recordings/asura/world/live-client-session-202
+/// 61027-220258.jsonl` seq 481, 43 bytes, `... 00 00 10 03 ...`), on two different maps and for
+/// two different names. What the value means is not captured, so it is the measured constant
+/// rather than a setting - changing it is a measurement, not an option.
 pub fn player_create(agent: u32, name: &str) -> Vec<u8> {
     let units: Vec<u16> = name.encode_utf16().take(20).collect();
     let mut body = Vec::with_capacity(21 + units.len() * 2);
     body.extend_from_slice(&agent.to_le_bytes()); // the id the client keys the body by
     body.extend_from_slice(&agent.to_le_bytes()); // the agent
-    body.extend_from_slice(&0u32.to_le_bytes());
+    body.extend_from_slice(&0x0310_0000u32.to_le_bytes()); // measured, meaning uncaptured
     body.push(0);
     body.extend_from_slice(&0u32.to_le_bytes());
     body.extend_from_slice(&0u32.to_le_bytes());
@@ -257,7 +262,13 @@ mod tests {
         assert_eq!(&frame[..2], &[0x59, 0x00]);
         assert_eq!(&frame[2..6], &1u32.to_le_bytes(), "the id");
         assert_eq!(&frame[6..10], &1u32.to_le_bytes(), "the agent");
-        assert!(frame.len() > 20);
+        assert_eq!(
+            &frame[10..14],
+            &0x0310_0000u32.to_le_bytes(),
+            "the measured dword, on two maps and two names"
+        );
+        assert_eq!(&frame[14], &0u8, "the byte");
+        assert_eq!(frame.len(), 25 + 10, "25 + 2n for a five-unit name");
     }
 
     #[test]
