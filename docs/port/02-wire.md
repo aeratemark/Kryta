@@ -150,6 +150,33 @@ working server's own trace of one login into map 146 (build 39112/39167), messag
   map 449 and ASURA's session for map 148, two different names - so it is sent as measured; what the
   value means is not captured (`InstancePackets::player_create`).
 
+### What the reference sends after the load, and this tree does not
+
+The reference's own send log for a load of map 146
+(`recordings/gwps/session/login-travel-session.log`) continues past the manifest and `0x0196` with a
+content stream this tree has never sent. It is the measured inventory of what the agent stage (plan
+step 6) owes, in the trace's order:
+
+| frame | size | what the trace shows |
+|---|---|---|
+| `0x0094` | 260 | a long body of mostly zeros with a repeated `5B 5E 5D 5A 5C 0B 0B 0B 0B 0B` run and two timestamps - not named |
+| `0x00F2` | 6 | the header, a byte and a dword |
+| `0x00B7` | 9 | the player's agent, its professions and its PvP flag (which the creation screen sends too) |
+| `0x00B6` | 10 | the player's agent and the unlocked-profession bitmap |
+| `0x00DA` | 75 | a blob of zeros and dwords - the agent's attributes, not decoded |
+| `0x00DB` | 4 | the header and a byte |
+| `0x00E9` | 62 | sixty bytes of zeros |
+| `0x00B7` | 9 | the same frame, a second agent |
+| `0x009F` x3, `0x00A2` | 14 each | an id, a dword and a zero dword - a position or an attribute |
+| `0x00F0` | 10 | the header and two dwords |
+| `0x006E` | 42 | a body of bytes and zeros - not decoded |
+| `0x01D3`, `0x01CC`, `0x01D4`, `0x01B3` | 4, 7, 4, 5 | closing messages of the content stream, not decoded |
+
+None of these is named in the ledger, and the capture does not say what selects them - the one
+in this list the tree can already build is `0x00B7`/`0x00B6` (the creation screen sends the pair).
+Porting the rest needs the agent capture the plan's step 6 names, or a run with a client that shows
+what each one draws.
+
 ## The file check
 
 Before the version message, on the same socket, the client asks which game files it should have:
