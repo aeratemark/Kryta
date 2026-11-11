@@ -1512,6 +1512,33 @@ impl WorldSession {
                     ),
                 }
 
+                // R12: a character starts with one map unlocked. The world's first outpost is the
+                // one - the lowest map id this world hosts of that kind - and the gate that reads
+                // these rows arrives with the travel answer.
+                if let Some(outpost) = self
+                    .maps
+                    .iter()
+                    .filter(|map| map.kind == crate::world::map_kind::OUTPOST)
+                    .min_by_key(|map| map.id)
+                {
+                    match characters.unlock_map(&crate::characters::uuid_text(&id), outpost.id) {
+                        Ok(true) => self.say(
+                            LogLevel::Info,
+                            format!(
+                                "Gameplay connection from {peer}: map {} ('{}') is unlocked for the new character (R12).",
+                                outpost.id, outpost.name
+                            ),
+                        ),
+                        Ok(false) => {}
+                        Err(error) => self.say(
+                            LogLevel::Error,
+                            format!(
+                                "Gameplay connection from {peer}: the character was created but its starting map is not unlocked: {error}"
+                            ),
+                        ),
+                    }
+                }
+
                 let settings = crate::characters::CharacterSettings {
                     last_outpost: 0,
                     appearance,
@@ -2631,6 +2658,16 @@ Logger.root = 6,Console
             crate::creation::load_item_stream(&from_rows),
             crate::creation::load_item_stream(&expected),
             "the rows draw the same item stream the set does"
+        );
+
+        // R12: the character starts with the world's first outpost unlocked - map 148, the only
+        // outpost this world hosts.
+        assert_eq!(
+            characters
+                .unlocked_maps(&uuid_text)
+                .expect("the unlocks are readable"),
+            vec![148],
+            "the starting map is unlocked"
         );
         log.shutdown();
     }

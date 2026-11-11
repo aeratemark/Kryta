@@ -336,6 +336,59 @@ impl DatabaseCharacters {
         }
     }
 
+    /// Give a character one more map it may travel to (R12), answering whether the row was new.
+    pub fn unlock_map(&self, uuid: &str, map_id: u32) -> Result<bool, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "INSERT INTO \"character_unlock\" (\"character_uuid\", \"map_id\") \
+                 VALUES ($1, $2::bigint) ON CONFLICT DO NOTHING RETURNING 1",
+                vec![Param::Text(uuid.to_string()), Param::Integer(i64::from(map_id))],
+            ),
+            Err(_) => return Err("the character database pool is poisoned".to_string()),
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(!rows.is_empty()),
+            Ok(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    format!("Cannot unlock map {map_id} for {uuid}: {error}"),
+                );
+                Err(error)
+            }
+            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+        }
+    }
+
+    /// The maps a character may travel to (R12), in id order.
+    pub fn unlocked_maps(&self, uuid: &str) -> Result<Vec<u32>, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "SELECT \"map_id\"::bigint FROM \"character_unlock\" \
+                 WHERE \"character_uuid\" = $1 ORDER BY \"map_id\"",
+                vec![Param::Text(uuid.to_string())],
+            ),
+            Err(_) => return Err("the character database pool is poisoned".to_string()),
+        };
+        let rows = match reply.recv() {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    format!("Cannot read the unlocks of {uuid}: {error}"),
+                );
+                return Err(error);
+            }
+            Err(_) => {
+                return Err(
+                    "the character database answered no query: it is shutting down".to_string(),
+                );
+            }
+        };
+        Ok(rows.iter().map(|row| row.get::<usize, i64>(0) as u32).collect())
+    }
+
     /// One row, as the list reads it.
     fn character(&self, row: &postgres::Row) -> Option<Character> {
         let uuid_text: String = row.get("uuid");
