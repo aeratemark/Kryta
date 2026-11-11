@@ -234,6 +234,27 @@ fn remove_character(uuid: &str) {
     let _ = pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&uuid]);
 }
 
+/// The 62-byte settings block the login carries for one character: the row's own, read back through
+/// the same repository the login uses.
+fn settings_blob_of(uuid: &str) -> Vec<u8> {
+    let log = Log::new();
+    let config = Config::load_json("authserver.json", false, Policy::default())
+        .expect("the auth program's own configuration");
+    let settings = read_settings(&config, DatabaseKind::Character).expect("the character settings");
+    let pool = DatabaseWorkerPool::open(DatabaseKind::Character, &settings, &log)
+        .expect("the character pool opens");
+    let characters = game::characters::DatabaseCharacters::new(
+        std::sync::Arc::new(std::sync::Mutex::new(pool)),
+        log,
+    );
+    characters
+        .list()
+        .into_iter()
+        .find(|character| game::characters::uuid_text(&character.uuid) == uuid)
+        .map(|character| character.settings.to_blob())
+        .expect("the character's row is there")
+}
+
 #[test]
 #[ignore = "needs the login and character databases the auth program's configuration names"]
 fn an_end_to_end_login_against_the_live_program() {
@@ -360,6 +381,20 @@ fn an_end_to_end_login_against_the_live_program() {
             .any(|window| window == name_units.as_slice()),
         "the answer names the account's character '{character_name}': {}",
         shared::network::socket::hex(&answered)
+    );
+    // And the 62-byte settings block is the row's own: the frame carries it right after the name,
+    // counted. The row is read back through the same repository the login uses.
+    let expected_settings = settings_blob_of(&created);
+    let settings_at = 30 + name_units.len();
+    assert_eq!(
+        &answered[settings_at - 2..settings_at],
+        &(game::characters::CHARACTER_SETTINGS_LEN as u16).to_le_bytes(),
+        "the settings block's count"
+    );
+    assert_eq!(
+        &answered[settings_at..settings_at + game::characters::CHARACTER_SETTINGS_LEN],
+        expected_settings.as_slice(),
+        "the settings block the login carries is the row's own"
     );
 
     // 6. The map request: the client names the map it wants, and the login answers with the world it
