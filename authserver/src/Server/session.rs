@@ -43,6 +43,8 @@ const ASK_SERVER_RESPONSE: u16 = 0x8035;
 const SET_PLAYER_STATUS: u16 = 0x800E;
 /// The client's request-game-instance (`0x8029`): the map it wants to load.
 const REQUEST_GAME_INSTANCE: u16 = 0x8029;
+/// The client's district-count query (`0x800B`): its transaction, game type, territory and mission.
+const QUERY_INSTANCE_COUNT: u16 = 0x800B;
 /// The client's disconnect (`0x800D`): it is leaving, and the session ends with it.
 const DISCONNECT: u16 = 0x800D;
 /// The client choosing a character (`0x800A`): a request id and the character's name as a counted
@@ -531,6 +533,35 @@ impl AuthSession {
             }
 
             REQUEST_GAME_INSTANCE => self.answer_game_instance(io, peer, body, crypt).await,
+
+            // The client's district list asked for its counts (`0x800B`, E1's `QueryInstanceCount`:
+            // the transaction, the game type, the territory and the mission). The counts are the
+            // world's state and this program does not hold it, so the answer is the rule every world
+            // starts from: one district, in language 0 (R16), and none for the languages it does not
+            // run. The transaction is echoed so the client matches it to its request.
+            QUERY_INSTANCE_COUNT => {
+                let trans = body
+                    .get(0..4)
+                    .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+                    .unwrap_or(0);
+                let territory = body
+                    .get(8..12)
+                    .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+                    .unwrap_or(0);
+                let mut counts = [(0u8, 0u8); 11];
+                for (index, pair) in counts.iter_mut().enumerate() {
+                    *pair = (index as u8, u8::from(index == 0));
+                }
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Connection from {peer}: the district list asked (transaction {trans}, territory {territory}); answered with one district in language 0 (R16)."
+                    ),
+                );
+                let answer = crate::server::login_reply::instance_counts(trans, &counts);
+                self.send(io, peer, crypt, &[answer], "the district counts")
+                    .await
+            }
 
             // A character was chosen. The reference finds it by name on the account and answers the
             // request; nothing is sent to the world from here, because the travel request is what
@@ -1637,6 +1668,28 @@ mod tests {
 
         assert_eq!(&answer[42..44], &[0x03, 0x00], "then the request response");
         assert_eq!(&answer[44..48], &3u32.to_le_bytes(), "echoing request 3");
+
+        // 3. The district list's count query, then the counts the world begins with: one district,
+        // in language 0 (R16), and none for the languages it does not run.
+        let mut segment = vec![
+            0x0B, 0x80, // 0x800B, QueryInstanceCount
+            0x05, 0x00, 0x00, 0x00, // transaction 5
+            0x01, 0x00, 0x00, 0x00, // game type 1
+            0x02, 0x00, 0x00, 0x00, // territory 2
+            0x00, 0x00, 0x00, 0x00, // mission 0
+        ];
+        sending.apply(&mut segment);
+        client.write_all(&segment).unwrap();
+        let mut counts = vec![0u8; 29];
+        client.read_exact(&mut counts).unwrap();
+        reading.apply(&mut counts);
+        assert_eq!(&counts[..2], &[0x1A, 0x00], "the count report");
+        assert_eq!(&counts[2..6], &5u32.to_le_bytes(), "echoing the transaction");
+        assert_eq!(counts[6], 11, "eleven pairs");
+        assert_eq!(&counts[7..9], &[0, 1], "language 0 has the one district (R16)");
+        for pair in counts[9..].chunks(2) {
+            assert_eq!(pair[1], 0, "the other languages have none");
+        }
         assert_eq!(&answer[48..52], &[0, 0, 0, 0], "status 0");
 
         manager.stop_network();

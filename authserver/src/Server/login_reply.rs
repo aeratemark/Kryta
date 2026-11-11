@@ -170,6 +170,27 @@ pub fn request_response(request: u32, status: u32) -> Vec<u8> {
     frame(0x0003, body)
 }
 
+/// `AUTH_SMSG_REPORT_INSTANCE_COUNT2` (`0x001A`): the transaction and its district counts.
+///
+/// Layout: the request's transaction, a one-byte count, then that many `(index, count)` pairs - each
+/// a language index and how many districts the outpost has for it. The shape is
+/// `docs/game-rules.md` E4's (`{u32 trans, rep(11){u8 index, u8 count}}`) and E29's reading of the
+/// pairs; the client asks with `0x800B` (`QueryInstanceCount`, E1) when its district list opens.
+///
+/// The counts are the world's state, and this program does not hold it: the answer is the one
+/// district a world opens to begin with (R16), in language 0, and none for the languages it does not
+/// run - so a client opening the map sees "district 1" rather than nothing.
+pub fn instance_counts(trans: u32, counts: &[(u8, u8)]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(5 + counts.len() * 2);
+    body.extend_from_slice(&trans.to_le_bytes());
+    body.push(counts.len() as u8);
+    for (index, count) in counts {
+        body.push(*index);
+        body.push(*count);
+    }
+    frame(0x001A, body)
+}
+
 /// `AUTH_SMSG_GAME_SERVER_INFO` (`0x0009`): where the client should play, and what it presents there.
 ///
 /// Layout (`AuthSrv_GameServerInfo`): `req_id`, `map_token`, `map_id`, `host[24]`, `player_token` -
