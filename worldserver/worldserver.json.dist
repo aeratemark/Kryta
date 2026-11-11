@@ -11,6 +11,11 @@
     "doc": "Where gameplay connections are accepted. The login names this address and port in its 0x0009, and the front door copies a client's gameplay connection here."
   },
 
+  "StatusInterval": {
+    "value": 30,
+    "doc": "How often the program says what it is doing: up time, accepted connections, the maps it hosts and the instances it holds open. The auth program's timer reads the same key."
+  },
+
   "BindIP": {
     "value": "127.0.0.1",
     "doc": "The address the listener binds."

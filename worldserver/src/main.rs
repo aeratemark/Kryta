@@ -409,6 +409,13 @@ fn run(args: &[String]) -> Result<(), String> {
     for note in notes {
         report(&note);
     }
+    let (status_interval, notes) = config
+        .value::<u64>("StatusInterval", 30)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let status_interval = status_interval.max(1);
 
     let sockets =
         game::server::WorldSocketMgr::start(
@@ -428,7 +435,7 @@ fn run(args: &[String]) -> Result<(), String> {
         LogLevel::Info,
         "server.worldserver",
         format!(
-            "READY: listening on {bind}:{bound} as world {realm}; a client's gameplay connection is copied here by the login program."
+            "READY: listening on {bind}:{bound} as world {realm}; a client's gameplay connection is copied here by the login program; status reported every {status_interval} s."
         ),
     );
 
@@ -438,6 +445,56 @@ fn run(args: &[String]) -> Result<(), String> {
     //   sScriptMgr->OnStartup
     // On shutdown: `sWorldSessionMgr->KickAll`, `sMapMgr->UnloadAll`,
     // `sScriptMgr->OnAfterUnloadAllMaps`, `sScriptMgr->OnShutdown`.
+
+    // The status line: what this world is up to, on a timer, so "is it alive and what has reached it"
+    // is answerable from the log alone - the auth program's own arrangement, with the world's state:
+    // the maps it hosts and the instances it currently holds open.
+    let stop_status = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let accepted = sockets.accepted_handle();
+    let status_writer = {
+        let log = log.clone();
+        let status_world = std::sync::Arc::clone(&world);
+        let stop_status = std::sync::Arc::clone(&stop_status);
+        let started = std::time::Instant::now();
+        std::thread::Builder::new()
+            .name("status".to_string())
+            .spawn(move || {
+                while !stop_status.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_secs(status_interval));
+                    if stop_status.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    let instances = match status_world.districts().lock() {
+                        Ok(districts) => districts.open(),
+                        Err(_) => Vec::new(),
+                    };
+                    let open = if instances.is_empty() {
+                        "none".to_string()
+                    } else {
+                        instances
+                            .iter()
+                            .map(|(map_id, district, members)| {
+                                format!("map {map_id} district {district} ({members} inside)")
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    log.out(
+                        LogLevel::Info,
+                        "server.worldserver",
+                        format!(
+                            "status: up {} s, listening on {bind}:{bound} as world {realm}, {} connection(s) accepted, {} map(s) hosted, {} instance(s) open: {open}.",
+                            started.elapsed().as_secs(),
+                            accepted.load(std::sync::atomic::Ordering::Relaxed),
+                            status_world.maps().len(),
+                            instances.len()
+                        ),
+                    );
+                }
+            })
+            .map_err(|error| format!("cannot start the status writer: {error}"))?
+    };
+
     // The instance tick (R33): once a second, copies that have been empty past the hold (R37) are
     // disposed (R40) and their rows removed. `InstanceTick` turns the clock off; a world without a
     // clock keeps every copy it opened and says so in its configuration dump.
@@ -475,6 +532,8 @@ fn run(args: &[String]) -> Result<(), String> {
 
     wait_for_shutdown();
     stop_tick.store(true, std::sync::atomic::Ordering::Relaxed);
+    stop_status.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = status_writer.join();
     log.out(
         LogLevel::Info,
         "server.worldserver",
