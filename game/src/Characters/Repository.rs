@@ -309,6 +309,33 @@ impl DatabaseCharacters {
         }
     }
 
+    /// Remove one of a character's items, and answer whether the row was the character's.
+    ///
+    /// The item's own row is the state: a destroy the client asked for is this delete, and the answer
+    /// to the client is `0x013C`, the item gone.
+    pub fn remove_item(&self, uuid: &str, item_id: u32) -> Result<bool, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1 AND \"item_id\" = $2 \
+                 RETURNING 1",
+                vec![Param::Text(uuid.to_string()), Param::Integer(i64::from(item_id))],
+            ),
+            Err(_) => return Err("the character database pool is poisoned".to_string()),
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(!rows.is_empty()),
+            Ok(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    format!("Cannot remove item {item_id} of {uuid}: {error}"),
+                );
+                Err(error)
+            }
+            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+        }
+    }
+
     /// One row, as the list reads it.
     fn character(&self, row: &postgres::Row) -> Option<Character> {
         let uuid_text: String = row.get("uuid");

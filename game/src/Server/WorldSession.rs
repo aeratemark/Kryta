@@ -62,6 +62,10 @@ const GAME_PING: u16 = 0x800D;
 
 /// `GAME_CMSG_ITEM_MOVE` (`0x8072`): a drag in the inventory - the item, the bag and the slot.
 const CLIENT_ITEM_MOVE: u16 = 0x8072;
+/// `GAME_CMSG_ITEM_DESTROY` (`0x8069`): the item to destroy.
+const CLIENT_ITEM_DESTROY: u16 = 0x8069;
+/// `GAME_CMSG_EQUIP_ITEM` (`0x8030`): the item to wear.
+const CLIENT_EQUIP_ITEM: u16 = 0x8030;
 
 /// The client's movement reports: `0x803D` carries the direction as well, the others a point.
 const CLIENT_MOVE_TO_COORD_WITH_DIR: u16 = 0x803D;
@@ -302,6 +306,75 @@ impl WorldSession {
             .as_ref()
             .map(|tables| tables.inventory(sheet.campaign, sheet.profession))
             .unwrap_or_default()
+    }
+
+    /// Where an item of this character would be worn: the slot its kind is worn in, in the bag the
+    /// setting says is equipped.
+    ///
+    /// `None`, with the reason said, when the item is not the character's, no template describes it,
+    /// its kind is not worn, or the setting names no equipped bag.
+    fn equip_place(
+        &self,
+        characters: &crate::characters::DatabaseCharacters,
+        sheet: &CharacterSheet,
+        item_id: u32,
+    ) -> Option<(u16, u8)> {
+        let uuid = crate::characters::uuid_text(&sheet.uuid);
+        let held = match characters.items_of(&uuid) {
+            Ok(held) => held,
+            Err(error) => {
+                self.say(
+                    LogLevel::Warn,
+                    format!("The character's items cannot be read: {error}"),
+                );
+                return None;
+            }
+        };
+        let Some(row) = held.iter().find(|row| row.item_id == item_id) else {
+            self.say(
+                LogLevel::Info,
+                format!("Item {item_id} is not the character's, so it cannot be worn."),
+            );
+            return None;
+        };
+        let template = self
+            .templates
+            .iter()
+            .find(|template| row.template_id != 0 && template.id == row.template_id)
+            .or_else(|| {
+                self.templates
+                    .iter()
+                    .find(|template| template.file_id == row.file_id)
+            });
+        let Some(template) = template else {
+            self.say(
+                LogLevel::Warn,
+                format!("No item template describes item {item_id}; it cannot be worn."),
+            );
+            return None;
+        };
+        let Some(slot) = crate::creation::equipped_slot(template.item_type) else {
+            self.say(
+                LogLevel::Info,
+                format!(
+                    "Item {item_id} is kind {}, which is not worn.",
+                    template.item_type
+                ),
+            );
+            return None;
+        };
+        let Some(bag) = self
+            .creation
+            .as_ref()
+            .and_then(crate::creation::equipped_bag)
+        else {
+            self.say(
+                LogLevel::Warn,
+                "The setting names no equipped bag, so nothing can be worn.",
+            );
+            return None;
+        };
+        Some((bag.id, slot))
     }
 
     fn say(&self, level: LogLevel, text: impl Into<String>) {
@@ -1080,6 +1153,119 @@ impl WorldSession {
                             ),
                         ),
                     },
+                    // The client destroys one of its items: the row goes, and the item is told gone
+                    // with `0x014D`.
+                    CLIENT_ITEM_DESTROY => {
+                        match message
+                            .get(2..6)
+                            .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+                        {
+                            Some(item_id) => {
+                                let removed = self.characters.as_ref().map(|pool| {
+                                    crate::characters::DatabaseCharacters::new(
+                                        std::sync::Arc::clone(pool),
+                                        self.log.clone(),
+                                    )
+                                    .remove_item(&crate::characters::uuid_text(&sheet.uuid), item_id)
+                                });
+                                match removed {
+                                    Some(Ok(true)) => {
+                                        let frame = item_packets::item_remove(
+                                            item_packets::ITEM_STREAM,
+                                            item_id,
+                                        );
+                                        self.send(io, peer, crypt, &[frame], "the item's removal")
+                                            .await;
+                                    }
+                                    Some(Ok(false)) => self.say(
+                                        LogLevel::Info,
+                                        format!(
+                                            "Gameplay connection from {peer}: item {item_id} is not the character's, so it is not destroyed."
+                                        ),
+                                    ),
+                                    Some(Err(error)) => self.say(
+                                        LogLevel::Warn,
+                                        format!(
+                                            "Gameplay connection from {peer}: the item could not be destroyed: {error}"
+                                        ),
+                                    ),
+                                    None => self.say(
+                                        LogLevel::Warn,
+                                        format!(
+                                            "Gameplay connection from {peer}: a destroy was asked for, and this world has no character database."
+                                        ),
+                                    ),
+                                }
+                            }
+                            None => self.say(
+                                LogLevel::Warn,
+                                format!(
+                                    "Gameplay connection from {peer}: a destroy of {} bytes cannot be read.",
+                                    message.len()
+                                ),
+                            ),
+                        }
+                    }
+                    // The client wears one of its items: where it goes is the slot its kind is worn
+                    // in, in the bag the setting says is equipped, and the client is told the place.
+                    CLIENT_EQUIP_ITEM => {
+                        let Some(item_id) = message
+                            .get(2..6)
+                            .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+                        else {
+                            self.say(
+                                LogLevel::Warn,
+                                format!(
+                                    "Gameplay connection from {peer}: an equip of {} bytes cannot be read.",
+                                    message.len()
+                                ),
+                            );
+                            continue;
+                        };
+                        let Some(characters) = self.characters.as_ref().map(|pool| {
+                            crate::characters::DatabaseCharacters::new(
+                                std::sync::Arc::clone(pool),
+                                self.log.clone(),
+                            )
+                        }) else {
+                            self.say(
+                                LogLevel::Warn,
+                                format!(
+                                    "Gameplay connection from {peer}: an equip was asked for, and this world has no character database."
+                                ),
+                            );
+                            continue;
+                        };
+                        let Some((bag_id, slot)) = self.equip_place(&characters, sheet, item_id)
+                        else {
+                            continue;
+                        };
+                        let uuid = crate::characters::uuid_text(&sheet.uuid);
+                        match characters.move_item(&uuid, item_id, bag_id, slot) {
+                            Ok(true) => {
+                                let frame = item_packets::item_move_to_location(
+                                    item_packets::ITEM_STREAM,
+                                    item_id,
+                                    bag_id,
+                                    slot,
+                                );
+                                self.send(io, peer, crypt, &[frame], "the item's new place")
+                                    .await;
+                            }
+                            Ok(false) => self.say(
+                                LogLevel::Warn,
+                                format!(
+                                    "Gameplay connection from {peer}: item {item_id} could not be moved to bag {bag_id} slot {slot}."
+                                ),
+                            ),
+                            Err(error) => self.say(
+                                LogLevel::Warn,
+                                format!(
+                                    "Gameplay connection from {peer}: the equip could not be written: {error}"
+                                ),
+                            ),
+                        }
+                    }
                     other => {
                         self.log.out(
                             LogLevel::Info,
@@ -2207,6 +2393,57 @@ Logger.root = 6,Console
             .find(|row| row.item_id == 1)
             .expect("the item is one of the character's");
         assert_eq!((moved_row.bag_id, moved_row.slot), (3, 7), "the row moved with it");
+
+        // 4d. An equip: the item goes to the slot its kind is worn in, in the equipped bag.
+        let worn = starting
+            .items
+            .iter()
+            .find(|item| crate::creation::equipped_slot(item.item_type).is_some())
+            .expect("the set carries something wearable");
+        let worn_slot = crate::creation::equipped_slot(worn.item_type).unwrap();
+        let equipped_bag = crate::creation::equipped_bag(world.creation())
+            .expect("the setting names the equipped bag");
+        let mut ask = vec![0x30, 0x80];
+        ask.extend_from_slice(&worn.id.to_le_bytes());
+        sending.apply(&mut ask);
+        client.write_all(&ask).unwrap();
+        let mut placed = vec![0u8; 11];
+        client.read_exact(&mut placed).unwrap();
+        reading.apply(&mut placed);
+        assert_eq!(&placed[..2], &[0x3E, 0x01], "the placement");
+        assert_eq!(&placed[4..8], &worn.id.to_le_bytes(), "the item");
+        assert_eq!(&placed[8..10], &equipped_bag.id.to_le_bytes(), "the equipped bag");
+        assert_eq!(placed[10], worn_slot, "the slot its kind is worn in");
+
+        // 4e. A destroy: the row goes, and the client is told the item is gone.
+        let doomed = starting
+            .items
+            .iter()
+            .find(|item| item.id != worn.id && item.id != 1)
+            .expect("the set carries more than two items")
+            .id;
+        let mut ask = vec![0x69, 0x80];
+        ask.extend_from_slice(&doomed.to_le_bytes());
+        sending.apply(&mut ask);
+        client.write_all(&ask).unwrap();
+        let mut gone = vec![0u8; 8];
+        client.read_exact(&mut gone).unwrap();
+        reading.apply(&mut gone);
+        assert_eq!(
+            &gone[..2],
+            &[0x4D, 0x01],
+            "the item's removal; got {}",
+            shared::network::socket::hex(&gone)
+        );
+        assert_eq!(&gone[2..4], &item_packets::ITEM_STREAM.to_le_bytes(), "the stream");
+        assert_eq!(&gone[4..8], &doomed.to_le_bytes(), "the item");
+        let held = crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
+            .items_of(&character_text)
+            .expect("the item rows are readable");
+        assert!(
+            held.iter().all(|row| row.item_id != doomed),
+            "the destroyed item's row is gone"
+        );
 
         // 5. The record is claimed once: a second claim finds nothing.
         let claimed = crate::maps::DatabaseTravels::new(Arc::clone(&login), log.clone())

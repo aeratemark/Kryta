@@ -532,6 +532,11 @@ pub fn bags(tables: &Tables) -> &[Bag] {
     &tables.bags
 }
 
+/// The bag a character wears things in - `BagType_Equipped` - when the setting names one.
+pub fn equipped_bag(tables: &Tables) -> Option<&Bag> {
+    tables.bags.iter().find(|bag| bag.kind == BAG_EQUIPPED)
+}
+
 /// An item as `CREATE_NAMED_ITEM` carries it.
 pub fn named_item(item: &Item) -> item_packets::NamedItem {
     item_packets::NamedItem {
