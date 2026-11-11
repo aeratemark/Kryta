@@ -131,7 +131,7 @@ working server's own trace of one login into map 146 (build 39112/39167), messag
 | 10 | server -> client | `0x0199` 0, `0x0199` 1, `0x0198` (2, 877, 0), `0x0199` 0, `0x0199` 1, `0x0198` (0, map, 0) | 3, 3, 9, 3, 3, 9 | the map manifest: two phases and its end, twice. What the second word names is not measured |
 | 11 | client -> server | `0x8088` | 2 | it asks where it stands |
 | 12 | server -> client | `0x0196` | 26 | the answer: the map's file id, x, y, plane, and 8 inert bytes |
-| 13 | server -> client | `0x001E` | 6 | the first simulation tick, 500 |
+| 13 | server -> client | `0x001E` | 6 | the first simulation tick: the reference's dword alternates between 500 (`F4 01`) and 516/515 (`04 02`/`03 02`) across the ticks in both traces - not a counter, and what it is is not measured. This tree sends 500, the value the world's own log shows first |
 | 14 | client -> server | `0x8090` | 19 | it asks for the map's players: a 16-byte blob and one byte |
 | 15 | server -> client | `0x001D`, `0x0018` | 4, 36 | the PvP halves: no unlocked skills, and the unlocked-hero bitmap (eight dwords) |
 | 16 | server -> client | `0x001A` xN, `0x0059`, `0x01B3`, `0x018E` | 17 or 25 each, 25 + 2n, 5, 2 | the map's agents (one `0x001A` per agent in the reference), the character's own body, the party update (`0x01B3`: the word 1 and the byte 1 in every emission measured - a one-member party is what a solo connection is, R3), and the load is over - the reference's own answer to this ask is longer; its measured order is the subsection below |
