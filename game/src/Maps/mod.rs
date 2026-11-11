@@ -16,7 +16,7 @@ pub use travels::{DatabaseTravels, Travel};
 use std::sync::{Arc, Mutex};
 
 use common::logging::{Log, LogLevel};
-use database::database::DatabaseWorkerPool;
+use database::database::{DatabaseWorkerPool, Param};
 
 use crate::world::MapEntry;
 
@@ -87,6 +87,64 @@ impl DatabaseMaps {
         Ok((maps, spawns))
     }
 
+    /// Add a spawn point to a map at its next free index, and answer that index.
+    ///
+    /// The world's content is rows, and this is the administration tool's edit of one: the same
+    /// `map_spawn` row the load's entry placement reads (R13). Every parameter is cast: the pool
+    /// binds a number as 64-bit and these columns are narrower (`docs/decisions/0007-character-schema.md`).
+    pub fn add_spawn(&self, map_id: u32, x: f32, y: f32, plane: i16) -> Result<i16, String> {
+        let rows = self.query_with(
+            "INSERT INTO \"map_spawn\" (\"map_id\", \"idx\", \"x\", \"y\", \"plane\") \
+             SELECT $1::bigint::int, coalesce(max(\"idx\"), -1) + 1, $2::text::real, \
+             $3::text::real, $4::bigint::int \
+             FROM \"map_spawn\" WHERE \"map_id\" = $1::bigint::int RETURNING \"idx\"::bigint",
+            vec![
+                Param::Integer(i64::from(map_id)),
+                Param::Text(format!("{x}")),
+                Param::Text(format!("{y}")),
+                Param::Integer(i64::from(plane)),
+            ],
+        )?;
+        rows.first()
+            .map(|row| read_number(row, "idx").map(|index| index as i16))
+            .transpose()?
+            .ok_or_else(|| "the spawn point was written but its index was not answered".to_string())
+    }
+
+    /// Remove a spawn point, and answer whether there was one at that index.
+    pub fn remove_spawn(&self, map_id: u32, index: i16) -> Result<bool, String> {
+        let rows = self.query_with(
+            "DELETE FROM \"map_spawn\" WHERE \"map_id\" = $1::bigint::int AND \
+             \"idx\" = $2::bigint::int RETURNING 1",
+            vec![Param::Integer(i64::from(map_id)), Param::Integer(i64::from(index))],
+        )?;
+        Ok(!rows.is_empty())
+    }
+
+    /// One statement with parameters, and every row it answered.
+    fn query_with(
+        &self,
+        sql: &str,
+        params: Vec<database::database::Param>,
+    ) -> Result<Vec<postgres::Row>, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(sql.to_string(), params),
+            Err(_) => return Err("the world database pool is poisoned".to_string()),
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(rows),
+            Ok(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.worldserver",
+                    format!("the map tables could not be written: {error}"),
+                );
+                Err(error.to_string())
+            }
+            Err(_) => Err("the world database answered no query: it is shutting down".to_string()),
+        }
+    }
+
     /// One statement, and every row it answered.
     fn query(&self, sql: &str) -> Result<Vec<postgres::Row>, String> {
         let reply = match self.pool.lock() {
@@ -153,5 +211,28 @@ mod tests {
             spawns.iter().any(|spawn| spawn.map_id == 148),
             "and it has a point to stand on"
         );
+    }
+
+    #[test]
+    #[ignore = "needs the world database"]
+    fn a_spawn_point_can_be_added_and_removed() {
+        let Some(maps) = repository() else {
+            panic!("the world database is not reachable");
+        };
+        let (_, before) = maps.load().expect("the map tables read");
+
+        let index = maps
+            .add_spawn(148, 9600.5, 4800.25, 0)
+            .expect("the spawn point is written");
+        let (_, spawns) = maps.load().expect("the map tables read");
+        let added = spawns
+            .iter()
+            .find(|spawn| spawn.map_id == 148 && spawn.index == index)
+            .expect("the point is the table's");
+        assert!((added.x - 9600.5).abs() < 0.01 && (added.y - 4800.25).abs() < 0.01);
+
+        assert!(maps.remove_spawn(148, index).expect("the spawn point is removed"));
+        let (_, after) = maps.load().expect("the map tables read");
+        assert_eq!(after.len(), before.len(), "the point is gone again");
     }
 }

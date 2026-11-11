@@ -70,6 +70,8 @@ impl Manage {
             ("GET", "/characters") => pages::characters(self),
             ("GET", "/worlds") => pages::worlds(self),
             ("GET", "/content") => pages::content(self),
+            ("POST", "/content/spawn") => self.add_spawn(request),
+            ("POST", "/content/spawn/remove") => self.remove_spawn(request),
             ("GET", "/schema") => pages::schema(self),
             ("POST", "/accounts/eula") => self.set_eula(request),
             ("POST", "/accounts/create") => self.create(request),
@@ -206,6 +208,75 @@ impl Manage {
     pub fn list_items(&self) -> Option<Vec<game::data_stores::ItemDefinition>> {
         let items = self.items.as_ref()?;
         items.list().ok()
+    }
+
+    /// Add a spawn point to a map: what the load's entry placement reads (R13).
+    pub fn add_spawn(&self, request: &Request) -> Response {
+        let Some(maps) = self.maps.as_ref() else {
+            return Response::html(
+                503,
+                pages::message("No world database is configured in manage.json."),
+            );
+        };
+        let form = form_fields(&request.body_text());
+        let Some(map_id) = form.get("map_id").and_then(|value| value.parse::<u32>().ok()) else {
+            return Response::html(400, pages::message("The form names no map."));
+        };
+        let x = form.get("x").and_then(|value| value.parse::<f32>().ok());
+        let y = form.get("y").and_then(|value| value.parse::<f32>().ok());
+        let plane = form
+            .get("plane")
+            .and_then(|value| value.parse::<i16>().ok())
+            .unwrap_or(0);
+        let (Some(x), Some(y)) = (x, y) else {
+            return Response::html(
+                400,
+                pages::message("A spawn point needs an x and a y as numbers."),
+            );
+        };
+        match maps.add_spawn(map_id, x, y, plane) {
+            Ok(index) => {
+                self.say(format!(
+                    "map {map_id}: spawn point {index} added at {x}, {y} (plane {plane})"
+                ));
+                pages::redirect("/content")
+            }
+            Err(error) => Response::html(
+                500,
+                pages::message(&format!("The world database said: {error}")),
+            ),
+        }
+    }
+
+    /// Remove a spawn point from a map.
+    pub fn remove_spawn(&self, request: &Request) -> Response {
+        let Some(maps) = self.maps.as_ref() else {
+            return Response::html(
+                503,
+                pages::message("No world database is configured in manage.json."),
+            );
+        };
+        let form = form_fields(&request.body_text());
+        let Some(map_id) = form.get("map_id").and_then(|value| value.parse::<u32>().ok()) else {
+            return Response::html(400, pages::message("The form names no map."));
+        };
+        let Some(index) = form.get("index").and_then(|value| value.parse::<i16>().ok()) else {
+            return Response::html(400, pages::message("The form names no spawn point."));
+        };
+        match maps.remove_spawn(map_id, index) {
+            Ok(true) => {
+                self.say(format!("map {map_id}: spawn point {index} removed"));
+                pages::redirect("/content")
+            }
+            Ok(false) => Response::html(
+                404,
+                pages::message(&format!("Map {map_id} has no spawn point {index}.")),
+            ),
+            Err(error) => Response::html(
+                500,
+                pages::message(&format!("The world database said: {error}")),
+            ),
+        }
     }
 
     /// Each database's schema files, with what its own `updates` record says about them.
