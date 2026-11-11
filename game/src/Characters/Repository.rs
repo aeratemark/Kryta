@@ -27,7 +27,7 @@ FROM \"characters\"";
 
 const INSERT_HELD_ITEM: &str = "INSERT INTO \"item_instance\" (\"character_uuid\", \"template_id\", \
 \"file_id\", \"dye_tint\", \"dye_colors\", \"item_id\", \"bag_id\", \"slot\", \"quantity\", \
-\"profession\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)";
+\"profession\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING 1";
 
 const SELECT_HELD_ITEMS: &str = "SELECT \"file_id\"::bigint, \"dye_tint\"::bigint, \
 \"dye_colors\"::bigint, \"item_id\"::bigint, \"bag_id\"::bigint, \"slot\"::bigint, \
@@ -513,6 +513,94 @@ mod tests {
 
         {
             let mut pool = pool.lock().unwrap();
+            pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&uuid])
+                .unwrap();
+        }
+    }
+
+    /// The live world database, when this machine has one: the item templates live there.
+    fn world_source() -> Option<crate::data_stores::DatabaseItems> {
+        let log = Log::new();
+        let config =
+            Config::load_json("../worldserver/worldserver.json", false, Policy::default()).ok()?;
+        let settings = read_settings(&config, DatabaseKind::World).ok()?;
+        let mut pool = DatabaseWorkerPool::open(DatabaseKind::World, &settings, &log).ok()?;
+        pool.ping().ok()?;
+        Some(crate::data_stores::DatabaseItems::new(
+            Arc::new(Mutex::new(pool)),
+            log,
+        ))
+    }
+
+    #[test]
+    #[ignore = "needs the character database"]
+    fn a_starting_item_write_answers_the_rows_it_wrote() {
+        // The count is what the confirm's log line says, so it must be the rows, not the INSERT's
+        // own answer: a statement without RETURNING answers no row even when it writes one, and a
+        // log line that says "0 row(s) written" over written rows is a lie a load then trusts.
+        let Some(source) = source() else {
+            panic!("the character database is not reachable");
+        };
+        let Some(items) = world_source() else {
+            panic!("the world database is not reachable");
+        };
+        let log = Log::new();
+        let mut world = crate::world::World::new(2);
+        world
+            .load_creation("../data/inventory.json", "../data/equipment.json", &log)
+            .expect("the creation data");
+        let tables = world.creation();
+        let inventory = tables.inventory(0, 1);
+        assert!(!inventory.items.is_empty(), "the set has items");
+
+        // The templates the program reads back at start-up, from the same rows in the world database.
+        items
+            .seed(&tables.definitions())
+            .expect("the definitions are seeded");
+        let templates = items.list().expect("the templates are readable");
+
+        let uuid = "00000000-0000-0000-0000-0000000000AB";
+        let account = "00000000-0000-0000-0000-00000000C10D";
+        {
+            let mut pool = source.pool.lock().unwrap();
+            for statement in [
+                "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1",
+                "DELETE FROM \"characters\" WHERE \"uuid\" = $1",
+            ] {
+                pool.query_with(statement, &[&uuid]).unwrap();
+            }
+            pool.query_with(
+                "INSERT INTO \"characters\" (\"uuid\", \"account_uuid\", \"name\", \"appearance\", \"primary_profession\", \"unlocked_professions\", \"campaign\", \"level\") \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                &[&uuid, &account, &"Written One", &0i64, &1i64, &2i64, &0i64, &1i64],
+            )
+            .unwrap();
+        }
+
+        let written = source
+            .write_starting_items(uuid, &inventory, &templates)
+            .expect("the starting items are written");
+        assert_eq!(
+            written,
+            inventory.items.len(),
+            "the count is the rows written"
+        );
+        assert_eq!(
+            source
+                .items_of(uuid)
+                .expect("the items are readable")
+                .len(),
+            inventory.items.len(),
+            "the rows are there"
+        );
+
+        {
+            let mut pool = source.pool.lock().unwrap();
+            pool.query_with(
+                "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1",
+                &[&uuid],
+            )
+            .unwrap();
             pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&uuid])
                 .unwrap();
         }
