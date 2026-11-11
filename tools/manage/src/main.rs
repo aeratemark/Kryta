@@ -182,6 +182,13 @@ impl Manage {
         self.characters.as_ref().map(|characters| characters.list())
     }
 
+    /// What one character holds, read through the repository the load uses.
+    pub fn list_items_of(&self, uuid: &str) -> Option<Vec<game::characters::HeldItem>> {
+        self.characters
+            .as_ref()
+            .and_then(|characters| characters.items_of(uuid).ok())
+    }
+
     /// The world list, when the login database answered.
     pub fn list_worlds(&self) -> Option<Vec<shared::worlds::Realm>> {
         self.worlds

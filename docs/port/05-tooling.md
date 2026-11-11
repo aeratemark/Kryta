@@ -46,7 +46,7 @@ reaches the data through the nouns' own repositories, so what a page writes is w
 |---|---|---|
 | `/` | what exists, and how much of it | accounts, characters, worlds and content, each with its count and a link |
 | `/accounts` | the rows the login reads: create, remove, and set the EULA version | done |
-| `/characters` | every row of the character table, as the login's list reads it | done - read only; a character is written by the creation confirm |
+| `/characters` | every row of the character table, as the login's list reads it, with how many items each holds | done - read only; a character is written by the creation confirm |
 | `/worlds` | the realm list and `data/realms.json` merged over it | done - read only, from the login's own reader |
 | `/content` | the maps and their spawn points, and the item templates, the rows the load and the creation screen read | done - read only; the item and profession editors arrive with the stages that write them |
 | `/schema` | each database's own record of what its updater has applied, against the files on disk | done - read only; `changed` is the one to act on before a server refuses to start |

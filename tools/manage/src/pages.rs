@@ -95,23 +95,28 @@ pub fn characters(manage: &Manage) -> Response {
 
     let mut rows = String::new();
     for character in &characters {
+        let items = manage
+            .list_items_of(&game::characters::uuid_text(&character.uuid))
+            .map_or_else(|| "<em>?</em>".to_string(), |items| items.len().to_string());
         rows.push_str(&format!(
             "<tr><td><code>{name}</code></td><td><code>{uuid}</code></td>\
-             <td>{campaign}</td><td>{level}</td><td>{outpost}</td><td>{pvp}</td></tr>\n",
+             <td>{campaign}</td><td>{level}</td><td>{outpost}</td><td>{items}</td><td>{pvp}</td></tr>\n",
             name = escape(&character.name),
             uuid = escape(&game::characters::uuid_text(&character.uuid)),
             campaign = character.settings.campaign,
             level = character.settings.level,
             outpost = character.settings.last_outpost,
+            items = items,
             pvp = if character.settings.is_pvp { "yes" } else { "no" },
         ));
     }
 
     let body = format!(
         "<p class=\"note\">Every row of the character table, as the login's own list reads them: a \
-         name, the id the client knows it by, its campaign, level, last outpost and PvP flag.</p>\n\
+         name, the id the client knows it by, its campaign, level, last outpost, how many items it \
+         holds and its PvP flag.</p>\n\
          <table>\n<tr><th>name</th><th>uuid</th><th>campaign</th><th>level</th><th>last outpost</th>\
-         <th>PvP</th></tr>\n{rows}</table>\n\
+         <th>items</th><th>PvP</th></tr>\n{rows}</table>\n\
          <p class=\"note\">{count} row(s). A character is written by the creation confirm, not here: \
          this page shows what the servers will read.</p>",
         count = characters.len()
