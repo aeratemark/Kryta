@@ -495,11 +495,13 @@ fn run(args: &[String]) -> Result<(), String> {
             .map_err(|error| format!("cannot start the status writer: {error}"))?
     };
 
-    // The instance tick (R33): once a second, copies that have been empty past the hold (R37) are
-    // disposed (R40) and their rows removed. `InstanceTick` turns the clock off; a world without a
-    // clock keeps every copy it opened and says so in its configuration dump.
+    // The instance tick (R33): every `World.SweepIntervalMs` milliseconds (1000 by default), copies
+    // that have been empty past the hold (R37) are disposed (R40) and their rows removed.
+    // `InstanceTick` turns the clock off; a world without a clock keeps every copy it opened and says
+    // so in its configuration dump.
     let stop_tick = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     if world.settings().instance_tick {
+        let sweep = std::time::Duration::from_millis(u64::from(world.settings().sweep_interval_ms));
         let tick_world = std::sync::Arc::clone(&world);
         let tick_log = log.clone();
         let stop_tick = std::sync::Arc::clone(&stop_tick);
@@ -507,7 +509,7 @@ fn run(args: &[String]) -> Result<(), String> {
             .name("instance-tick".to_string())
             .spawn(move || {
                 while !stop_tick.load(std::sync::atomic::Ordering::Relaxed) {
-                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    std::thread::sleep(sweep);
                     if stop_tick.load(std::sync::atomic::Ordering::Relaxed) {
                         break;
                     }

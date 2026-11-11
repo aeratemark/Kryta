@@ -28,6 +28,10 @@ pub struct WorldConfig {
     /// cadence is ~105 ms (`recordings/asura/feature/travel/first-crossing-20261031.jsonl`, 1780 ticks);
     /// an operator may run it faster or slower, which is why it is a setting and not a law.
     pub simulation_tick_ms: u32,
+    /// How often the world checks its instance table for copies to dispose (R33, R40), in milliseconds.
+    /// The game's own check is not measured; a second is fine-grained enough for a fifteen-minute hold
+    /// and cheap enough to be an operator's number rather than a law.
+    pub sweep_interval_ms: u32,
     /// The range at which an enemy is simulated (R34), in the game's own units. Outside it, an enemy is not
     /// ticked.
     pub compass_range: f32,
@@ -48,6 +52,7 @@ impl Default for WorldConfig {
             spawn_scatter: 250.0,
             instance_tick: true,
             simulation_tick_ms: 105,
+            sweep_interval_ms: 1000,
             compass_range: 10_000.0,
             explorable_disconnect_hold: 15 * 60,
             mission_button: true,
@@ -80,10 +85,11 @@ impl WorldConfig {
         settings.compass_range = number(config, "CompassRange", settings.compass_range)?;
         settings.instance_tick = flag(config, "InstanceTick", settings.instance_tick)?;
         settings.simulation_tick_ms = small(config, "SimulationTickMs", settings.simulation_tick_ms)?;
+        settings.sweep_interval_ms = small(config, "SweepIntervalMs", settings.sweep_interval_ms)?;
         settings.mission_button = flag(config, "MissionButton", settings.mission_button)?;
 
         notes.push(format!(
-            "World: a district holds {} player(s) (R5), a party is capped at {} (R15), a character lands within {:.0} units of its spawn point (R13), an explorable is held {} s for a network disconnect (R37), the compass range is {:.0} (R34), ticking is {} every {} ms, the mission button is {} (R56).",
+            "World: a district holds {} player(s) (R5), a party is capped at {} (R15), a character lands within {:.0} units of its spawn point (R13), an explorable is held {} s for a network disconnect (R37), the compass range is {:.0} (R34), ticking is {} every {} ms, the instance table is swept every {} ms, the mission button is {} (R56).",
             settings.district_allotment,
             settings.party_size_cap,
             settings.spawn_scatter,
@@ -91,6 +97,7 @@ impl WorldConfig {
             settings.compass_range,
             if settings.instance_tick { "on" } else { "off" },
             settings.simulation_tick_ms,
+            settings.sweep_interval_ms,
             if settings.mission_button { "shown" } else { "hidden" },
         ));
         Ok((settings, notes))
@@ -132,6 +139,7 @@ mod tests {
         assert_eq!(settings.spawn_scatter, 250.0, "R13");
         assert!(settings.instance_tick, "R33");
         assert_eq!(settings.simulation_tick_ms, 105, "R33's cadence, measured");
+        assert_eq!(settings.sweep_interval_ms, 1000, "R33/R40's sweep, a second");
         assert_eq!(settings.compass_range, 10_000.0, "R34");
         assert_eq!(settings.explorable_disconnect_hold, 900, "R37");
         assert!(settings.mission_button, "R56");
