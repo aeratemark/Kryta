@@ -2582,6 +2582,204 @@ Logger.root = 6,Console
     }
 
     #[test]
+    #[ignore = "needs the login and character databases"]
+    fn a_claimed_map_the_character_has_not_unlocked_is_refused() {
+        // R12: the gate the load applies to a claimed map. The character has unlocked map 148, the
+        // login records a travel to map 147, and the connection is closed before the load block -
+        // nothing enters, the district is not taken and the character's row is not touched. R58's
+        // refusal has the same shape and the same reason: the refusal's own wire is not captured,
+        // so a closed connection is the refusal.
+        use common::configuration::{Config, Policy};
+        use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
+        use database::updater::{collect_files, UpdateState};
+
+        let _serial_auth = database::updater::apply::test_lock("auth");
+        let _serial_characters = database::updater::apply::test_lock("characters");
+        let log = Log::new();
+        let config = Config::load_json("../worldserver/worldserver.json", false, Policy::default())
+            .expect("the world program's own configuration");
+
+        let settings = read_settings(&config, DatabaseKind::Login).expect("the login settings");
+        let mut pool = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log)
+            .expect("the login pool opens");
+        let schema = collect_files(
+            std::path::Path::new("../data/sql/base/db_auth"),
+            UpdateState::Released,
+        )
+        .expect("the login schema");
+        pool.apply_updates(&schema, &log).expect("the schema applies");
+        let login = Arc::new(std::sync::Mutex::new(pool));
+
+        let settings =
+            read_settings(&config, DatabaseKind::Character).expect("the character settings");
+        let mut pool = DatabaseWorkerPool::open(DatabaseKind::Character, &settings, &log)
+            .expect("the character pool opens");
+        let schema = collect_files(
+            std::path::Path::new("../data/sql/base/db_characters"),
+            UpdateState::Released,
+        )
+        .expect("the character schema");
+        pool.apply_updates(&schema, &log).expect("the schema applies");
+        let characters = Arc::new(std::sync::Mutex::new(pool));
+
+        // The travel the login would have written for this connection: map 147, which the character
+        // below has not unlocked.
+        let account = [0xCCu8; 16];
+        crate::maps::DatabaseTravels::new(Arc::clone(&login), log.clone())
+            .record(&crate::maps::Travel {
+                account,
+                world: 2,
+                map_id: 147,
+                district: 1,
+                language: 0,
+                player_token: 0x2345,
+            })
+            .expect("the travel is recorded");
+
+        // The character: one row, one unlock (148), no items needed - the gate decides before any of
+        // the load's own messages.
+        let character = [0xDDu8; 16];
+        let character_text = crate::characters::uuid_text(&character);
+        {
+            let mut pool = characters.lock().unwrap();
+            pool.query_with(
+                "DELETE FROM \"character_unlock\" WHERE \"character_uuid\" = $1",
+                &[&character_text],
+            )
+            .unwrap();
+            pool.query_with(
+                "DELETE FROM \"characters\" WHERE \"uuid\" = $1",
+                &[&character_text],
+            )
+            .unwrap();
+            pool.query_with(
+                "INSERT INTO \"characters\" (\"uuid\", \"account_uuid\", \"name\", \"appearance\", \"primary_profession\", \"unlocked_professions\", \"campaign\", \"level\", \"gold\") \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                &[
+                    &character_text,
+                    &crate::characters::uuid_text(&account),
+                    &"Ununlocked One",
+                    &0i64,
+                    &1i64,
+                    &2i64,
+                    &0i64,
+                    &1i64,
+                    &0i64,
+                ],
+            )
+            .unwrap();
+        }
+        let repository =
+            crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone());
+        repository
+            .unlock_map(&character_text, 148)
+            .expect("the character has one unlock");
+
+        // The world hosts both outposts, so the claim is accepted and the gate is what refuses.
+        let mut prepared = world();
+        let mut maps = prepared.maps().to_vec();
+        maps.push(crate::world::MapEntry {
+            id: 147,
+            kind: crate::world::map_kind::OUTPOST,
+            file_id: 112_508,
+            name: "Ascalon Academy".to_string(),
+        });
+        let mut spawns = prepared.spawns().to_vec();
+        spawns.push(crate::maps::MapSpawn {
+            map_id: 147,
+            index: 0,
+            x: 1000.0,
+            y: 2000.0,
+            plane: 0,
+        });
+        prepared.set_maps(maps, spawns);
+        let world = Arc::new(prepared);
+
+        let master = [0x44u8; MASTER_SECRET_LEN];
+        let factory: shared::network::socket::SessionFactory = {
+            let log = log.clone();
+            let world = Arc::clone(&world);
+            let characters = Arc::clone(&characters);
+            let login = Arc::clone(&login);
+            Arc::new(move || {
+                Box::new(WorldSession::with_master_and_characters_and_login(
+                    log.clone(),
+                    &world,
+                    master,
+                    Arc::clone(&characters),
+                    Arc::clone(&login),
+                )) as Box<dyn Session>
+            })
+        };
+        let mut manager = shared::network::socket_mgr::SocketMgr::new(factory);
+        let port = manager.start_network("127.0.0.1", 0, 1).unwrap();
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+
+        // 1. The version message, naming the creation instance, and the token pair the travel holds.
+        let version = GameVersion {
+            version: 39167,
+            h0008: 1,
+            map_token: 2,
+            map_id: 0,
+            player_token: 0x2345,
+            account,
+            character,
+            h0038: 0,
+            h003c: 0,
+        };
+        client.write_all(&version.encode()).unwrap();
+
+        // 2. The seed exchange: the server answers its seed, then closes - the refusal arrives
+        // instead of the load block, because the claimed map is not in the character's unlocks.
+        let mut public = [0u8; handshake::PUBLIC_LEN];
+        public[0] = 2;
+        let mut seed = CLIENT_SEED_HEADER.to_le_bytes().to_vec();
+        seed.extend_from_slice(&public);
+        client.write_all(&seed).unwrap();
+        let mut answer = [0u8; handshake::SERVER_SEED_LEN];
+        client.read_exact(&mut answer).unwrap();
+        let mut block = [0u8; 64];
+        let read = client.read(&mut block);
+        assert_eq!(
+            read.unwrap_or(0),
+            0,
+            "the connection is closed before the load block: {}",
+            shared::network::socket::hex(&block)
+        );
+
+        // 3. Nothing was entered, and nothing was written: the unlock set stands and the character's
+        // last outpost is still the row's own 0.
+        let unlocked = repository
+            .unlocked_maps(&character_text)
+            .expect("the character's unlocks");
+        assert_eq!(unlocked, vec![148], "the refused claim wrote no unlock");
+        let listed = repository.for_account(&crate::characters::uuid_text(&account));
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0].settings.last_outpost, 0,
+            "the refused claim wrote no last outpost"
+        );
+
+        // The character's own rows go, leaving the databases as they were found.
+        {
+            let mut pool = characters.lock().unwrap();
+            pool.query_with(
+                "DELETE FROM \"character_unlock\" WHERE \"character_uuid\" = $1",
+                &[&character_text],
+            )
+            .unwrap();
+            pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&character_text])
+                .unwrap();
+        }
+
+        manager.stop_network();
+        log.shutdown();
+    }
+
+    #[test]
     #[ignore = "needs the character database"]
     fn a_creation_confirm_writes_a_character_row() {
         // The confirm, played against the real character database: the client's bytes go in, a row
