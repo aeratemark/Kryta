@@ -118,6 +118,7 @@ Updated as stages land, because this is a statement of today and not of intent.
 | `game/World/` | the world a program represents: its id, and the maps it can put a client in, loaded from `data/maps.json` at `SetInitialWorldSettings` |
 | `game/Server/` | the gameplay connection: the 64-byte version message (`Protocol/`), the instance and item families (`Packets/`), `WorldSession` (the exchange, the creation block and the confirm) and `WorldSocketMgr` (the listener) |
 | `tools/manage/` | the administration tool: one page over the accounts, the characters, the worlds and the content files, served on loopback - a third binary, not a third server (`docs/decisions/0008-administration-tool.md`) |
+| `game/World/`'s `WorldConfig` | the numbers a world runs by, one field per rule that names one (R5, R13, R15, R33, R34, R37, R53, R56), read from the program's `World` section and logged at start-up |
 | `game/Creation/` | the creation screen's content: the reference's six bags, the items it creates before a choice, the 32 (campaign, profession) sets, and the player-data block built from them; the data is `data/inventory.json` and `data/equipment.json`, imported from its rows by `tools/import-creation-inventory.py` |
 | `modules/`, the rest of `game/` | not started |
 

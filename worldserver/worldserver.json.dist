@@ -42,6 +42,37 @@
     "doc": "What a new character wears per campaign and profession - a record list of sets, read at start-up."
   },
 
+  "World": {
+    "DistrictAllotment": {
+      "value": 100,
+      "doc": "How many players one district of an outpost holds before the next district is shown (R5). The allotment is tied to a machine's own efficiency, so it is the operator's number; the game's value is 100."
+    },
+    "PartySizeCap": {
+      "value": 8,
+      "doc": "The party cap this world applies when a map does not state its own (R15). 8 is the common cap in the game; some modes allow 12 and some instances 25, and a map row overrides this."
+    },
+    "SpawnScatter": {
+      "value": 250,
+      "doc": "How far around a spawn point a character is placed when it enters a map (R13), in the game's own units: every entry picks a random point of that map's list and lands within this radius of it."
+    },
+    "InstanceTick": {
+      "value": true,
+      "doc": "Whether an instance keeps a clock at all (R33). The game ticks one; an operator may choose not to, and nothing that does not tick can be simulated."
+    },
+    "CompassRange": {
+      "value": 10000,
+      "doc": "The range at which an enemy is simulated (R34), in the game's own units. Outside it, enemies are not ticked - most enemies only exist while inside it."
+    },
+    "ExplorableDisconnectHold": {
+      "value": 900,
+      "doc": "How long an explorable instance is held for a reconnecting party after a network disconnect (R37), in seconds; 900 is 15 minutes. A party that leaves by any normal means disposes the instance at once, whatever this says (R40)."
+    },
+    "MissionButton": {
+      "value": true,
+      "doc": "Whether an outpost that offers a mission presents the 'Enter Mission' button (R56)."
+    }
+  },
+
   "Log": {
     "EffectiveConfig": {
       "value": false,

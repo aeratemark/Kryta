@@ -7,6 +7,9 @@
 //!
 //! What it is not: the map manager. A map's own state arrives with the stage that can host one.
 
+#[path = "WorldConfig.rs"]
+pub mod world_config;
+
 use common::configuration::json::Document;
 use common::logging::{Log, LogLevel};
 
@@ -44,6 +47,9 @@ pub struct World {
     maps: Vec<MapEntry>,
     /// The bags, items and profession sets a character-creation screen is built from.
     creation: crate::creation::Tables,
+    /// The numbers this world runs by: a district's allotment, a party's cap, the spawn scatter and the
+    /// rest of the rules that name a number (docs/game-rules.md, R53).
+    settings: world_config::WorldConfig,
 }
 
 impl World {
@@ -53,6 +59,7 @@ impl World {
             realm,
             maps: Vec::new(),
             creation: crate::creation::Tables::default(),
+            settings: world_config::WorldConfig::default(),
         }
     }
 
@@ -66,6 +73,16 @@ impl World {
     /// The maps this world hosts.
     pub fn maps(&self) -> &[MapEntry] {
         &self.maps
+    }
+
+    /// The numbers this world runs by.
+    pub fn settings(&self) -> &world_config::WorldConfig {
+        &self.settings
+    }
+
+    /// Set the numbers this world runs by, after the program read its file.
+    pub fn set_settings(&mut self, settings: world_config::WorldConfig) {
+        self.settings = settings;
     }
 
     /// The creation data: the bags, the items and the profession sets.

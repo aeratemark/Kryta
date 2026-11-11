@@ -261,6 +261,23 @@ fn run(args: &[String]) -> Result<(), String> {
     for note in notes {
         report(&note);
     }
+    // The world's own numbers: every threshold an instance, a district or a spawn uses, read from this
+    // program's file with the game's value as the default (R53, and docs/game-rules.md for each row).
+    let (world_settings, notes) = game::world::world_config::WorldConfig::read(&config)?;
+    for note in notes {
+        log.out(LogLevel::Info, "server.worldserver", note);
+    }
+    world.set_settings(world_settings);
+    log.out(
+        LogLevel::Info,
+        "server.worldserver",
+        format!(
+            "World settings: a district holds {} player(s), a party is capped at {}.",
+            world.settings().district_allotment,
+            world.settings().party_size_cap
+        ),
+    );
+
     let (bags, items, sets) = world.load_creation(&inventory_file, &equipment_file, &log)?;
     log.out(
         LogLevel::Info,

@@ -116,6 +116,7 @@ added, and a field the file does not state keeps the table's value.
 | the character database: connection string, worker and synchronous connections | `authserver.json`, `worldserver.json`, under `CharacterDatabaseInfo` and `CharacterDatabase` |
 | the world list: every field of every world, including a world the table does not hold | `data/realms.json`, merged over `realmlist` |
 | the intervals this program reports and refreshes at | `authserver.json` |
+| the world's numbers, every one a game rule with a default (`docs/game-rules.md`): a district's allotment (R5), a party's cap (R15), the spawn scatter (R13), whether instances tick (R33), the compass range (R34), the disconnect hold (R37), the mission button (R56) | `worldserver.json`, the `World` section |
 | the creation screen's content: the bags and items a client is given, and what a new character wears per campaign and profession | `worldserver.json`, `InventoryFile` and `EquipmentFile`, naming `data/inventory.json` and `data/equipment.json` |
 | loot tables: what a source drops and how often - a setting, not a row | a JSON file under `data/loot/`, arriving with the drop stage |
 | logging: directory, appenders, logger levels | `authserver.json`, `worldserver.json` |

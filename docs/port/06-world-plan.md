@@ -60,7 +60,7 @@ Two things the ledger settles before any stage starts:
 
 | step | what it is | ledger rows | wire | data | proves |
 |---|---|---|---|---|---|
-| 0 | **the world's settings** - one JSON file's worth of the numbers above, read at start-up | R5, R13, R15, R33, R34, R37, R53, R56 | - | a settings file per program, rows for the rest | the program logs each number it read, and a changed value changes behaviour |
+| 0 | **the world's settings** (done) - `game/World/WorldConfig.rs`, the World section of `worldserver.json`, logged at start-up | R5, R13, R15, R33, R34, R37, R53, R56 | - | a settings file per program, rows for the rest | the program logs each number it read, and a changed value changes behaviour |
 | 1 | `game/Pack/` - the archive | none: a client fact | - | - | a file id is read and checksums against the archive's own table |
 | 2 | `game/Maps/` + the world schema - a map as a **definition**: id, type, name, spawn points, arrivals, portals | R1, R13, R14, R21, R22, R29 | `0x017C`, `0x0186`, `0x008A`/`0x008B` (cartography), the load order | `map` + `map_spawn` + `map_arrival` + `map_portal` rows | the client loads a real outpost instead of the creation instance |
 | 3 | `game/Districts/` - an **instance**: one running copy, its lifecycle, its district number | R2, R3, R4, R5, R16, R32, R35-R40, R57, R58 | `CtoS 177 TravelMission` (9 bytes, district 0 = unset, E220); `StoC 421 Redirect` (C5); the district counts (E29) | `instance` row: map, district number, language, opened at, empty since | a character enters the outpost and, when it leaves, the instance is disposed per R40 - or held 15 minutes per R37 for a network drop only |
