@@ -255,6 +255,17 @@ fn settings_blob_of(uuid: &str) -> Vec<u8> {
         .expect("the character's row is there")
 }
 
+/// The world program's own `WorldServerPort`: the hand-off's address is compared with the world
+/// program's configuration, not with a number written into the test.
+fn world_server_port() -> u16 {
+    let config = Config::load_json("../worldserver/worldserver.json", false, Policy::default())
+        .expect("the world program's own configuration");
+    config
+        .value::<u16>("WorldServerPort", 6113)
+        .expect("the key is a port")
+        .0
+}
+
 #[test]
 #[ignore = "needs the login and character databases the auth program's configuration names"]
 fn an_end_to_end_login_against_the_live_program() {
@@ -426,6 +437,22 @@ fn an_end_to_end_login_against_the_live_program() {
         &answered[42..44],
         &[0x03, 0x00],
         "the request response follows the info"
+    );
+    // The address it names is the world's own: the family, the port big-endian, and the address -
+    // the bytes the client dials. The port is the world program's `WorldServerPort`.
+    let world_port = world_server_port();
+    let host = [
+        0x02, 0x00,
+        (world_port >> 8) as u8,
+        (world_port & 0xFF) as u8,
+        0x7F, 0x00, 0x00, 0x01,
+    ];
+    assert!(
+        answered
+            .windows(host.len())
+            .any(|window| window == host.as_slice()),
+        "the info names 127.0.0.1:{world_port}: {}",
+        shared::network::socket::hex(&answered[..answered.len().min(44)])
     );
     // The login recorded the hand-off for the world it names: the map it was asked for, and the
     // district and language the request carried.

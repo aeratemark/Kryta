@@ -511,6 +511,11 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             "the point is scattered within the world's spawn scatter of the map's own spawn ({x}, {y})"
         );
         assert_eq!(&spawn[26..28], &[0x1E, 0x00], "the first simulation tick");
+        assert_eq!(
+            &spawn[28..32],
+            &500u32.to_le_bytes(),
+            "the load's first tick is the measured 500"
+        );
 
         // The players ask: the PvP halves, the character's body and the end of the load. The ask's
         // own wire is nineteen bytes: a sixteen-byte blob and one byte (docs/port/02-wire.md row 14).
@@ -521,6 +526,17 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         stream.write_all(&ask).expect("the players ask");
         let players = read_frames(&mut stream, &mut reading, 0x018E, 1);
         assert_eq!(&players[0].1[..2], &[0x1D, 0x00], "no unlocked PvP skills");
+        // The heroes half is the one a load sends: eight dwords, every bit set.
+        assert_eq!(players[1].0, 0x0018, "the unlocked-hero bitmap: {players:?}");
+        assert_eq!(
+            players[1].1.len(),
+            36,
+            "the bitmap is a counted field and its eight dwords"
+        );
+        assert!(
+            players[1].1[4..].iter().all(|byte| *byte == 0xFF),
+            "the unlocked-hero bitmap: eight dwords of ones"
+        );
         assert_eq!(
             players.last().unwrap().0,
             0x018E,
