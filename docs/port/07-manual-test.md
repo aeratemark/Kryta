@@ -27,9 +27,11 @@ cargo run -p kryta-manage -- -c tools/manage/manage.json   # optional: http://12
 ```
 
 The login program must end with `READY: listening on 127.0.0.1:6112` and the world program with
-`READY: listening on 127.0.0.1:6113 as world 2`; the world also prints
-`status: up N s, ... M map(s) hosted, I instance(s) open` every 30 seconds, and that line is the first
-thing to read when something seems stuck.
+`READY: listening on 127.0.0.1:6113 as world 2`; both also print a status line every 30 seconds - the
+world's says `status: up N s, ... A connection(s) accepted, L live, M map(s) hosted, I instance(s) open`,
+the login's `status: up N s, ... A connection(s) accepted, L live` - and that line is the first thing to
+read when something seems stuck: `accepted` says something reached the port, `live` says something is
+being served.
 
 ## The journey, and what the server must say
 
