@@ -17,6 +17,12 @@ pub const AGENT_UPDATE_ATTRIBUTE_POINTS: u16 = 0x0037;
 pub const AGENT_UPDATE_ATTRIBUTES: u16 = 0x003A;
 /// `GAME_SMSG_WORLD_CREATE_AGENT` (`0x0020`): one agent created, 99 bytes fixed.
 pub const WORLD_CREATE_AGENT: u16 = 0x0020;
+/// `GAME_SMSG_AGENT_PROPERTY_UPDATE_FLOAT` (`0x00A2`): one float property of one agent.
+pub const AGENT_PROPERTY_UPDATE_FLOAT: u16 = 0x00A2;
+/// `GAME_SMSG_AGENT_UPDATE_MORALE` (`0x009C`): one agent's morale as a percentage.
+pub const AGENT_UPDATE_MORALE: u16 = 0x009C;
+/// `GAME_SMSG_AGENT_INITIAL_EFFECTS` (`0x00F0`): the effect bitmask an agent starts with.
+pub const AGENT_INITIAL_EFFECTS: u16 = 0x00F0;
 
 /// The property an agent's energy is reported through.
 ///
@@ -136,6 +142,40 @@ pub fn agent_update_attributes(agent: u32, attributes: &[u32]) -> Vec<u8> {
     frame(AGENT_UPDATE_ATTRIBUTES, &body)
 }
 
+/// `0x00A2`: one float property of an agent - the property, the agent, the value.
+///
+/// Source: the game table's row (`GAME_SMSG_AGENT_PROPERTY_UPDATE_FLOAT`, 14 bytes) and `ASURA`'s
+/// `agent_property_update_float` builder, field for field.
+pub fn agent_property_update_float(property: u32, agent: u32, value: f32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(12);
+    body.extend_from_slice(&property.to_le_bytes());
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&value.to_le_bytes());
+    frame(AGENT_PROPERTY_UPDATE_FLOAT, &body)
+}
+
+/// `0x009C`: one agent's morale as a percentage, 100 being the unmodified value.
+///
+/// Source: `ASURA`'s `agent_update_morale` builder and the trace it cites - a live server sends one
+/// per body at the load (`9C 00 | 1F 00 00 00 | 64 00 00 00`, agent 0x1F at 100).
+pub fn agent_update_morale(agent: u32, morale: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(8);
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&morale.to_le_bytes());
+    frame(AGENT_UPDATE_MORALE, &body)
+}
+
+/// `0x00F0`: the effect bitmask an agent starts with.
+///
+/// Source: the game table's row (`GAME_SMSG_AGENT_INITIAL_EFFECTS`, 10 bytes) and `ASURA`'s
+/// `agent_initial_effects` builder: the agent and the effects, two dwords.
+pub fn agent_initial_effects(agent: u32, effects: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(8);
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&effects.to_le_bytes());
+    frame(AGENT_INITIAL_EFFECTS, &body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,6 +203,34 @@ mod tests {
         assert_eq!(frame.len(), 2 + 4 + 2 + 42 * 4);
         assert_eq!(&frame[..6], &[0x3A, 0x00, 1, 0, 0, 0]);
         assert_eq!(&frame[6..8], &42u16.to_le_bytes());
+    }
+
+    #[test]
+    fn a_float_property_is_the_property_the_agent_and_the_value() {
+        let frame = agent_property_update_float(0x2B, 1, 0.5);
+        assert_eq!(frame.len(), 14, "the table's own size");
+        assert_eq!(&frame[..2], &[0xA2, 0x00]);
+        assert_eq!(&frame[2..6], &0x2Bu32.to_le_bytes(), "the property");
+        assert_eq!(&frame[6..10], &1u32.to_le_bytes(), "the agent");
+        assert_eq!(&frame[10..14], &0.5f32.to_le_bytes());
+    }
+
+    #[test]
+    fn a_morale_is_the_agent_and_its_percentage() {
+        // The trace's own frame: `9C 00 | 1F 00 00 00 | 64 00 00 00` - agent 0x1F, 100.
+        assert_eq!(
+            agent_update_morale(0x1F, 100),
+            vec![0x9C, 0x00, 0x1F, 0x00, 0x00, 0x00, 100, 0x00, 0x00, 0x00]
+        );
+    }
+
+    #[test]
+    fn the_initial_effects_are_the_agent_and_the_bitmask() {
+        let frame = agent_initial_effects(2, 0x400);
+        assert_eq!(frame.len(), 10, "the table's own size");
+        assert_eq!(&frame[..2], &[0xF0, 0x00]);
+        assert_eq!(&frame[2..6], &2u32.to_le_bytes(), "the agent");
+        assert_eq!(&frame[6..10], &0x400u32.to_le_bytes(), "the effects");
     }
 
     #[test]
