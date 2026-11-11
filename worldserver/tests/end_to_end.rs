@@ -452,6 +452,104 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         reading.apply(&mut tick);
         assert_eq!(&tick[..2], &[0x1E, 0x00], "the simulation tick");
 
+        // The item operations the manual test's steps 9 to 11 do, against the program: a drag, an
+        // equip and a destroy. Each one is a row in the character database and an answer to the
+        // client; the items are the ones the confirm wrote, read back through the same repository.
+        let tables = game::creation::Tables::load(
+            "../data/inventory.json",
+            "../data/equipment.json",
+            &Log::new(),
+        )
+        .expect("the creation data");
+        let templates = game::data_stores::DatabaseItems::new(
+            Arc::clone(&world_pool),
+            Log::new(),
+        )
+        .list()
+        .expect("the item templates are readable");
+        let held = game::characters::DatabaseCharacters::new(
+            Arc::clone(&characters),
+            Log::new(),
+        )
+        .items_of(&uuid_text)
+        .expect("the character's items are readable");
+        assert!(!held.is_empty(), "the load had items to operate on");
+
+        // 9. A drag: where the item goes is the row, and the client is told the same placement.
+        let dragged = &held[0];
+        let mut ask = vec![0u8; 9];
+        ask[0..2].copy_from_slice(&0x8072u16.to_le_bytes());
+        ask[2..6].copy_from_slice(&dragged.item_id.to_le_bytes());
+        ask[6..8].copy_from_slice(&dragged.bag_id.to_le_bytes());
+        ask[8] = dragged.slot;
+        sending.apply(&mut ask);
+        stream.write_all(&ask).expect("the drag");
+        let mut placed = read_exact(&mut stream, 11);
+        reading.apply(&mut placed);
+        assert_eq!(&placed[..2], &[0x3E, 0x01], "the placement: {}", shared::network::socket::hex(&placed));
+        assert_eq!(&placed[4..8], &dragged.item_id.to_le_bytes(), "the item");
+        assert_eq!(&placed[8..10], &dragged.bag_id.to_le_bytes(), "the bag");
+        assert_eq!(placed[10], dragged.slot, "the slot");
+
+        // 10. An equip: the item goes to the slot its kind is worn in, in the equipped bag.
+        let template_of = |item_id: u32| {
+            let row = held.iter().find(|row| row.item_id == item_id);
+            row.and_then(|row| {
+                templates
+                    .iter()
+                    .find(|template| template.id == row.template_id)
+                    .cloned()
+            })
+        };
+        let wearable = held.iter().find_map(|row| {
+            let template = template_of(row.item_id)?;
+            game::creation::equipped_slot(template.item_type)?;
+            Some((row.item_id, template.item_type))
+        });
+        if let Some((item_id, item_type)) = wearable {
+            let worn_slot = game::creation::equipped_slot(item_type).expect("the kind is worn");
+            let equipped_bag = game::creation::equipped_bag(&tables).expect("the equipped bag");
+            let mut ask = vec![0u8; 6];
+            ask[0..2].copy_from_slice(&0x8030u16.to_le_bytes());
+            ask[2..6].copy_from_slice(&item_id.to_le_bytes());
+            sending.apply(&mut ask);
+            stream.write_all(&ask).expect("the equip");
+            let mut placed = read_exact(&mut stream, 11);
+            reading.apply(&mut placed);
+            assert_eq!(&placed[..2], &[0x3E, 0x01], "the placement");
+            assert_eq!(&placed[4..8], &item_id.to_le_bytes(), "the item");
+            assert_eq!(placed[8..10], equipped_bag.id.to_le_bytes(), "the equipped bag");
+            assert_eq!(placed[10], worn_slot, "the slot its kind is worn in");
+        }
+
+        // 11. A destroy: the row goes, and the client is told the item is gone.
+        let doomed = held
+            .iter()
+            .find(|row| row.item_id != dragged.item_id && template_of(row.item_id).is_some())
+            .map(|row| row.item_id)
+            .expect("the set holds more than one item");
+        let mut ask = vec![0u8; 6];
+        ask[0..2].copy_from_slice(&0x8069u16.to_le_bytes());
+        ask[2..6].copy_from_slice(&doomed.to_le_bytes());
+        sending.apply(&mut ask);
+        stream.write_all(&ask).expect("the destroy");
+        let mut gone = read_exact(&mut stream, 8);
+        reading.apply(&mut gone);
+        assert_eq!(&gone[..2], &[0x4D, 0x01], "the item's removal");
+        assert_eq!(&gone[4..8], &doomed.to_le_bytes(), "the item");
+        {
+            let held = game::characters::DatabaseCharacters::new(
+                Arc::clone(&characters),
+                Log::new(),
+            )
+            .items_of(&uuid_text)
+            .expect("the character's items are readable");
+            assert!(
+                held.iter().all(|row| row.item_id != doomed),
+                "the destroyed item's row is gone"
+            );
+        }
+
         // The instance is a row in the world database while the connection is inside it. Its id is
         // kept, so the cleanup removes this test's copy and nothing else.
         {
