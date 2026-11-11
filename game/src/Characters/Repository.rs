@@ -51,6 +51,37 @@ impl DatabaseCharacters {
         self.read(&format!("{SELECT_CHARACTERS} ORDER BY \"name\""), Vec::new())
     }
 
+    /// Record the outpost a character is now in - R14's "last outpost visited", which a later load
+    /// (and the login's list) places it at.
+    ///
+    /// The row is updated through the worker queue like every other statement here. An update that
+    /// failed is reported: the character is still in the map, but the world does not know it for a
+    /// later reconnect.
+    pub fn set_last_outpost(&self, uuid: &str, map_id: u16) -> Result<(), String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "UPDATE \"characters\" SET \"last_outpost\" = $1 WHERE \"uuid\" = $2",
+                vec![Param::Integer(i64::from(map_id)), Param::Text(uuid.to_string())],
+            ),
+            Err(_) => {
+                return Err("the character database pool is poisoned; the outpost was not recorded"
+                    .to_string());
+            }
+        };
+        match reply.recv() {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    format!("Cannot record the last outpost of {uuid}: {error}"),
+                );
+                Err(error)
+            }
+            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+        }
+    }
+
     /// One query, and the characters it answered.
     fn read(&self, sql: &str, params: Vec<Param>) -> Vec<Character> {
         let reply = match self.pool.lock() {
@@ -198,6 +229,16 @@ mod tests {
             source.list().iter().any(|character| character.name == "Listed One"),
             "the list holds the character"
         );
+
+        // R14: the outpost the character is in is recorded, and the next read of the list says so.
+        source.set_last_outpost(uuid, 148).expect("the outpost is recorded");
+        let listed = source.list();
+        assert_eq!(
+            listed.iter().find(|character| character.name == "Listed One").map(|character| character.settings.last_outpost),
+            Some(148),
+            "the row now says the character is in map 148"
+        );
+
         {
             let mut pool = pool.lock().unwrap();
             pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&uuid])

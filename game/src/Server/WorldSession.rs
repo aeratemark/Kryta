@@ -463,6 +463,26 @@ impl WorldSession {
                 *entered = Some((map.id, district));
             }
 
+            // R14: the outpost the character is now in is its last outpost, so a later load - or the
+            // login's list - places it there. The row is updated through the noun's own repository.
+            if let Some(pool) = self.characters.as_ref() {
+                let characters = crate::characters::DatabaseCharacters::new(
+                    std::sync::Arc::clone(pool),
+                    self.log.clone(),
+                );
+                if let Err(error) = characters.set_last_outpost(
+                    &crate::characters::uuid_text(&version.character),
+                    map.id as u16,
+                ) {
+                    self.say(
+                        LogLevel::Warn,
+                        format!(
+                            "Gameplay connection from {peer}: the character's last outpost cannot be recorded: {error}"
+                        ),
+                    );
+                }
+            }
+
             let sheet = self.character_sheet(&version);
             let is_explorable = u8::from(map.kind == crate::world::map_kind::EXPLORABLE);
             let frames = vec![

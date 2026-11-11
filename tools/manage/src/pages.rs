@@ -260,8 +260,7 @@ pub fn accounts(manage: &Manage) -> Response {
 }
 
 /// The schema: each database's own record of the files it has applied, against the files on disk.
-pub fn schema(manage: &Manage) -> Response {
-    let mut sections = String::new();
+pub fn schema(manage: &Manage) -> Response {    let mut sections = String::new();
     for (label, files) in manage.schema_page() {
         let mut rows = String::new();
         for file in &files {
