@@ -16,6 +16,13 @@ The databases are the ones the programs are configured for: `kryta_login`, `kryt
 `kryta_characters` on `127.0.0.1:5432` (the connection strings are in each program's own JSON, which is
 not committed when it holds a password).
 
+Starting from nothing: the programs create their own tables. The migrations in `data/sql/base/` are the
+schema and the seeds - the world's own file seeds the maps and their spawn points, and the world program
+then seeds the item templates from the creation record - so a fresh machine only needs the database
+server, a role that may create its databases and the three databases themselves (empty is enough). The
+world's fresh start-up is proven by `cargo test -p worldserver --test fresh_world -- --ignored`; it
+makes and drops a database of its own and needs the role to have `CREATEDB`.
+
 ## Starting the programs
 
 Three processes, each in its own window:
