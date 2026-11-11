@@ -47,6 +47,8 @@ pub struct Manage {
     characters: Option<Arc<game::characters::DatabaseCharacters>>,
     /// The world database, when the tool opened one: the content page.
     maps: Option<Arc<game::maps::DatabaseMaps>>,
+    /// The item templates, when the world database is open: what the content page counts.
+    items: Option<Arc<game::data_stores::DatabaseItems>>,
     /// The world list, read from `realmlist` and merged with `data/realms.json`.
     worlds: Option<Arc<shared::worlds::WorldList>>,
     /// The databases whose updater records the schema page shows.
@@ -191,6 +193,12 @@ impl Manage {
     pub fn list_maps(&self) -> Option<(Vec<game::world::MapEntry>, Vec<game::maps::MapSpawn>)> {
         let maps = self.maps.as_ref()?;
         maps.load().ok()
+    }
+
+    /// The item templates, when a world database is configured.
+    pub fn list_items(&self) -> Option<Vec<game::data_stores::ItemDefinition>> {
+        let items = self.items.as_ref()?;
+        items.list().ok()
     }
 
     /// Each database's schema files, with what its own `updates` record says about them.
@@ -479,6 +487,12 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
             log.clone(),
         ))
     });
+    let items = world_pool.as_ref().map(|pool| {
+        Arc::new(game::data_stores::DatabaseItems::new(
+            Arc::clone(pool),
+            log.clone(),
+        ))
+    });
 
     // The schema page: each database's own record of what it has applied, against the files on disk.
     let mut schemas = vec![DatabaseSchema {
@@ -505,6 +519,7 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         accounts,
         characters,
         maps,
+        items,
         worlds: Some(Arc::new(world_list)),
         schemas,
         token: Some(token),

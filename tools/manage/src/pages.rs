@@ -153,7 +153,8 @@ pub fn worlds(manage: &Manage) -> Response {
     page("worlds", &body)
 }
 
-/// The content: the world's maps and their spawn points, read through the noun's own repository.
+/// The content: the world's maps and their spawn points, and the item templates, read through the
+/// nouns' own repositories.
 pub fn content(manage: &Manage) -> Response {
     let Some((maps, spawns)) = manage.list_maps() else {
         return Response::html(
@@ -189,6 +190,30 @@ pub fn content(manage: &Manage) -> Response {
         ));
     }
 
+    let items = manage.list_items().unwrap_or_default();
+    let mut item_rows = String::new();
+    for item in &items {
+        item_rows.push_str(&format!(
+            "<tr><td><code>{file_id}</code></td><td>{item_type}</td><td>{dye_tint}/{dye_colors}</td>\
+             <td>{model_id}</td><td>{value}</td><td>{profession}</td><td>{quantity}</td>\
+             <td>{name}</td></tr>\n",
+            file_id = item.file_id,
+            item_type = item.item_type,
+            dye_tint = item.dye_tint,
+            dye_colors = item.dye_colors,
+            model_id = item.model_id,
+            value = item.value,
+            profession = item.profession,
+            quantity = item.quantity,
+            name = item
+                .name
+                .iter()
+                .map(|unit| unit.to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
+        ));
+    }
+
     let body = format!(
         "<p class=\"note\">The maps a world can put a client in, and where a character may stand on \
          each - the rows the load reads (<code>0x0196</code>), straight from \
@@ -196,9 +221,16 @@ pub fn content(manage: &Manage) -> Response {
          <table>\n<tr><th>id</th><th>kind</th><th>file id</th><th>name</th><th>spawn points</th></tr>\n\
          {rows}</table>\n\
          <p class=\"note\">{maps} map(s), {spawns} spawn point(s). Kinds: 0 outpost, 1 explorable, \
-         11 character creation.</p>",
+         11 character creation.</p>\n\
+         <h2>item templates</h2>\n\
+         <p class=\"note\">What an item is, once: the rows the creation record lists seed at start-up. \
+         A character's own items point at these.</p>\n\
+         <table>\n<tr><th>file id</th><th>type</th><th>dyes</th><th>model</th><th>value</th>\
+         <th>profession</th><th>stack</th><th>name units</th></tr>\n{item_rows}</table>\n\
+         <p class=\"note\">{items} template(s).</p>",
         maps = maps.len(),
-        spawns = spawns.len()
+        spawns = spawns.len(),
+        items = items.len()
     );
     page("content", &body)
 }

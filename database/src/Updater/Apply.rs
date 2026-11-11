@@ -171,6 +171,23 @@ pub fn read_applied(
     }
 }
 
+/// One test at a time against a database's schema: a lock file named for the database.
+///
+/// The suite runs its tests in parallel, and two updaters applying the same files at once race on
+/// the `updates` row - one of them loses the record and reports a statement failure. A test that
+/// applies a schema holds this lock for its body; the file is created in the system's temporary
+/// directory, and dropping the file releases it.
+pub fn test_lock(name: &str) -> std::fs::File {
+    let path = std::env::temp_dir().join(format!("kryta-{name}-schema.lock"));
+    let file = std::fs::File::create(path).unwrap_or_else(|error| {
+        panic!("a schema test lock cannot be created: {error}");
+    });
+    file.lock().unwrap_or_else(|error| {
+        panic!("the schema test lock cannot be taken: {error}");
+    });
+    file
+}
+
 /// A file's sha1, which is what the record holds.
 ///
 /// Reference: `UpdateFetcher::CalculateHash`, whose 40 hexadecimal characters are the same ones.

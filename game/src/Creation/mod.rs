@@ -208,6 +208,26 @@ impl Tables {
         (self.bags.len(), self.items.len(), self.sets.len())
     }
 
+    /// Every distinct item definition the record lists name: the pre-choice items and every
+    /// profession set's, once each.
+    ///
+    /// The world's start-up seeds its `item_template` rows from these (`game/DataStores/Items.rs`):
+    /// a template is what an item *is*, and a set naming it again is the same item.
+    pub fn definitions(&self) -> Vec<Item> {
+        let mut seen = std::collections::HashSet::new();
+        let mut definitions = Vec::new();
+        for item in self
+            .items
+            .iter()
+            .chain(self.sets.iter().flat_map(|set| set.items.iter()))
+        {
+            if seen.insert((item.file_id, item.dye_tint, item.dye_colors)) {
+                definitions.push(item.clone());
+            }
+        }
+        definitions
+    }
+
     /// The set for a choice, or the campaign's first set when the choice is not in the table.
     pub fn set(&self, campaign: u8, profession: u8) -> Option<&EquipmentSet> {
         self.sets

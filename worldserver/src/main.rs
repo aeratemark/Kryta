@@ -335,6 +335,35 @@ fn run(args: &[String]) -> Result<(), String> {
             "No world database is open, so instances are kept in memory only and no copy is recorded.",
         );
     }
+
+    // The item templates: one row per distinct item the creation record lists name, seeded once.
+    // Reference: the same `SetInitialWorldSettings` pass that reads the world's item templates.
+    if let Some(pool) = world_pool.as_ref() {
+        let items = game::data_stores::DatabaseItems::new(std::sync::Arc::clone(pool), log.clone());
+        let definitions = world.creation().definitions();
+        match items.seed(&definitions) {
+            Ok(written) => match items.count() {
+                Ok(total) => log.out(
+                    LogLevel::Info,
+                    "server.worldserver",
+                    format!(
+                        "Item templates: {total} row(s) from {} definition(s); {written} written now.",
+                        definitions.len()
+                    ),
+                ),
+                Err(error) => log.out(
+                    LogLevel::Warn,
+                    "server.worldserver",
+                    format!("The item templates were seeded but cannot be counted: {error}"),
+                ),
+            },
+            Err(error) => log.out(
+                LogLevel::Error,
+                "server.worldserver",
+                format!("The item templates could not be seeded: {error}"),
+            ),
+        }
+    }
     let world = std::sync::Arc::new(world);
 
     // Stage 9. Reference: `sWorldSocketMgr.StartWorldNetwork(*ioContext, worldListener, worldPort,
