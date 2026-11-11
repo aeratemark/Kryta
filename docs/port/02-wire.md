@@ -94,6 +94,8 @@ The frames, with the reference's own wire sizes:
 | 4c | server -> client | `0x0161` | 31 + 2 + 2n + 1 + 4m | one item: its ids, kind, dyes, flags, name (`n` units), modifiers (`m`, counted by a **byte**) |
 | 4d | server -> client | `0x013E` | 11 | where that item sits: stream, item, bag, slot |
 | 4e | server -> client | `0x0148`, `0x0147`, `0x0141` | 5, 13, 8 | the active weapon set, four empty weapon sets, the gold |
+| 4f | client -> server | `0x808A` | 2 | it asks for its armoury: the creation screen's own PvP half |
+| 4g | server -> client | `0x001D`, `0x0018`, `0x001B` | 4, 4, 2 | the creation screen's PvP half: no unlocked skills, no unlocked heroes, and the stream ends |
 | 5 | client -> server | `0x8060` | 4 | campaign and profession, chosen |
 | 6 | server -> client | `0x00B7` | 9 | the agent, the professions and the PvP flag |
 | 7 | server -> client | `0x00B6` | 10 | the agent and the unlocked-profession bitmap |
