@@ -55,9 +55,26 @@ pub const CLIENT_LOAD_REQUEST_SPAWN: u16 = 0x8088;
 /// and the load ends with the answer.
 pub const CLIENT_LOAD_REQUEST_PLAYERS: u16 = 0x8090;
 
+/// `GAME_CMSG_INSTANCE_LOAD_REQUEST_ITEMS` (`0x8091`): the client asks for its inventory, and the
+/// answer is the item stream and the map's record.
+///
+/// Source: `recordings/gwps/world/load-stream.log` - `RECV 0x8091 4 bytes : 91 80 00 00`, answered
+/// with `0x0144` and the rest of the stream.
+pub const CLIENT_LOAD_REQUEST_ITEMS: u16 = 0x8091;
+
 /// `GAME_SMSG_INSTANCE_LOAD_FINISH` (`0x018E`): the last message of the load; the client stops loading
 /// on it.
 pub const INSTANCE_LOAD_FINISH: u16 = 0x018E;
+
+/// `GAME_SMSG_INSTANCE_MANIFEST_PHASE` (`0x0199`): one byte - a step of the map's manifest.
+pub const INSTANCE_MANIFEST_PHASE: u16 = 0x0199;
+
+/// `GAME_SMSG_INSTANCE_MANIFEST_DONE` (`0x0198`): a byte, a word and a dword - the end of one manifest.
+pub const INSTANCE_MANIFEST_DONE: u16 = 0x0198;
+
+/// `GAME_SMSG_READY_FOR_MAP_SPAWN` (`0x01AC`): one dword - the world is ready for the client's spawn
+/// request.
+pub const READY_FOR_MAP_SPAWN: u16 = 0x01AC;
 
 /// `GAME_SMSG_PLAYER_CREATE` (`0x0059`): one body the client is told about - for a load of our own, the
 /// player's own agent.
@@ -140,6 +157,34 @@ pub fn instance_load_spawn_point(map_file_id: u32, x: f32, y: f32, plane: u16) -
 /// `0x018E`: the load is over - the header alone.
 pub fn instance_load_finish() -> Vec<u8> {
     frame(INSTANCE_LOAD_FINISH, &[])
+}
+
+/// `0x0199`: one byte of a map's manifest phase.
+///
+/// Source: `recordings/gwps/world/load-stream.log` - `SEND 0x0199 3 bytes : 99 01 00`, then
+/// `99 01 01`, before each manifest's end.
+pub fn instance_manifest_phase(phase: u8) -> Vec<u8> {
+    frame(INSTANCE_MANIFEST_PHASE, &[phase])
+}
+
+/// `0x0198`: the end of one manifest - a byte, a word and a dword.
+///
+/// Source: the same trace - `SEND 0x0198 9 bytes : 98 01 02 6D 03 00 00 00 00` (byte 2, word 877)
+/// and `98 01 00 92 00 00 00 00 00` (byte 0, the map). Both are repeated once per load; what the
+/// word names is not measured (`docs/port/06-world-plan.md`, "Where the ledger says we do not know").
+pub fn instance_manifest_done(phase: u8, word: u16, dword: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(7);
+    body.push(phase);
+    body.extend_from_slice(&word.to_le_bytes());
+    body.extend_from_slice(&dword.to_le_bytes());
+    frame(INSTANCE_MANIFEST_DONE, &body)
+}
+
+/// `0x01AC`: the world is ready for the client's spawn request - one dword.
+///
+/// Source: the same trace - `SEND 0x01AC 6 bytes : AC 01 00 00 00 00`.
+pub fn ready_for_map_spawn(dword: u32) -> Vec<u8> {
+    frame(READY_FOR_MAP_SPAWN, &dword.to_le_bytes())
 }
 
 /// `0x0059`: the player's own agent, as the client is told about it at a load.

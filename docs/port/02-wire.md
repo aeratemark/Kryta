@@ -113,25 +113,37 @@ The frames, with the reference's own wire sizes:
 
 Once the character has been chosen - or when a connection names a map it is not creating a character
 on - the same connection runs the load. Measured from `recordings/gwps/world/load-stream.log`, a
-working server's own trace of one login:
+working server's own trace of one login into map 146 (build 39112/39167), message by message:
 
 | # | direction | message | wire | is |
 |---|---|---|---|---|
 | 1 | server -> client | `0x017C` | 6 | the load begins |
 | 2 | server -> client | `0x0186` | 2 | the player-data stream opens |
 | 3 | server -> client | `0x017D` | 4 + 2n | the character's name, a counted UTF-16 string: 14 bytes for "Appok" (5 units) |
-| 4 | server -> client | `0x019A` | 16 | the instance: its id, the map id, the district, and two flag bytes |
-| 5 | client -> server | `0x8088` | 2 | it asks where it stands |
-| 6 | server -> client | `0x0196` | 26 | the answer: the map's file id, x, y, plane, and 8 inert bytes |
-| 7 | client -> server | `0x8090` | 19 | it asks for the map's players: a 16-byte blob and one byte |
-| 8 | server -> client | `0x0059` | 25 + 2n | the character's own body, its name a counted UTF-16 string |
-| 9 | server -> client | `0x018E` | 2 | the load is over |
+| 4 | server -> client | `0x019A` | 16 | the instance: the agent, the map id, one flag byte (1 in every capture), the district, the language and two bytes |
+| 5 | server -> client | `0x000C` | 2 | the ping request, unasked |
+| 6 | server -> client | `0x000D` | 6 | its reply: 20 |
+| 7 | client -> server | `0x8091` | 4 | it asks for its items (after `0x800A`, `0x800B` and `0x8009`, which is the machine information and are answered with nothing) |
+| 8 | server -> client | `0x0144`, `0x0148`, the item stream, `0x0147` x4, `0x0141`, `0x00EA`-`0x00ED` | 300 bytes for a fresh character | the inventory: the stream, the active set, the bags and items, the four weapon sets, the gold, the four faction caps |
+| 9 | server -> client | `0x0070`, `0x0030`, `0x0099`, `0x01AC` | 3, 28, 5, 6 | the hard-mode flag, the character summary, the current map, ready for a spawn |
+| 10 | server -> client | `0x0199` 0, `0x0199` 1, `0x0198` (2, 877, 0), `0x0199` 0, `0x0199` 1, `0x0198` (0, map, 0) | 3, 3, 9, 3, 3, 9 | the map manifest: two phases and its end, twice. What the second word names is not measured |
+| 11 | client -> server | `0x8088` | 2 | it asks where it stands |
+| 12 | server -> client | `0x0196` | 26 | the answer: the map's file id, x, y, plane, and 8 inert bytes |
+| 13 | server -> client | `0x001E` | 6 | the first simulation tick, 500 |
+| 14 | client -> server | `0x8090` | 19 | it asks for the map's players: a 16-byte blob and one byte |
+| 15 | server -> client | `0x001D`, `0x0018` | 4, 36 | the PvP halves: no unlocked skills, and the unlocked-hero bitmap (eight dwords) |
+| 16 | server -> client | `0x001A` xN, `0x0059`, `0x018E` | 17 or 25 each, 25 + 2n, 2 | the map's agents (one `0x001A` per agent in the reference), the character's own body, and the load is over |
 
 - The position is a point of the map's own list, scattered per R13 (`docs/game-rules.md`), so
   `0x0196`'s x and y differ from run to run; the file id and plane are the map's, from its row.
-- `0x017D`'s name is the character row's `name`, as the creation confirm wrote it.
-- In this tree: the builders are `game/src/Server/Packets/InstancePackets.rs`, the order and the
-  answers are `WorldSession`'s `load_map`, and the rows are `game/Maps/`'s (`0009-world-schema.md`).
+- `0x017D`'s name is the character row's `name`, as the creation confirm wrote it; the campaign and
+  profession of the same row choose which starting set the item stream carries.
+- The agent stream (row 16) is the reference's map content - one `0x001A` per agent in the map - and
+  it arrives with `game/Agents/` (plan step 6); the party stream arrives with `game/Parties/` (step 7).
+  This tree sends the load without them and says so in its log.
+- In this tree: the builders are `game/src/Server/Packets/` (`InstancePackets`, `ItemPackets`,
+  `CharacterPackets`, `MiscPackets`), the order and the answers are `WorldSession`'s `load_map`, and
+  the rows are `game/Maps/`'s (`0009-world-schema.md`).
 
 ## The file check
 

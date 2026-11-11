@@ -375,8 +375,7 @@ pub fn player_data_block(tables: &Tables, campaign: u8, profession: u8) -> Vec<V
 
 /// The inventory stream: per bag its own item, the bag, and then every item in it with its slot.
 pub fn inventory_block(inventory: &Inventory) -> Vec<Vec<u8>> {
-    let mut frames = Vec::with_capacity(inventory.bags.len() * 2 + inventory.items.len() * 3);
-    for bag in &inventory.bags {
+    let mut frames = Vec::with_capacity(inventory.bags.len() * 2 + inventory.items.len() * 3);    for bag in &inventory.bags {
         // A bag that is also an item is created before the bag, because the bag names it.
         if bag.assoc_item != 0
             && let Some(item) = inventory
@@ -408,6 +407,40 @@ pub fn inventory_block(inventory: &Inventory) -> Vec<Vec<u8>> {
                 item.slot.unwrap_or(0),
             ));
         }
+    }
+    frames
+}
+
+/// The outpost load's item stream: the stream opens, the active set, the inventory, the four weapon
+/// sets, the gold, and the four faction caps.
+///
+/// Reference: `GameSrv_HandleRequestItems`-shaped load traffic, measured from a working server in
+/// `recordings/gwps/world/load-stream.log` - `0x0144`, `0x0148`, the bag and item frames, `0x0147`
+/// four times, `0x0141`, then `0x00EA` to `0x00ED`. A map load carries no player-data end (`0x018A`):
+/// the reference sends the creation screen's wrapper and a map's stream do not share it.
+pub fn load_item_stream(tables: &Tables, campaign: u8, profession: u8) -> Vec<Vec<u8>> {
+    let inventory = tables.inventory(campaign, profession);
+    let mut frames = vec![
+        item_packets::item_stream_create(item_packets::ITEM_STREAM, 0),
+        item_packets::item_set_active_weapon_set(item_packets::ITEM_STREAM, 0),
+    ];
+    frames.extend(inventory_block(&inventory));
+    for slot in 0..4u8 {
+        frames.push(item_packets::item_weapon_set(
+            item_packets::ITEM_STREAM,
+            slot,
+            0,
+            0,
+        ));
+    }
+    frames.push(item_packets::update_gold_storage(item_packets::ITEM_STREAM, 0));
+    for header in [
+        character_packets::FACTION_MAX_KURZICK,
+        character_packets::FACTION_MAX_LUXON,
+        character_packets::FACTION_MAX_BALTHAZAR,
+        character_packets::FACTION_MAX_IMPERIAL,
+    ] {
+        frames.push(character_packets::faction_max(header, 10_000));
     }
     frames
 }

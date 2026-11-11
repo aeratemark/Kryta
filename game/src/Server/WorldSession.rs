@@ -7,14 +7,16 @@
 //! 1. The client's 64-byte version message, which names the world it was sent to (`0x000C0500`).
 //! 2. The seed exchange, the same one the login port makes: `0x4200` in, `0x1601` out, one key
 //!    derived from the master, one RC4 per direction.
-//! 3. The block the world sends unasked. For the character-creation instance that is two messages -
+//! 3. The travel record the login wrote is claimed once, by the token pair the version message
+//!    presents (`docs/port/06-world-plan.md`, "The three seams"); the record's map decides what
+//!    loads, and a connection with no record keeps the map its message names.
+//! 4. The block the world sends unasked. For the character-creation instance that is two messages -
 //!    the load head and the creation start - because the creation instance has no geometry and no
-//!    agent of its own; a map with geometry sends its own block, which does not exist yet.
+//!    agent of its own. For a map it is the load head, the player-data start, the character's name
+//!    and the instance's record, followed by the ping pair, and then the client's asks are answered
+//!    in the order a working server measured (`recordings/gwps/world/load-stream.log`).
 //!
 //! Reference for the sizes: `shared/cryptography/handshake.rs` and `Packets/InstancePackets.rs`.
-//! What this does *not* do yet: check the token pair against a recorded travel. The login draws a
-//! `player_token` and the front door forwards it, but nothing records it where a world can read it,
-//! so the pair is logged and not compared. That is stated here rather than implied by silence.
 
 use common::logging::{Log, LogLevel};
 use shared::cryptography::handshake::{self, CLIENT_SEED_HEADER, CLIENT_SEED_LEN, SERVER_SEED_LEN};
@@ -35,6 +37,15 @@ use crate::world::World;
 /// registry yet, so the first id is the one it gets. The reference allocates from its own pool; the
 /// number is the world's to give, and nothing else reads it until a map exists.
 pub(crate) const CREATION_AGENT: u32 = 1;
+
+/// What a load reads from the character's own row: the name it shows, and the campaign and
+/// profession whose starting set its item stream carries.
+#[derive(Debug, Clone)]
+pub(crate) struct CharacterSheet {
+    pub name: String,
+    pub campaign: u8,
+    pub profession: u8,
+}
 
 /// The client's asks on a gameplay connection, as the reference's dispatch reads them.
 ///
@@ -451,20 +462,12 @@ impl WorldSession {
                 *entered = Some((map.id, district));
             }
 
-            let name = self.character_name(&version).unwrap_or_else(|| {
-                self.say(
-                    LogLevel::Warn,
-                    format!(
-                        "Gameplay connection from {peer}: the character's row could not be read, so the load names it 'Player'."
-                    ),
-                );
-                "Player".to_string()
-            });
+            let sheet = self.character_sheet(&version);
             let is_explorable = u8::from(map.kind == crate::world::map_kind::EXPLORABLE);
             let frames = vec![
                 instance_packets::instance_load_head(),
                 instance_packets::instance_player_data_start(),
-                instance_packets::instance_load_player_name(&name),
+                instance_packets::instance_load_player_name(&sheet.name),
                 instance_packets::instance_load_info(
                     CREATION_AGENT,
                     map.id as u16,
@@ -484,7 +487,7 @@ impl WorldSession {
                     LogLevel::Info,
                     format!(
                         "Gameplay connection from {peer}: map {} ({}, type {}) is loading - {} message(s), {} bytes: the load head, the player-data start, the name '{}' and the instance's record (district {district}, language {language}).",
-                        map.id, map.name, map.kind, frames.len(), block.len(), name
+                        map.id, map.name, map.kind, frames.len(), block.len(), sheet.name
                     ),
                 ),
                 Err(error) => {
@@ -497,11 +500,9 @@ impl WorldSession {
                 }
             }
 
-            // What the client asks next, and what a load answers: where it stands, and then its own
-            // body and the end of the load.
-            let mut pending_name = name;
-            self.load_map(io, &peer, map, &mut pending_name, &mut crypt, &version)
-                .await;
+            // What the client asks next, and what a load answers: the items, where it stands, and
+            // then its own body and the end of the load.
+            self.load_map(io, &peer, map, &sheet, &mut crypt).await;
             return;
         }
 
@@ -705,21 +706,28 @@ impl WorldSession {
         }
     }
 
-    /// The character's name, read from its row when the program opened a character database.
+    /// What a load needs from the character's row: the name it shows, and the campaign and profession
+    /// whose starting set the item stream carries.
     ///
-    /// The gameplay connection names the character by uuid in its version message, so the row is one
-    /// lookup away and no second source of truth is needed. The read goes through the pool's worker
-    /// queue: this runs inside the network's runtime, where the synchronous connection's own
-    /// `block_on` is not allowed (`database/src/Database/Pool.rs`).
-    fn character_name(&self, version: &crate::server::protocol::GameVersion) -> Option<String> {
-        let pool = self.characters.as_ref()?;
+    /// A connection whose row cannot be read is loaded as a fresh Prophecies Warrior named "Player":
+    /// a load gives the client a body either way, and the row is what makes the name and the set its
+    /// own.
+    fn character_sheet(&self, version: &crate::server::protocol::GameVersion) -> CharacterSheet {
+        let fallback = CharacterSheet {
+            name: "Player".to_string(),
+            campaign: 0,
+            profession: character_packets::DEFAULT_PROFESSION,
+        };
+        let Some(pool) = self.characters.as_ref() else {
+            return fallback;
+        };
         let uuid = crate::characters::uuid_text(&version.character);
         let reply = match pool.lock() {
             Ok(pool) => pool.query_reply(
-                "SELECT \"name\" FROM \"characters\" WHERE \"uuid\" = $1",
-                vec![database::database::Param::Text(uuid)],
+                "SELECT \"name\", \"campaign\", \"primary_profession\" FROM \"characters\" WHERE \"uuid\" = $1",
+                vec![Param::Text(uuid)],
             ),
-            Err(_) => return None,
+            Err(_) => return fallback,
         };
         let rows = match reply.recv() {
             Ok(Ok(rows)) => rows,
@@ -728,36 +736,53 @@ impl WorldSession {
                     LogLevel::Error,
                     format!("the character's row cannot be read: {error}"),
                 );
-                return None;
+                return fallback;
             }
             Err(_) => {
                 self.say(
                     LogLevel::Error,
                     "the character database answered no query: it is shutting down",
                 );
-                return None;
+                return fallback;
             }
         };
         rows.first()
-            .map(|row| row.get::<usize, String>(0))
+            .map(|row| CharacterSheet {
+                name: row.get::<usize, String>(0),
+                campaign: row.get::<usize, i64>(1) as u8,
+                profession: row.get::<usize, i64>(2) as u8,
+            })
+            .unwrap_or(fallback)
     }
 
-    /// The rest of a map's load: where the character stands, its own body, and the end of the load.
+    /// The rest of a map's load: the ping pair, the inventory and the map's record, where the
+    /// character stands, its own body, and the end of the load.
     ///
-    /// The client asks; the world answers. `0x8088` is the spawn request and is answered with `0x0196`,
-    /// a point of this map's own list scattered per R13; `0x8090` is the players request, which ends
-    /// with the load's last message. Everything else is logged by the name the protocol table gives it,
-    /// which is what says what is still missing.
+    /// The client asks and the world answers, in the order a working server measured
+    /// (`recordings/gwps/world/load-stream.log`): `0x8091` wants the items and is answered with the
+    /// inventory stream and the map's record, `0x8088` wants the entry point and is answered with a
+    /// point of this map's own list (scattered per R13) and the first tick, and `0x8090` wants the
+    /// players and ends the load. What is still missing is named here rather than implied: the
+    /// agent stream of step 6 and the party stream of step 7 are not sent, and the PvP halves carry
+    /// the empty values a fresh character has.
     async fn load_map(
         &self,
         io: &mut SessionIo,
         peer: &str,
         map: &crate::world::MapEntry,
-        name: &mut String,
+        sheet: &CharacterSheet,
         crypt: &mut AuthCrypt,
-        version: &crate::server::protocol::GameVersion,
     ) {
-        let _ = version;
+        // The unasked pair the measured load follows the head block with.
+        self.send(
+            io,
+            peer,
+            crypt,
+            &[misc_packets::ping_request(), misc_packets::ping_reply(0x14)],
+            "the ping pair",
+        )
+        .await;
+
         let mut pending: Vec<u8> = Vec::new();
         let mut buffer = vec![0u8; 1024];
 
@@ -781,41 +806,74 @@ impl WorldSession {
                 let message: Vec<u8> = pending.drain(..used).collect();
 
                 match header {
-                    // The spawn request: a random point of this map's own list, scattered (R13).
+                    // The items ask: the inventory stream and the map's record, measured in one
+                    // block. The manifest pair that ends it names the map in its second form.
+                    instance_packets::CLIENT_LOAD_REQUEST_ITEMS => {
+                        let mut frames = match self.creation.as_ref() {
+                            Some(tables) => crate::creation::load_item_stream(
+                                tables,
+                                sheet.campaign,
+                                sheet.profession,
+                            ),
+                            None => Vec::new(),
+                        };
+                        frames.push(misc_packets::hard_mode_unlocked(1));
+                        frames.push(character_packets::character_update_info());
+                        frames.push(misc_packets::map_update_current(map.id as u16, 0));
+                        frames.push(instance_packets::ready_for_map_spawn(0));
+                        frames.push(instance_packets::instance_manifest_phase(0));
+                        frames.push(instance_packets::instance_manifest_phase(1));
+                        frames.push(instance_packets::instance_manifest_done(2, 877, 0));
+                        frames.push(instance_packets::instance_manifest_phase(0));
+                        frames.push(instance_packets::instance_manifest_phase(1));
+                        frames.push(instance_packets::instance_manifest_done(
+                            0,
+                            map.id as u16,
+                            0,
+                        ));
+                        self.send(io, peer, crypt, &frames, "the inventory and the map's record")
+                            .await;
+                    }
+                    // The spawn request: a random point of this map's own list, scattered (R13),
+                    // and the first simulation tick.
                     instance_packets::CLIENT_LOAD_REQUEST_SPAWN => {
-                        let frames = match self.entry_point(map) {
-                            Some(point) => vec![instance_packets::instance_load_spawn_point(
-                                map.file_id,
-                                point.0,
-                                point.1,
-                                point.2,
-                            )],
+                        let mut frames = match self.entry_point(map) {
+                            Some(point) => {
+                                self.say(
+                                    LogLevel::Info,
+                                    format!(
+                                        "Gameplay connection from {peer}: the character stands at {:.2}, {:.2} (plane {}) on map {}.",
+                                        point.0, point.1, point.2, map.id
+                                    ),
+                                );
+                                vec![instance_packets::instance_load_spawn_point(
+                                    map.file_id,
+                                    point.0,
+                                    point.1,
+                                    point.2,
+                                )]
+                            }
                             None => {
                                 self.say(
                                     LogLevel::Warn,
                                     format!(
-                                        "Gameplay connection from {peer}: map {} has no spawn point, so the client is told nothing."
-                                        , map.id
+                                        "Gameplay connection from {peer}: map {} has no spawn point, so the client is told nothing.",
+                                        map.id
                                     ),
                                 );
                                 Vec::new()
                             }
                         };
-                        if let Some(point) = self.entry_point(map) {
-                            self.say(
-                                LogLevel::Info,
-                                format!(
-                                    "Gameplay connection from {peer}: the character stands at {:.2}, {:.2} (plane {}) on map {}.",
-                                    point.0, point.1, point.2, map.id
-                                ),
-                            );
-                        }
+                        frames.push(misc_packets::world_simulation_tick(500));
                         self.send(io, peer, crypt, &frames, "the entry position").await;
                     }
-                    // The players request: the character's own body, then the load is over.
+                    // The players request: the PvP halves, the character's own body, then the load
+                    // is over.
                     instance_packets::CLIENT_LOAD_REQUEST_PLAYERS => {
                         let frames = vec![
-                            instance_packets::player_create(CREATION_AGENT, name),
+                            misc_packets::pvp_update_unlocked_skills(&[]),
+                            misc_packets::pvp_update_unlocked_heroes(&[0xFFFF_FFFF; 8]),
+                            instance_packets::player_create(CREATION_AGENT, &sheet.name),
                             instance_packets::instance_load_finish(),
                         ];
                         self.send(io, peer, crypt, &frames, "the player and the load's last message")
@@ -823,12 +881,23 @@ impl WorldSession {
                         self.say(
                             LogLevel::Info,
                             format!(
-                                "Gameplay connection from {peer}: map {} is loaded - the character '{name}' is in it.",
-                                map.id
+                                "Gameplay connection from {peer}: map {} is loaded - the character '{}' is in it.",
+                                map.id, sheet.name
                             ),
                         );
                         let _ = message;
                         return;
+                    }
+                    // The client's own ping on a live connection: the reference logs it and
+                    // answers nothing, so this does the same.
+                    GAME_PING => {
+                        self.say(
+                            LogLevel::Info,
+                            format!(
+                                "Gameplay connection from {peer}: a ping on the loaded map, {message_len} bytes.",
+                                message_len = message.len()
+                            ),
+                        );
                     }
                     other => {
                         self.log.out(
@@ -1443,12 +1512,62 @@ Logger.root = 6,Console
             .collect();
         assert_eq!(headers, vec![0x017C, 0x0186, 0x017D, 0x019A]);
 
-        // 4. The spawn request: the world answers with the map file and a point of its own list.
+        // 4. The ping pair the measured load follows the head block with.
+        let mut ping = vec![0u8; 8];
+        client.read_exact(&mut ping).unwrap();
+        reading.apply(&mut ping);
+        assert_eq!(
+            ping,
+            vec![0x0C, 0x00, 0x0D, 0x00, 0x14, 0x00, 0x00, 0x00],
+            "the ping request and its reply, as a working server sent them"
+        );
+
+        // 5. The items ask: the inventory stream and the map's record, in the measured order.
+        let mut ask = vec![0x91, 0x80, 0x00, 0x00];
+        sending.apply(&mut ask);
+        client.write_all(&ask).unwrap();
+
+        let mut expected_items = crate::creation::load_item_stream(
+            world.creation(),
+            0,
+            character_packets::DEFAULT_PROFESSION,
+        );
+        expected_items.push(misc_packets::hard_mode_unlocked(1));
+        expected_items.push(character_packets::character_update_info());
+        expected_items.push(misc_packets::map_update_current(148, 0));
+        expected_items.push(instance_packets::ready_for_map_spawn(0));
+        expected_items.push(instance_packets::instance_manifest_phase(0));
+        expected_items.push(instance_packets::instance_manifest_phase(1));
+        expected_items.push(instance_packets::instance_manifest_done(2, 877, 0));
+        expected_items.push(instance_packets::instance_manifest_phase(0));
+        expected_items.push(instance_packets::instance_manifest_phase(1));
+        expected_items.push(instance_packets::instance_manifest_done(0, 148, 0));
+        let expected_bytes: usize = expected_items.iter().map(Vec::len).sum();
+        let mut items = vec![0u8; expected_bytes];
+        client.read_exact(&mut items).unwrap();
+        reading.apply(&mut items);
+        let mut whole = Vec::new();
+        for frame in &expected_items {
+            whole.extend_from_slice(frame);
+        }
+        assert_eq!(items, whole, "the items and the record, in the measured order");
+        // The measured header sequence, so a reordering fails here rather than at the client.
+        let headers: Vec<u16> = expected_items
+            .iter()
+            .map(|frame| u16::from_le_bytes([frame[0], frame[1]]))
+            .collect();
+        for header in [0x0144, 0x0148, 0x0147, 0x0141, 0x00EA, 0x00ED, 0x0070, 0x0030, 0x0099, 0x01AC, 0x0199, 0x0198] {
+            assert!(headers.contains(&header), "header 0x{header:04X} is in the answer");
+        }
+        assert_eq!(*headers.last().unwrap(), 0x0198, "the manifest ends the block");
+
+        // 6. The spawn request: the world answers with the map file and a point of its own list,
+        // and the first simulation tick.
         let mut ask = vec![0x88, 0x80];
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
 
-        let mut spawn = vec![0u8; 26];
+        let mut spawn = vec![0u8; 32];
         client.read_exact(&mut spawn).unwrap();
         reading.apply(&mut spawn);
         assert_eq!(&spawn[..2], &[0x96, 0x01], "the entry position");
@@ -1464,19 +1583,34 @@ Logger.root = 6,Console
             (x - 9541.87).abs() <= 250.0 + 1.0 && (y - 4796.46).abs() <= 250.0 + 1.0,
             "the point {x}, {y} is within the scatter of the map's own"
         );
+        assert_eq!(
+            &spawn[26..],
+            &[0x1E, 0x00, 0xF4, 0x01, 0x00, 0x00],
+            "and the simulation's first tick, 500"
+        );
 
-        // 5. The players request: the character's body and the load's last message.
+        // 7. The players request: the PvP halves, the character's body and the load's last message.
         let mut ask = vec![0x90, 0x80, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
                            0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0x00];
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
 
         let player = instance_packets::player_create(1, "Player");
-        let mut answered = vec![0u8; player.len() + 2];
+        let mut answered = vec![0u8; 4 + 36 + player.len() + 2];
         client.read_exact(&mut answered).unwrap();
         reading.apply(&mut answered);
-        assert_eq!(&answered[..player.len()], player.as_slice(), "the character's own body");
-        assert_eq!(&answered[player.len()..], &[0x8E, 0x01], "and the load is over");
+        assert_eq!(&answered[..4], &[0x1D, 0x00, 0x00, 0x00], "no unlocked PvP skills");
+        assert_eq!(
+            &answered[4..40],
+            misc_packets::pvp_update_unlocked_heroes(&[0xFFFF_FFFF; 8]).as_slice(),
+            "the unlocked-hero bitmap"
+        );
+        assert_eq!(
+            &answered[40..40 + player.len()],
+            player.as_slice(),
+            "the character's own body"
+        );
+        assert_eq!(&answered[40 + player.len()..], &[0x8E, 0x01], "and the load is over");
 
         manager.stop_network();
         log.shutdown();
@@ -1604,11 +1738,17 @@ Logger.root = 6,Console
             "the travel's map, district and language, not the version message's"
         );
 
-        // 4. Where it stands is map 148's own file, which the creation instance does not have.
+        // 4. The ping pair, then where it stands is map 148's own file, which the creation
+        // instance does not have.
+        let mut ping = vec![0u8; 8];
+        client.read_exact(&mut ping).unwrap();
+        reading.apply(&mut ping);
+        assert_eq!(ping.len(), 8, "the measured ping pair");
+
         let mut ask = vec![0x88, 0x80];
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
-        let mut spawn = vec![0u8; 26];
+        let mut spawn = vec![0u8; 32];
         client.read_exact(&mut spawn).unwrap();
         reading.apply(&mut spawn);
         assert_eq!(
@@ -1616,6 +1756,7 @@ Logger.root = 6,Console
             &112_509u32.to_le_bytes(),
             "the outpost's file, so the record decided the map"
         );
+        assert_eq!(&spawn[26..32], &[0x1E, 0x00, 0xF4, 0x01, 0x00, 0x00], "the first tick");
 
         // 5. The record is claimed once: a second claim finds nothing.
         let claimed = crate::maps::DatabaseTravels::new(Arc::clone(&login), log.clone())

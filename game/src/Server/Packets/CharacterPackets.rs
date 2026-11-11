@@ -17,6 +17,8 @@ pub const UPDATE_UNLOCKED_SKILLS: u16 = 0x00DB;
 pub const SKILLBAR_UPDATE: u16 = 0x00DA;
 /// `GAME_SMSG_CHARACTER_UPDATE_FACTIONS`: a character's progress record.
 pub const CHARACTER_UPDATE_FACTIONS: u16 = 0x00E9;
+/// `GAME_SMSG_CHARACTER_UPDATE_INFO` (`0x0030`): a character summary - a counted string and six dwords.
+pub const CHARACTER_UPDATE_INFO: u16 = 0x0030;
 /// `GAME_SMSG_CHAR_CREATION_SUCCESS`: the character was written.
 pub const CHAR_CREATION_SUCCESS: u16 = 0x0188;
 /// `GAME_SMSG_CHAR_CREATION_ERROR`: it was not, and the code says why.
@@ -138,6 +140,18 @@ pub fn character_update_factions(progress: &[u32; 13]) -> Vec<u8> {
 /// One of the four faction caps: the header names the faction, then the cap.
 pub fn faction_max(header: u16, cap: u32) -> Vec<u8> {
     frame(header, &cap.to_le_bytes())
+}
+
+/// `0x0030`: the character summary a load sends - a counted string and six dwords.
+///
+/// Source: `recordings/gwps/world/load-stream.log` - `SEND 0x0030 28 bytes :
+/// 30 00 00 00 00 00 00 00 00 00 00 00 E8 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00`: an empty
+/// counted string (`00 00`) and the dwords 0, 0, 1000, 0, 0, 0. What the dword of 1000 names is not
+/// measured; a load repeats these values, so they are carried as the capture has them.
+pub fn character_update_info() -> Vec<u8> {
+    let mut body = vec![0u8; 2 + 24];
+    body[10..14].copy_from_slice(&1000u32.to_le_bytes());
+    frame(CHARACTER_UPDATE_INFO, &body)
 }
 
 #[cfg(test)]
