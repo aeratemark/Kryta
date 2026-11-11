@@ -229,10 +229,12 @@ reference's own: a missing or unknown session is `401`, a provider that is not `
 
 **What the portal does not check: a password.** The evidence for call 2 names the
 `UserId`/`LoginName`/`Provider` block and no password field, and no capture shows the client sending
-one, so this tree answers the login name and hands out the pair - and the auth program then trusts
-the pair the login message presents. A refusal for a wrong password is therefore not written: its
-answer is not measured. What an identity check would be is the owner's, and it is named here rather
-than silently absent.
+one - ASURA's own web gate, the implementation this client's four calls were measured through
+(`crates/asura-webgate/src/lib.rs`), resolves `LoginName` only and answers `400 who are you?` for an
+unknown email, with no password in the request. So this tree answers the login name and hands out the
+pair, and the auth program then trusts the pair the login message presents. A refusal for a wrong
+password is therefore not written: the client's flow has no password to refuse. What an identity
+check would be is the owner's, and it is named here rather than silently absent.
 
 - Source: `docs/evidence/client-protocol.md` section 4, measured with a real client at build
   39112, where all four answered `200` and the pair they returned is what the login message carried.
