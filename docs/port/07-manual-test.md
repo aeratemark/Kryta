@@ -67,3 +67,12 @@ These are the plan's known gaps, each waiting on a capture rather than on work:
 For any step that behaves differently: the client's screen (a screenshot is enough), the last 50 lines
 of each program's log, and the step number above. The log line the step's row says must appear is the
 one that says which half broke - the login program's, the world program's, or the seam between them.
+
+## The same journey without the client
+
+The world half of this journey is also played automatically against the *program* by
+`cargo test -p worldserver --test end_to_end -- --ignored --nocapture`: it starts the real
+`worldserver`, performs the creation screen, loads map 148, asks for the items, the spawn point and the
+players, sends the travel request and reads the ticks - the same wire steps 5 to 8 do with a client.
+The login half is `cargo test -p authserver -- --ignored`. Neither replaces the client: the client is
+still the judge of what it draws.
