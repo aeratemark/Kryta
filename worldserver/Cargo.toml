@@ -23,3 +23,7 @@ common = { path = "../common" }
 database = { path = "../database" }
 # The reference's signal handler, which is what its io loop returns on.
 ctrlc = "3"
+
+# The tests make and drop a database of their own, so they speak to the server directly.
+[dev-dependencies]
+postgres = "0.19"
