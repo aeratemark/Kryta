@@ -82,6 +82,9 @@ Two open items, and they are not ours to invent:
 
 - **how a refused travel reports itself** (R58: a full or closing district cannot be entered) - the wire
   shape of the refusal is not captured.
+- **what answers the client's in-game travel request** - the client's side is read now (`0x00B1`, E220's
+  nine bytes: map, territory, district, language, flag), and E28 says the answer is `473 RedirectState`
+  then `421 Redirect`; no capture on this build shows the redirect's fields.
 - **the first word of `409 MapData`** - measured but not named.
 
 Both go to the owner or to a capture, in that order of preference.

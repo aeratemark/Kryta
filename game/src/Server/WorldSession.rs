@@ -63,6 +63,14 @@ const GAME_PING: u16 = 0x800D;
 /// `GAME_CMSG_ITEM_MOVE` (`0x8072`): a drag in the inventory - the item, the bag and the slot.
 const CLIENT_ITEM_MOVE: u16 = 0x8072;
 
+/// The client's movement reports: `0x803D` carries the direction as well, the others a point.
+const CLIENT_MOVE_TO_COORD_WITH_DIR: u16 = 0x803D;
+const CLIENT_MOVE_TO_COORD: u16 = 0x803E;
+const CLIENT_LAST_POS_BEFORE_MOVE_CANCELED: u16 = 0x8047;
+
+/// The client's in-game travel request - `PARTY_TRAVEL`, `0x00B1`, nine bytes (E220, E28).
+const CLIENT_PARTY_TRAVEL: u16 = 0x00B1;
+
 /// The simulation's tick period: the reference sent one `0x001E` every 90-110 ms (average 105 ms over
 /// 1780 ticks, `recordings/asura/feature/travel/first-crossing-20261031.jsonl`), so this ticks at
 /// 100 ms and says nothing of its own: the client's world time is this world's tick.
@@ -141,6 +149,9 @@ pub struct WorldSession {
     /// The district this connection entered, so [`Self::leave_district`] can give the place back.
     /// `None` until a place has been entered.
     entered: std::sync::Mutex<Option<(u32, u32)>>,
+    /// The player's own agent: where the client says it is. The client moves it; the world keeps
+    /// what it reports, which is what a later load or a second client would be told.
+    agent: std::sync::Mutex<Option<crate::agents::Agent>>,
     /// The bags, items and profession sets a creation screen is built from, when the program read them.
     creation: Option<crate::creation::Tables>,
     /// The item templates the world holds, so a load can resolve a character's held items.
@@ -163,6 +174,7 @@ impl WorldSession {
             login: None,
             districts: world.districts(),
             entered: std::sync::Mutex::new(None),
+            agent: std::sync::Mutex::new(None),
             creation: Some(world.creation().clone()),
             templates: world.templates().to_vec(),
             master: None,
@@ -905,7 +917,8 @@ impl WorldSession {
                     // The spawn request: a random point of this map's own list, scattered (R13),
                     // and the first simulation tick.
                     instance_packets::CLIENT_LOAD_REQUEST_SPAWN => {
-                        let mut frames = match self.entry_point(map) {
+                        let point = self.entry_point(map);
+                        let mut frames = match point {
                             Some(point) => {
                                 self.say(
                                     LogLevel::Info,
@@ -914,6 +927,13 @@ impl WorldSession {
                                         point.0, point.1, point.2, map.id
                                     ),
                                 );
+                                if let Ok(mut agent) = self.agent.lock() {
+                                    *agent = Some(crate::agents::Agent::at(
+                                        CREATION_AGENT,
+                                        point.0,
+                                        point.1,
+                                    ));
+                                }
                                 vec![instance_packets::instance_load_spawn_point(
                                     map.file_id,
                                     point.0,
@@ -1022,6 +1042,44 @@ impl WorldSession {
                             ),
                         );
                     }
+                    // Where the client says it went. The client has already moved itself; the world
+                    // keeps the point, which is the player's own agent's state.
+                    CLIENT_MOVE_TO_COORD_WITH_DIR
+                    | CLIENT_MOVE_TO_COORD
+                    | CLIENT_LAST_POS_BEFORE_MOVE_CANCELED => {
+                        if let Some((x, y)) = movement_point(&message) {
+                            if let Ok(mut agent) = self.agent.lock()
+                                && let Some(agent) = agent.as_mut()
+                            {
+                                agent.moved_to(x, y);
+                            }
+                            self.log.out(
+                                LogLevel::Debug,
+                                "network.trace",
+                                format!(
+                                    "trace {peer} game in  a movement: {x:.2}, {y:.2}"
+                                ),
+                            );
+                        }
+                    }
+                    // The client's own in-game travel request. The redirect that answers it is not
+                    // captured on this build, so the connection stays where it is and the request is
+                    // named in the log rather than acted on (`docs/port/06-world-plan.md`, step 3).
+                    CLIENT_PARTY_TRAVEL => match client_travel(&message) {
+                        Some((map_id, territory, district, language, flag)) => self.say(
+                            LogLevel::Info,
+                            format!(
+                                "Gameplay connection from {peer}: the client asks to travel to map {map_id} (territory {territory}, district {district}, language {language}, flag {flag}); the redirect's own wire is not captured yet, so the connection stays where it is."
+                            ),
+                        ),
+                        None => self.say(
+                            LogLevel::Warn,
+                            format!(
+                                "Gameplay connection from {peer}: a travel request of {} bytes cannot be read.",
+                                message.len()
+                            ),
+                        ),
+                    },
                     other => {
                         self.log.out(
                             LogLevel::Info,
@@ -1376,6 +1434,36 @@ fn item_move(message: &[u8]) -> Option<(u32, u16, u8)> {
     ))
 }
 
+/// The x and y a movement message carries: a `Vect2` right after the header.
+///
+/// Source: the client's own movement rows in this tree's table - `0x803D`, `0x803E` and `0x8047`,
+/// each `MsgHeader Vect2 ...`, so x is at 2 and y at 6.
+fn movement_point(message: &[u8]) -> Option<(f32, f32)> {
+    let x = message.get(2..6)?;
+    let y = message.get(6..10)?;
+    Some((
+        f32::from_le_bytes([x[0], x[1], x[2], x[3]]),
+        f32::from_le_bytes([y[0], y[1], y[2], y[3]]),
+    ))
+}
+
+/// What a client's `0x00B1` travel asks for: the map, the territory, the district, the language and
+/// the flag - the nine-byte frame `docs/game-rules.md` E220 measured and E28 splits.
+fn client_travel(message: &[u8]) -> Option<(u16, u8, u16, u8, u8)> {
+    let map = message.get(2..4)?;
+    let territory = *message.get(4)?;
+    let district = message.get(5..7)?;
+    let language = *message.get(7)?;
+    let flag = *message.get(8)?;
+    Some((
+        u16::from_le_bytes([map[0], map[1]]),
+        territory,
+        u16::from_le_bytes([district[0], district[1]]),
+        language,
+        flag,
+    ))
+}
+
 impl Session for WorldSession {
     fn run(self: Box<Self>, mut io: SessionIo) -> SessionFuture {
         Box::pin(async move {
@@ -1474,10 +1562,32 @@ mod tests {
         })
     }
 
+    #[test]
+    fn a_travel_request_is_the_nine_bytes_the_ledger_measured() {
+        // E220's own example, as the client sends it: map 148, territory -2, no district, no
+        // language, and the flag that was 1 in every captured request.
+        let mut message = vec![0xB1, 0x00];
+        message.extend_from_slice(&148u16.to_le_bytes());
+        message.push(0xFE);
+        message.extend_from_slice(&0u16.to_le_bytes());
+        message.push(0);
+        message.push(1);
+        assert_eq!(client_travel(&message), Some((148, 0xFE, 0, 0, 1)));
+        assert_eq!(client_travel(&message[..8]), None, "short messages are not read");
+    }
+
+    #[test]
+    fn a_movement_point_is_the_vect2_at_the_head() {
+        let mut message = vec![0x3D, 0x80];
+        message.extend_from_slice(&9541.87f32.to_le_bytes());
+        message.extend_from_slice(&4796.46f32.to_le_bytes());
+        message.extend_from_slice(&[0u8; 16]);
+        assert_eq!(movement_point(&message), Some((9541.87, 4796.46)));
+    }
+
     /// The templates a test's world runs with, built from the creation content's own definitions: what
     /// the world program reads back from its table, without a database.
-    fn templates_from(items: Vec<crate::creation::Item>) -> Vec<crate::data_stores::ItemDefinition> {
-        items
+    fn templates_from(items: Vec<crate::creation::Item>) -> Vec<crate::data_stores::ItemDefinition> {        items
             .iter()
             .enumerate()
             .map(|(index, item)| crate::data_stores::ItemDefinition {
@@ -1839,6 +1949,29 @@ Logger.root = 6,Console
             &501u32.to_le_bytes(),
             "the next tick after the load's first, 500"
         );
+
+        // 9. The client's own traffic does not end the session: a movement, then a travel request,
+        // and the world ticks again after both.
+        let mut movement = vec![0x3D, 0x80];
+        movement.extend_from_slice(&9550.0f32.to_le_bytes());
+        movement.extend_from_slice(&4800.0f32.to_le_bytes());
+        movement.extend_from_slice(&[0u8; 16]);
+        sending.apply(&mut movement);
+        client.write_all(&movement).unwrap();
+
+        let mut travel = vec![0xB1, 0x00];
+        travel.extend_from_slice(&148u16.to_le_bytes());
+        travel.push(0xFE); // territory -2
+        travel.extend_from_slice(&0u16.to_le_bytes());
+        travel.push(0); // language
+        travel.push(1); // flag
+        sending.apply(&mut travel);
+        client.write_all(&travel).unwrap();
+
+        let mut tick = vec![0u8; 6];
+        client.read_exact(&mut tick).unwrap();
+        reading.apply(&mut tick);
+        assert_eq!(&tick[..2], &[0x1E, 0x00], "the world is still ticking");
 
         manager.stop_network();
         log.shutdown();
