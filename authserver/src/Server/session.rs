@@ -1089,7 +1089,7 @@ mod tests {
             build: 39167,
         });
         Arc::new(crate::server::FrontDoor::new(
-            Arc::new(worlds),
+            Arc::new(std::sync::Mutex::new(worlds)),
             Log::new(),
         ))
     }

@@ -37,13 +37,15 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 /// The worlds this program may hand a client to, and what it does with a connection that arrives for
 /// one.
 pub struct FrontDoor {
-    worlds: Arc<WorldList>,
+    /// Behind a lock because the list is refreshed on a timer (`RealmsStateUpdateDelay`): a world
+    /// that comes back online is handed out again without a restart.
+    worlds: Arc<std::sync::Mutex<WorldList>>,
     log: Log,
 }
 
 impl FrontDoor {
     /// A front door onto these worlds.
-    pub fn new(worlds: Arc<WorldList>, log: Log) -> Self {
+    pub fn new(worlds: Arc<std::sync::Mutex<WorldList>>, log: Log) -> Self {
         Self { worlds, log }
     }
 
@@ -52,7 +54,8 @@ impl FrontDoor {
     /// Reference: the reference picks a live game server out of its own registry and answers
     /// `0x0009` with it.
     pub fn pick(&self) -> Option<GameServer> {
-        self.worlds
+        let worlds = self.worlds.lock().ok()?;
+        worlds
             .worlds()
             .values()
             .find(|world| !world.is_offline())
@@ -68,7 +71,8 @@ impl FrontDoor {
     /// id, so the lookup is by id. A world the list does not hold is a world this program never
     /// offered, and the connection is not routed.
     pub fn endpoint_for(&self, map_token: u32) -> Option<SocketAddr> {
-        self.worlds
+        let worlds = self.worlds.lock().ok()?;
+        worlds
             .get(map_token)
             .filter(|world| !world.is_offline())
             .map(|world| world.endpoint())
@@ -186,7 +190,7 @@ mod tests {
         for realm in realms {
             worlds.insert(realm);
         }
-        FrontDoor::new(Arc::new(worlds), Log::new())
+        FrontDoor::new(Arc::new(std::sync::Mutex::new(worlds)), Log::new())
     }
 
     #[test]

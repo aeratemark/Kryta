@@ -440,9 +440,11 @@ fn run(args: &[String]) -> Result<(), String> {
     // The front door: the worlds a travel is answered from, and where a gameplay connection that
     // arrives on this port is copied to. It is the same world list in both roles, so the address a
     // client is told and the address this program dials for it cannot disagree
-    // (`docs/decisions/0004-gameplay-connections-arrive-at-the-front-door.md`).
+    // (`docs/decisions/0004-gameplay-connections-arrive-at-the-front-door.md`). The list is behind a
+    // lock because it is refreshed on `RealmsStateUpdateDelay` (below).
+    let world_list = std::sync::Arc::new(std::sync::Mutex::new(worlds));
     let front_door = std::sync::Arc::new(crate::server::FrontDoor::new(
-        std::sync::Arc::new(worlds),
+        std::sync::Arc::clone(&world_list),
         log.clone(),
     ));
     match front_door.pick() {
@@ -460,6 +462,70 @@ fn run(args: &[String]) -> Result<(), String> {
             "Front door: every world in the list is offline, so a client asking for a map will be refused.",
         ),
     }
+
+    // The world list is refreshed on the operator's interval, the same way the reference's
+    // `sRealmList->Initialize(*ioContext, RealmsStateUpdateDelay)` keeps its realms current: the
+    // table says who is online, a world that comes back must be handed out again, and one marked
+    // offline must stop being offered - both without a restart. A change is logged; an unchanged
+    // refresh says nothing.
+    let stop_realms = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let refresh_writer = {
+        let log = log.clone();
+        let login = std::sync::Arc::clone(&login);
+        let world_list = std::sync::Arc::clone(&world_list);
+        let worlds_file = worlds_file.clone();
+        let stop_realms = std::sync::Arc::clone(&stop_realms);
+        let delay = update_delay.max(1);
+        std::thread::Builder::new()
+            .name("realms".to_string())
+            .spawn(move || {
+                let mut last = world_list_summary(&world_list);
+                while !stop_realms.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_secs(u64::from(delay)));
+                    if stop_realms.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    let mut refreshed = WorldList::new();
+                    let loaded = match login.lock() {
+                        Ok(mut pool) => refreshed.load(pool.connection_mut(), &log),
+                        Err(_) => continue,
+                    };
+                    match loaded {
+                        Ok(_) => {}
+                        Err(error) => {
+                            log.out(
+                                LogLevel::Warn,
+                                "server.authserver",
+                                format!("The world list could not be refreshed: {error}"),
+                            );
+                            continue;
+                        }
+                    }
+                    if !worlds_file.is_empty()
+                        && let Err(error) = refreshed.merge_file(&worlds_file, &log)
+                    {
+                        log.out(
+                            LogLevel::Warn,
+                            "server.authserver",
+                            format!("The world list file could not be read on a refresh: {error}"),
+                        );
+                    }
+                    if let Ok(mut current) = world_list.lock() {
+                        *current = refreshed;
+                    }
+                    let now = world_list_summary(&world_list);
+                    if now != last {
+                        log.out(
+                            LogLevel::Info,
+                            "server.authserver",
+                            format!("World list refreshed: {now}"),
+                        );
+                        last = now;
+                    }
+                }
+            })
+            .map_err(|error| format!("cannot start the world list refresh: {error}"))?
+    };
 
     // The characters of the account a login resolves: read from the character database, which is the
     // second database this program opens now that a login's answer lists them
@@ -593,6 +659,8 @@ fn run(args: &[String]) -> Result<(), String> {
 
     stop_status.store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = status_writer.join();
+    stop_realms.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = refresh_writer.join();
 
     sockets.stop_network();
     if let Some(mut portal_sockets) = portal_sockets {
@@ -636,6 +704,27 @@ fn wait_for_shutdown() {
     }
 
     let _ = receiver.recv();
+}
+
+/// A one-line summary of a world list, for deciding whether a refresh changed anything.
+fn world_list_summary(worlds: &std::sync::Arc<std::sync::Mutex<WorldList>>) -> String {
+    let Ok(worlds) = worlds.lock() else {
+        return String::new();
+    };
+    worlds
+        .worlds()
+        .values()
+        .map(|world| {
+            format!(
+                "world {} at {}:{} {}",
+                world.id,
+                world.address_text,
+                world.port,
+                if world.is_offline() { "offline" } else { "online" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// Print a complaint at the severity the policy gave it.
