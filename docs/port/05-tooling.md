@@ -54,10 +54,14 @@ reaches the data through the nouns' own repositories, so what a page writes is w
 
 Proved end to end on this machine: the page lists both accounts, `POST /accounts/eula` set a version and
 the row read back as `version 26`, `POST /accounts/create` wrote a row and `POST /accounts/delete` removed
-it, each answering a redirect to the list. The three new pages were fetched against the live databases:
+it, each answering a redirect to the list. The new pages were fetched against the live databases:
 `/characters` listed the rows the creation confirm wrote, `/worlds` listed world 2 "Kryta" at
-127.0.0.1:6113, and `/content` listed map 148 "Ascalon City (pre-Searing)" with its spawn point
-(9541.87, 4796.46, plane 0).
+127.0.0.1:6113, `/content` listed map 148 "Ascalon City (pre-Searing)" with its spawn point
+(9541.87, 4796.46, plane 0), and `/settings` listed both programs' files with the connection strings'
+passwords masked. The writes were exercised too: `POST /content/spawn` wrote a spawn point and
+`POST /content/spawn/remove` removed it, and `POST /content/party-cap` set a map's cap to 12 and cleared
+it with 0. The last full check fetched every page - `/`, `/accounts`, `/characters`, `/worlds`,
+`/content`, `/settings`, `/schema` - and each answered 200.
 
 The EULA itself is a column now (`data/sql/base/db_auth/account_eula.sql`): the version an account
 accepted, or 0 for none. The auth program's answer reports it, so a client that has accepted stops asking.
