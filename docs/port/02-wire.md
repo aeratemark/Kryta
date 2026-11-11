@@ -185,9 +185,11 @@ the same block appears between `0x0196` and the end in
 answer is ask-driven, not a fixed script.
 
 None of the unported frames is named in the ledger, and the capture does not say what selects them. The
-one pair in the list this tree can already build is `0x00B7`/`0x00B6` (the creation screen sends it);
-porting the rest needs the agent capture the plan's step 6 names, or a run with a client that shows what
-each one draws.
+frames in the list this tree can already build are the player's profession pair (`0x00B7`/`0x00B6`, the
+creation screen sends it) and the agent creation (`0x0020`, 99 bytes, `AgentPackets::world_create_agent`,
+ported field by field from the reference's own builder); what remains is the map's content - which
+agents a map has - which arrives with the capture the plan's step 6 names, or a run with a client that
+shows what each one draws.
 
 ## The file check
 
