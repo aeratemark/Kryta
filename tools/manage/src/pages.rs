@@ -4,6 +4,7 @@
 //! beyond the page itself, so a form is a plain `POST` and an answer is another page: the whole
 //! interface works on a machine with no JavaScript at all.
 
+use common::configuration::{Config, Policy};
 use shared::network::http::Response;
 
 use crate::Manage;
@@ -25,7 +26,7 @@ fn page(title: &str, body: &str) -> Response {
          </style></head><body>\n\
          <nav><a href=\"/\">overview</a><a href=\"/accounts\">accounts</a>\
          <a href=\"/characters\">characters</a><a href=\"/worlds\">worlds</a>\
-         <a href=\"/content\">content</a><a href=\"/schema\">schema</a></nav>\n\
+         <a href=\"/content\">content</a><a href=\"/settings\">settings</a><a href=\"/schema\">schema</a></nav>\n\
          <h1>{title}</h1>\n{body}\n</body></html>\n"
     );
     Response::html(200, html)
@@ -65,6 +66,11 @@ pub fn dashboard(manage: &Manage) -> Response {
         ),
         None => "no world database configured".to_string(),
     };
+    let (world_config, auth_config) = manage.config_paths();
+    let settings_state = match (world_config, auth_config) {
+        (None, None) => "no settings file named in manage.json".to_string(),
+        _ => "<a href=\"/settings\">open</a>".to_string(),
+    };
 
     let body = format!(
         "<p>The administration tool. It writes the same rows the servers read, through the same \
@@ -75,6 +81,7 @@ pub fn dashboard(manage: &Manage) -> Response {
          <tr><td>characters</td><td><code>kryta_characters.characters</code></td><td>{characters_state}</td></tr>\n\
          <tr><td>worlds</td><td><code>realmlist</code> + <code>data/realms.json</code></td><td>{worlds_state}</td></tr>\n\
          <tr><td>content</td><td>the world database's rows (<code>map</code>, <code>map_spawn</code>)</td><td>{content_state}</td></tr>\n\
+         <tr><td>settings</td><td>each program's own JSON</td><td>{settings_state}</td></tr>\n\
          <tr><td>schema</td><td>each database's <code>updates</code> record</td><td><a href=\"/schema\">open</a></td></tr>\n\
          </table>\n\
          <p class=\"note\">The tool serves this machine only, by default. A token in \
@@ -82,6 +89,58 @@ pub fn dashboard(manage: &Manage) -> Response {
         accounts.len()
     );
     page("overview", &body)
+}
+
+/// The two programs' own settings, read from their files: shown and validated, never rewritten.
+///
+/// The values are the file's, not the programs' effective ones: a program reads its file at start-up
+/// and applies the environment over it, and the file is what an operator shares. The passwords in a
+/// connection string are masked by the reader itself, so a page is safe to paste into an issue.
+pub fn settings(manage: &Manage) -> Response {
+    let (world_path, auth_path) = manage.config_paths();
+
+    let table = |path: Option<&str>| -> String {
+        let Some(path) = path else {
+            return "<p class=\"note\">No settings file is named in <code>manage.json</code>.</p>\
+                    <p class=\"note\">Add <code>WorldConfigFile</code> or <code>AuthConfigFile</code> \
+                    to <code>manage.json</code> to show one.</p>"
+                .to_string();
+        };
+        let config = match Config::load_json(path, false, Policy::default()) {
+            Ok(config) => config,
+            Err(error) => {
+                return format!(
+                    "<p class=\"note\"><code>{}</code> cannot be read: {}</p>",
+                    escape(path),
+                    escape(&error.to_string())
+                );
+            }
+        };
+        let mut rows: Vec<(String, String)> = config.describe();
+        rows.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut table = String::new();
+        table.push_str("<table>\n<tr><th>key</th><th>value</th></tr>\n");
+        for (key, value) in &rows {
+            table.push_str(&format!(
+                "<tr><td><code>{}</code></td><td><code>{}</code></td></tr>\n",
+                escape(key),
+                escape(value)
+            ));
+        }
+        table.push_str("</table>\n");
+        format!("<p class=\"note\"><code>{}</code> - {} key(s).</p>\n{}", escape(path), rows.len(), table)
+    };
+
+    let body = format!(
+        "<p class=\"note\">Each program's own JSON, read here and never written: an operator shares \
+         the file, and the program reads it at start-up. Values are the file's; an environment \
+         variable overrides a key at the program's start, not here.</p>\n\
+         <h2>the world program</h2>\n{}\n\
+         <h2>the login program</h2>\n{}\n",
+        table(world_path),
+        table(auth_path)
+    );
+    page("settings", &body)
 }
 
 /// The characters: every row the login lists, read through the noun's own repository.

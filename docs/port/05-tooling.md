@@ -50,6 +50,7 @@ reaches the data through the nouns' own repositories, so what a page writes is w
 | `/worlds` | the realm list and `data/realms.json` merged over it | done - read only, from the login's own reader |
 | `/content` | the maps and their spawn points (editable), the item templates, and the copies the world has open | done - the load's own rows, edited where they matter; the running-instances table is the world's `instance` rows, the same ones its tick disposes |
 | `/schema` | each database's own record of what its updater has applied, against the files on disk | done - read only; `changed` is the one to act on before a server refuses to start |
+| `/settings` | each program's own JSON, key by key, as the file states it | done - read only, passwords masked by the reader; `WorldConfigFile` and `AuthConfigFile` in `manage.json` say where the files are |
 
 Proved end to end on this machine: the page lists both accounts, `POST /accounts/eula` set a version and
 the row read back as `version 26`, `POST /accounts/create` wrote a row and `POST /accounts/delete` removed

@@ -55,6 +55,10 @@ pub struct Manage {
     worlds: Option<Arc<shared::worlds::WorldList>>,
     /// The databases whose updater records the schema page shows.
     schemas: Vec<DatabaseSchema>,
+    /// The two server programs' own settings files, when the tool is told where they are: the
+    /// settings page shows them. A file is shown and validated, never rewritten (`manage.json`).
+    world_config: Option<String>,
+    auth_config: Option<String>,
     token: Option<String>,
     log: Log,
 }
@@ -74,6 +78,7 @@ impl Manage {
             ("GET", "/content") => pages::content(self),
             ("POST", "/content/spawn") => self.add_spawn(request),
             ("POST", "/content/spawn/remove") => self.remove_spawn(request),
+            ("GET", "/settings") => pages::settings(self),
             ("GET", "/schema") => pages::schema(self),
             ("POST", "/accounts/eula") => self.set_eula(request),
             ("POST", "/accounts/create") => self.create(request),
@@ -232,6 +237,15 @@ impl Manage {
     pub fn list_items(&self) -> Option<Vec<game::data_stores::ItemDefinition>> {
         let items = self.items.as_ref()?;
         items.list().ok()
+    }
+
+    /// Where the two programs' settings files are, when the tool was told: the settings page reads
+    /// them from these paths and never writes them.
+    pub fn config_paths(&self) -> (Option<&str>, Option<&str>) {
+        (
+            self.world_config.as_deref(),
+            self.auth_config.as_deref(),
+        )
     }
 
     /// Add a spawn point to a map: what the load's entry placement reads (R13).
@@ -623,6 +637,25 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         });
     }
 
+    // The two programs' own settings files, shown by the settings page. Relative to where the tool
+    // is started, which is the repository root in the manual test's own commands.
+    let (world_config, _) = config
+        .value_string("WorldConfigFile", "worldserver/worldserver.json")
+        .map_err(|error| error.to_string())?;
+    let (auth_config, _) = config
+        .value_string("AuthConfigFile", "authserver/authserver.json")
+        .map_err(|error| error.to_string())?;
+    let world_config = if world_config.is_empty() {
+        None
+    } else {
+        Some(world_config)
+    };
+    let auth_config = if auth_config.is_empty() {
+        None
+    } else {
+        Some(auth_config)
+    };
+
     let manage = Arc::new(Manage {
         accounts,
         characters,
@@ -631,6 +664,8 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         instances,
         worlds: Some(Arc::new(world_list)),
         schemas,
+        world_config,
+        auth_config,
         token: Some(token),
         log: log.clone(),
     });

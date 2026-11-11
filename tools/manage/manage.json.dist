@@ -69,6 +69,14 @@
       "doc": "Synchronous connections in the pool."
     }
   },
+  "WorldConfigFile": {
+    "value": "worldserver/worldserver.json",
+    "doc": "The world program's own settings file, shown by the settings page and never written by this tool. Relative to where the tool is started. Empty leaves that half of the page out."
+  },
+  "AuthConfigFile": {
+    "value": "authserver/authserver.json",
+    "doc": "The login program's own settings file, shown by the settings page and never written by this tool. Relative to where the tool is started. Empty leaves that half of the page out."
+  },
 
   "LogsDir": {
     "value": "",
