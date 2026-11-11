@@ -23,6 +23,8 @@ pub const AGENT_PROPERTY_UPDATE_FLOAT: u16 = 0x00A2;
 pub const AGENT_UPDATE_MORALE: u16 = 0x009C;
 /// `GAME_SMSG_AGENT_INITIAL_EFFECTS` (`0x00F0`): the effect bitmask an agent starts with.
 pub const AGENT_INITIAL_EFFECTS: u16 = 0x00F0;
+/// `GAME_SMSG_WORLD_UPDATE_CONTROLLED_AGENT` (`0x0022`): which agent this client drives.
+pub const WORLD_UPDATE_CONTROLLED_AGENT: u16 = 0x0022;
 
 /// The property an agent's energy is reported through.
 ///
@@ -176,6 +178,18 @@ pub fn agent_initial_effects(agent: u32, effects: u32) -> Vec<u8> {
     frame(AGENT_INITIAL_EFFECTS, &body)
 }
 
+/// `0x0022`: which agent this client drives - the agent, and the constant the reference sends.
+///
+/// Source: the game table's row (`GAME_SMSG_WORLD_UPDATE_CONTROLLED_AGENT`, 10 bytes) and `ASURA`'s
+/// `world_update_controlled_agent` builder, whose own words are: "the reference sends 3 as the
+/// second field and nothing reads it back". A load sends it once, for the player's own agent.
+pub fn world_update_controlled_agent(agent: u32, constant: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(8);
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&constant.to_le_bytes());
+    frame(WORLD_UPDATE_CONTROLLED_AGENT, &body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,6 +245,15 @@ mod tests {
         assert_eq!(&frame[..2], &[0xF0, 0x00]);
         assert_eq!(&frame[2..6], &2u32.to_le_bytes(), "the agent");
         assert_eq!(&frame[6..10], &0x400u32.to_le_bytes(), "the effects");
+    }
+
+    #[test]
+    fn the_controlled_agent_is_the_agent_and_the_reference_s_constant() {
+        // The reference sends 3 as the second field (`ASURA`'s builder says so in its own words).
+        assert_eq!(
+            world_update_controlled_agent(1, 3),
+            vec![0x22, 0x00, 1, 0, 0, 0, 3, 0, 0, 0]
+        );
     }
 
     #[test]

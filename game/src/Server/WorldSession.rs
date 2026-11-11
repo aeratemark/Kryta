@@ -24,7 +24,8 @@ use shared::cryptography::AuthCrypt;
 use shared::network::socket::{Session, SessionFuture, SessionIo};
 
 use crate::server::packets::{
-    character_packets, creation_load_block, instance_packets, item_packets, misc_packets,
+    agent_packets, character_packets, creation_load_block, instance_packets, item_packets,
+    misc_packets,
 };
 use crate::server::protocol::GameVersion;
 use crate::server::protocol::FrameError;
@@ -1114,6 +1115,7 @@ impl WorldSession {
                             misc_packets::pvp_update_unlocked_skills(&[]),
                             misc_packets::pvp_update_unlocked_heroes(&[0xFFFF_FFFF; 8]),
                             instance_packets::player_create(CREATION_AGENT, &sheet.name),
+                            agent_packets::world_update_controlled_agent(CREATION_AGENT, 3),
                             character_packets::character_update_party(1, 1),
                             instance_packets::instance_load_finish(),
                         ];
@@ -2214,8 +2216,9 @@ Logger.root = 6,Console
         client.write_all(&ask).unwrap();
 
         let player = instance_packets::player_create(1, "Player");
+        let controlled = agent_packets::world_update_controlled_agent(1, 3);
         let party = character_packets::character_update_party(1, 1);
-        let mut answered = vec![0u8; 4 + 36 + player.len() + party.len() + 2];
+        let mut answered = vec![0u8; 4 + 36 + player.len() + controlled.len() + party.len() + 2];
         client.read_exact(&mut answered).unwrap();
         reading.apply(&mut answered);
         assert_eq!(&answered[..4], &[0x1D, 0x00, 0x00, 0x00], "no unlocked PvP skills");
@@ -2230,12 +2233,17 @@ Logger.root = 6,Console
             "the character's own body"
         );
         assert_eq!(
-            &answered[40 + player.len()..40 + player.len() + party.len()],
+            &answered[40 + player.len()..40 + player.len() + controlled.len()],
+            controlled.as_slice(),
+            "the agent the client drives"
+        );
+        assert_eq!(
+            &answered[40 + player.len() + controlled.len()..40 + player.len() + controlled.len() + party.len()],
             party.as_slice(),
             "the party update the reference sends before the end"
         );
         assert_eq!(
-            &answered[40 + player.len() + party.len()..],
+            &answered[40 + player.len() + controlled.len() + party.len()..],
             &[0x8E, 0x01],
             "and the load is over"
         );

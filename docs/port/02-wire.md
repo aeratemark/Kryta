@@ -134,7 +134,7 @@ working server's own trace of one login into map 146 (build 39112/39167), messag
 | 13 | server -> client | `0x001E` | 6 | the first simulation tick: the reference's dword alternates between 500 (`F4 01`) and 516/515 (`04 02`/`03 02`) across the ticks in both traces - not a counter, and what it is is not measured. This tree sends 500, the value the world's own log shows first |
 | 14 | client -> server | `0x8090` | 19 | it asks for the map's players: a 16-byte blob and one byte |
 | 15 | server -> client | `0x001D`, `0x0018` | 4, 36 | the PvP halves: no unlocked skills, and the unlocked-hero bitmap (eight dwords) |
-| 16 | server -> client | `0x001A` xN, `0x0059`, `0x01B3`, `0x018E` | 17 or 25 each, 25 + 2n, 5, 2 | the map's agents (one `0x001A` per agent in the reference), the character's own body, the party update (`0x01B3`: the word 1 and the byte 1 in every emission measured - a one-member party is what a solo connection is, R3), and the load is over - the reference's own answer to this ask is longer; its measured order is the subsection below |
+| 16 | server -> client | `0x001A` xN, `0x0059`, `0x0022`, `0x01B3`, `0x018E` | 17 or 25 each, 25 + 2n, 10, 5, 2 | the map's agents (one `0x001A` per agent in the reference), the character's own body, the agent the client drives (`0x0022`: the agent and 3, which every emission measured carries), the party update (`0x01B3`: the word 1 and the byte 1), and the load is over - the reference's own answer to this ask is longer; its measured order is the subsection below |
 
 - The position is a point of the map's own list, scattered per R13 (`docs/game-rules.md`), so
   `0x0196`'s x and y differ from run to run; the file id and plane are the map's, from its row.
@@ -177,8 +177,9 @@ client's `0x8090` with a long tail. Its order, as the trace prints it:
 | `0x01D3`, `0x01CC`, `0x01D4`, `0x01B3` | 4, 7, 4, 5 | closing messages, not decoded |
 | `0x018E` | 2 | the end of the load |
 
-This tree sends the same answer compressed to `0x001D`, `0x0018`, `0x0059`, `0x01B3`, `0x018E`: the
-halves, the player's body, the party update and the load's end. Everything between the halves and the
+This tree sends the same answer compressed to `0x001D`, `0x0018`, `0x0059`, `0x0022`, `0x01B3`,
+`0x018E`: the halves, the player's body, the agent the client drives (`0x0022`, the agent and the
+reference's constant 3), the party update and the load's end. Everything between the halves and the
 party update is the map's content (plan step 6). The position of the content follows the client's asks -
 the same block appears between `0x0196` and the end in
 `recordings/gwps/session/login-travel-session.log`, where that client asked `0x8088` first - so the

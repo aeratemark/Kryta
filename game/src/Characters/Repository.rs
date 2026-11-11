@@ -530,6 +530,10 @@ mod tests {
     #[test]
     #[ignore = "needs the character database"]
     fn an_accounts_characters_are_listed_with_their_settings() {
+        // Serialized with the other live tests that write the same table: this one counts one
+        // account's rows, and another test's own row (on the same account) would be counted if it
+        // interleaved.
+        let _serial = database::updater::apply::test_lock("characters");
         let Some(source) = source() else {
             panic!("the character database is not reachable");
         };
