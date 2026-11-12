@@ -34,18 +34,43 @@ def numbers(text):
     return [int(value, 0) for value in re.findall(r"0[xX][0-9A-Fa-f]+|\d+", text)]
 
 
+def fields(text):
+    """A struct literal's body as a dict of field -> raw value text.
+
+    Split on **top-level** commas only: a field's value may itself hold commas, and `name` and
+    `modifiers` are slices - `&[0x21A8, 0xD157, 0xB58F, 0x166F]`. Splitting on every comma cut
+    those lists to their first element, which truncated every item's name and modifiers on the
+    wire and made `CREATE_NAMED_ITEM` differ from the reference's.
+    """
+    found = {}
+    depth = 0
+    current = ""
+    parts = []
+    for character in text:
+        if character in "[({":
+            depth += 1
+        elif character in "])}":
+            depth -= 1
+        if character == "," and depth == 0:
+            parts.append(current)
+            current = ""
+        else:
+            current += character
+    parts.append(current)
+    for part in parts:
+        if ":" not in part:
+            continue
+        key, value = part.split(":", 1)
+        found[key.strip()] = value.strip()
+    return found
+
+
 def structs(text, name):
     """Every `Name { ... }` literal in `text`, as a dict of field -> raw value text."""
-    found = []
-    for match in re.finditer(name + r"\s*\{([^}]*)\}", text, re.S):
-        fields = {}
-        for field in match.group(1).split(","):
-            if ":" not in field:
-                continue
-            key, value = field.split(":", 1)
-            fields[key.strip()] = value.strip()
-        found.append(fields)
-    return found
+    return [
+        fields(match.group(1))
+        for match in re.finditer(name + r"\s*\{([^}]*)\}", text, re.S)
+    ]
 
 
 def item_record(fields):

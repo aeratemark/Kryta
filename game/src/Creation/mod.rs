@@ -634,6 +634,69 @@ mod tests {
         assert_eq!(total, 179, "and a hundred and seventy-nine items between them");
     }
 
+    /// An item's name and modifiers are **lists**, and the wire carries every element of them: the
+    /// name as UTF-16 units and the modifiers as a one-byte-counted list of dwords
+    /// (`CREATE_NAMED_ITEM`). These are the reference's own numbers, read out of
+    /// `ASURA/crates/asura-world/src/default_equipment.rs` and
+    /// `ASURA/crates/asura-store/src/state/inventory/seed.rs`, one item of each kind of row:
+    /// a profession set's plain piece, a profession set's weapon, a second campaign's piece, and the
+    /// backpack's own item.
+    #[test]
+    fn an_items_name_and_modifiers_are_the_references_own_lists() {
+        let tables = tables();
+
+        let warrior = tables.set(0, 1).expect("campaign 0 profession 1");
+        let piece = &warrior.items[0];
+        assert_eq!(piece.file_id, 0x8000_0288);
+        assert_eq!(piece.name, vec![0x8101, 0x5C99], "a two-unit name");
+        assert_eq!(
+            piece.modifiers,
+            vec![0xA3C8_5000, 0x8040_0000, 0xA0F8_1400],
+            "three modifiers"
+        );
+
+        let weapon = &warrior.items[5];
+        assert_eq!(weapon.file_id, 0x8000_24EE);
+        assert_eq!(weapon.name, vec![0x279D], "a one-unit name");
+        assert_eq!(
+            weapon.modifiers,
+            vec![0x2798_1409, 0x24B8_0200, 0xA7A8_160F]
+        );
+
+        let ranger = tables.set(1, 1).expect("campaign 1 profession 1");
+        assert_eq!(
+            ranger.items[0].name,
+            vec![0x22A3, 0xFB75, 0xA867, 0x466D],
+            "a four-unit name"
+        );
+        assert_eq!(
+            ranger.items[0].modifiers,
+            vec![0xA3C8_1900, 0x8040_0000, 0xA0F8_1400]
+        );
+
+        let backpack = tables
+            .items
+            .iter()
+            .find(|item| item.file_id == 0x8001_B536)
+            .expect("the backpack's own item");
+        assert_eq!(backpack.name, vec![0x21A8, 0xD157, 0xB58F, 0x166F]);
+        assert_eq!(backpack.modifiers, vec![0x2448_1400]);
+
+        // And the other eight items of the default inventory carry no name at all: the reference's
+        // load stream names an item the client cannot resolve by its model, and nothing else.
+        for item in &tables.items {
+            if item.file_id == 0x8001_B536 {
+                continue;
+            }
+            assert!(
+                item.name.is_empty() && item.modifiers.is_empty(),
+                "item {} (file 0x{:X}) is named by the client, not by the server",
+                item.id,
+                item.file_id
+            );
+        }
+    }
+
     #[test]
     fn a_choice_is_given_its_own_equipment_in_the_equipped_bag() {
         let tables = tables();
