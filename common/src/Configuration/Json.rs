@@ -322,6 +322,40 @@ impl Record<'_> {
         Ok(records)
     }
 
+    /// A field's strings, from `<field>: ["-c", "a.json"]` - a command line is a list of words.
+    ///
+    /// A record list of a machine's own processes needs strings: what a service is started with is
+    /// words, not a scalar a key could hold, and the same file that says which programs run says
+    /// how (the supervisor's `stack.json`).
+    pub fn strings(&self, field: &str) -> Result<Option<Vec<String>>, String> {
+        if METADATA.contains(&field) {
+            return Ok(None);
+        }
+        let Some(value) = self.value.get(field) else {
+            return Ok(None);
+        };
+        let Value::Array(items) = unwrap_envelope(value) else {
+            return Err(format!(
+                "> Config: {}.{field} in {} is not a list of strings",
+                self.at,
+                self.filename.display()
+            ));
+        };
+
+        let mut strings = Vec::with_capacity(items.len());
+        for item in items {
+            let Some(text) = item.as_str() else {
+                return Err(format!(
+                    "> Config: {}.{field} in {} holds a value that is not a string",
+                    self.at,
+                    self.filename.display()
+                ));
+            };
+            strings.push(text.to_string());
+        }
+        Ok(Some(strings))
+    }
+
     /// A field's bytes, from `<field>: {"hex": "..."}`.
     pub fn bytes(&self, field: &str) -> Result<Option<Vec<u8>>, String> {        if METADATA.contains(&field) {
             return Ok(None);

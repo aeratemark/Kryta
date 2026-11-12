@@ -1,0 +1,19 @@
+[package]
+name = "kryta-supervisor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "kryta-supervisor"
+path = "src/main.rs"
+
+# The list of services is a settings file, read by the one reader the tree has.
+[dependencies]
+common = { path = "../../common" }
+# The supervisor stops its children on Ctrl+C; the reference's own signal handler.
+ctrlc = "3"

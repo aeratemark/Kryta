@@ -30,7 +30,20 @@ makes and drops a database of its own and needs the role to have `CREATEDB`.
 
 ## Starting the programs
 
-Three processes, each in its own window:
+One command, from the repository root:
+
+```powershell
+cargo build                              # once, or after a change
+cargo run -p kryta-supervisor            # both programs; Ctrl+C stops them together
+```
+
+The supervisor prints each program's output under its own name (`auth | ...`, `world | ...`), waits for
+both READY lines, says `the stack is up: auth on 6112, world on 6113`, and stops everything on Ctrl+C.
+`cargo run -p kryta-supervisor -- --check` starts, waits for both READY lines, stops and reports -
+it is the way to know the stack can come up without leaving it running. The list it starts is
+`tools/supervisor/stack.json`.
+
+The same programs by hand, each in its own window, if that is preferred:
 
 ```powershell
 cargo run -p authserver  -- -c authserver/authserver.json
@@ -38,7 +51,7 @@ cargo run -p worldserver -- -c worldserver/worldserver.json
 cargo run -p kryta-manage -- -c tools/manage/manage.json   # optional: http://127.0.0.1:6602/
 ```
 
-The login program must end with `READY: listening on 127.0.0.1:6112` and the world program with
+The login program must end with `READY: listening on 0.0.0.0:6112` and the world program with
 `READY: listening on 127.0.0.1:6113 as world 2`; both also print a status line every 30 seconds - the
 world's says `status: up N s, ... A connection(s) accepted, L live, M map(s) hosted, I instance(s) open`,
 the login's `status: up N s, ... A connection(s) accepted, L live` - and that line is the first thing to

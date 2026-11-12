@@ -42,6 +42,24 @@ not a server - no client talks to it, it serves no game protocol, and neither se
 exists (`docs/decisions/0008-administration-tool.md`). It links the same libraries the servers link and
 reaches the data through the nouns' own repositories, so what a page writes is what a server reads.
 
+`tools/supervisor/` is the fourth binary, and it is the one command that runs the stack: it reads
+`tools/supervisor/stack.json` - a service per row, with the program, its arguments and the port it
+binds - starts every service, prints each one's output under its own name, waits for its READY line,
+and stops them all together on Ctrl+C. A service that dies on its own stops the rest and the command
+answers that service's exit code. The arrangement is ASURA's `asura-supervisor` (this tree's programs
+are several, and one command that runs them is what makes a stack a stack); the *list* is data, so a
+second world or a changed port is an edit in that file, not a program change. What it does not do yet,
+and says so in its own header: no restart policy, no health checks beyond the READY line, no control
+channel.
+
+```powershell
+cargo run -p kryta-supervisor                # the stack: both programs, stopped together on Ctrl+C
+cargo run -p kryta-supervisor -- --check     # start, wait for every READY, stop, report
+```
+
+The binaries it starts are `target/debug/<program>.exe`, so `cargo build` runs first; the supervisor
+says which one is missing rather than failing quietly.
+
 | page | is | state |
 |---|---|---|
 | `/` | what exists, and how much of it | accounts, characters, worlds and content, each with its count and a link |

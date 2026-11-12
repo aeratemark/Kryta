@@ -1,0 +1,22 @@
+{
+  "note": "stack.json - the services this machine runs, as the supervisor starts them. The list is data: adding a world, changing a port or an argument is an edit here, not a program change. Start it with `cargo run -p kryta-supervisor` from the repository root; Ctrl+C stops every service in this list.",
+  "information": {
+    "what starts first": "nothing here is ordered: every service is started at once, and the supervisor waits for each one's READY line. The login program needs no other service; the world program reads its own databases at start-up.",
+    "where the binaries come from": "target/debug/<program>.exe, so `cargo build` runs before the first start (the supervisor says which one is missing, and how to build it).",
+    "what this file does not say": "the databases. They are checked by the programs themselves, never started here - a database server is an operating-system service, managed elsewhere."
+  },
+  "services": [
+    {
+      "name": "auth",
+      "program": "authserver",
+      "args": ["-c", "authserver/authserver.json"],
+      "port": 6112
+    },
+    {
+      "name": "world",
+      "program": "worldserver",
+      "args": ["-c", "worldserver/worldserver.json"],
+      "port": 6113
+    }
+  ]
+}
