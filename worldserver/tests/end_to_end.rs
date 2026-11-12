@@ -424,6 +424,20 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
                 .unlocked_maps(&uuid_text)
                 .expect("the unlocks are readable");
             assert_eq!(unlocked, vec![148], "the starting unlock is map 148 (R12)");
+            // And the row names where the character stands, which is what the login's list reads
+            // back: a character with no map is one the client can only be sent into the creation
+            // instance for.
+            let start_map: i64 = {
+                let mut pool = characters.lock().unwrap();
+                let rows = pool
+                    .query_with(
+                        "SELECT \"last_outpost\"::bigint FROM \"characters\" WHERE \"uuid\" = $1",
+                        &[&uuid_text],
+                    )
+                    .expect("the character row is readable");
+                rows[0].get(0)
+            };
+            assert_eq!(start_map, 148, "it starts in the outpost it was created for");
         }
 
         // The load of map 148, in the measured order, against the program. The version message

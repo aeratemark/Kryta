@@ -1565,6 +1565,17 @@ impl WorldSession {
         let account = crate::characters::uuid_text(&version.account);
         let unlocked = 1i64 << (creation.profession & 0x1F);
 
+        // Where the character starts, which is not where it was made: the first outpost this world
+        // hosts. `GameSrv_HandleCharCreationConfirm` writes the character's starting map into its own
+        // row, and the login's list reads it back, so a row without one is a character the client can
+        // only be sent back into the creation instance for.
+        let starting_outpost = self
+            .maps
+            .iter()
+            .filter(|map| map.kind == crate::world::map_kind::OUTPOST)
+            .min_by_key(|map| map.id);
+        let start_map = starting_outpost.map(|map| map.id as u16).unwrap_or(0);
+
         let reply = match pool.lock() {
             Ok(pool) => pool.query_reply(
                 INSERT_CHARACTER,
@@ -1581,7 +1592,7 @@ impl WorldSession {
                     Param::Flag(creation.campaign == 0),
                     Param::Integer(1), // the helmet is shown
                     Param::Integer(0), // gold: the reference's default for a new character
-                    Param::Integer(0), // last outpost: nothing here can place a character yet
+                    Param::Integer(i64::from(start_map)), // the outpost it starts in
                     Param::Integer(0), // experience
                 ],
             ),
@@ -1652,11 +1663,6 @@ impl WorldSession {
                 // R12: a character starts with one map unlocked. The world's first outpost is the
                 // one - the lowest map id this world hosts of that kind - and the gate that reads
                 // these rows arrives with the travel answer.
-                let starting_outpost = self
-                    .maps
-                    .iter()
-                    .filter(|map| map.kind == crate::world::map_kind::OUTPOST)
-                    .min_by_key(|map| map.id);
                 if let Some(outpost) = starting_outpost {
                     match characters.unlock_map(&crate::characters::uuid_text(&id), outpost.id) {
                         Ok(true) => self.say(
@@ -1677,7 +1683,7 @@ impl WorldSession {
                 }
 
                 let settings = crate::characters::CharacterSettings {
-                    last_outpost: 0,
+                    last_outpost: start_map,
                     appearance,
                     campaign: creation.campaign,
                     level: 1,
@@ -1698,9 +1704,10 @@ impl WorldSession {
                 // `handle_confirm`, measured against a real client). The four-byte-header redirect
                 // generation is ignored by this client, so it is not the frame to send here.
                 match starting_outpost {
-                    Some(outpost) => {
-                        answer.push(misc_packets::map_update_current(outpost.id as u16, 0))
-                    }
+                    Some(outpost) => answer.push(misc_packets::map_update_current(
+                        outpost.id as u16,
+                        0,
+                    )),
                     None => self.say(
                         LogLevel::Warn,
                         format!(
