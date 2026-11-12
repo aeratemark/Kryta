@@ -282,11 +282,12 @@ fn create_character(port: u16, account: [u8; 16], name: &str) -> ([u8; 16], Stri
         .set_read_timeout(Some(Duration::from_secs(10)))
         .expect("the socket reads with a timeout");
 
-    // The confirm, in the shape the recording shows: a counted name and thirty-four bytes after it.
+    // The confirm, in the client's own size: sixteen bytes plus twice the name
+    // (`docs/game-rules.md`, E73) - header, count, name, the packed appearance word, eight more.
     let units: Vec<u16> = name.encode_utf16().collect();
     assert!(units.len() <= 20, "the name fits the client's field");
     let appearance_at = 4 + units.len() * 2;
-    let mut confirm = vec![0u8; appearance_at + 34];
+    let mut confirm = vec![0u8; 16 + units.len() * 2];
     confirm[0..2].copy_from_slice(&0x808Bu16.to_le_bytes());
     confirm[2..4].copy_from_slice(&(units.len() as u16).to_le_bytes());
     for (index, unit) in units.iter().enumerate() {

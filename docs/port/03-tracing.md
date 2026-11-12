@@ -102,7 +102,7 @@ client got inside the game:
 | `... the creation screen chose campaign C and profession P.` | `0x8060`, and the choice was re-announced |
 | `... message 0xXXXX with N bytes, which this world does not answer yet.` | the ask that is next to build: its header and size are in the line |
 | `... a message with header 0xXXXX has no size this world knows` | the stream cannot be split further; every byte is printed beside it |
-| `... the creation screen confirmed a character (N bytes), and this world cannot write one yet ...` | `0x808B`: the character schema is not built, and the connection is closed rather than left hanging |
+| `... a message with header 0xXXXX has been waiting N byte(s) for MS ms, and the row needs at least M ...` | a frame that will never finish: the client sent part of a message and stopped. Said once, after 900 ms of no growth, because a client that is stuck can only report its own connection error |
 
 ## Reading a failure
 

@@ -113,14 +113,7 @@ impl Frame {
             });
         }
         let shapes: Vec<Shape> = fields.iter().map(shape_of).collect();
-        let walked = walk(bytes, header, &shapes)?;
-        let position = match measured_override(header, bytes) {
-            // One row this tree knows to be short: the confirm carries fields the table's row does not
-            // list, and the measured frame is longer than the walk. The larger of the two is the
-            // message, and the session says so when they disagree.
-            Some(measured) if measured > walked => measured,
-            _ => walked,
-        };
+        let position = walk(bytes, header, &shapes)?;
         Ok((
             Frame {
                 bytes: bytes[..position].to_vec(),
@@ -135,30 +128,6 @@ impl Frame {
     pub fn label_of(row: &crate::packets::types::Packet) -> String {
         row.label()
     }
-}
-/// How many bytes the creation confirm carries after its counted name, when the table's row for it is
-/// shorter than the message.
-///
-/// Measured from the one capture there is of a confirm
-/// (`recordings/client/feature/character_creation/character_creation-live-necro_factions.jsonl`, seq 462),
-/// past its widened header: a counted name, then `00 00` and eight dwords. The table's `0x808B` row
-/// lists `String16(20)`, `Blob(8)` and `Dword` - twelve of those bytes - so the row is short by
-/// twenty-two. Until a wire capture settles which is right, the framer takes the larger, and the
-/// session says so when they disagree.
-const CONFIRM_TAIL_LEN: usize = 34;
-
-/// The header whose table row is known to be short: `GAME_CMSG_CHAR_CREATION_CONFIRM`.
-const CONFIRM_HEADER: u16 = 0x808B;
-
-/// The size a header's own measured layout gives it, when this tree measured one that the table does
-/// not describe.
-fn measured_override(header: u16, bytes: &[u8]) -> Option<usize> {
-    if header != CONFIRM_HEADER {
-        return None;
-    }
-    let count = bytes.get(HEADER_LEN..HEADER_LEN + 2)?;
-    let units = u16::from_le_bytes([count[0], count[1]]) as usize;
-    Some(HEADER_LEN + 2 + units * 2 + CONFIRM_TAIL_LEN)
 }
 
 /// How one field occupies the wire, for the walk.

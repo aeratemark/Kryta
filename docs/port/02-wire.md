@@ -75,9 +75,12 @@ The table's `size` column is an upper bound, never a length.
 - Proved against the wire: `the_wire_recordings_frame_to_their_own_sizes` in the game library frames every
   client message of a recorded session (`recordings/asura/world/live-client-session-20261027-223528.jsonl`)
   and holds it to the size that session recorded.
-- One row is short and the framer says so: `0x808B`'s row lists fields that account for 22 bytes less
-  than the one capture of a confirm shows, so that header takes the larger of walk and measurement
-  (`CONFIRM_TAIL_LEN`, cited there), and the session logs a disagreement.
+- One row was believed short and is not. `0x808B`'s row lists `String16(20)`, `Blob(8)` and a dword -
+  twelve bytes after the name - and that is what the client sends: **sixteen bytes plus twice the
+  name** (`docs/game-rules.md`, E73). A framer that waited for the `56`-byte figure of the *struct*
+  capture (`recordings/client/`, which holds struct dumps and never the wire) never saw a confirm at
+  all, and the client answered the silence with its own connection error. The framer now takes the
+  row's walk and nothing else (`a_creation_confirm_frames_to_sixteen_bytes_plus_twice_its_name`).
 
 ## The creation screen's conversation
 
@@ -100,7 +103,7 @@ The frames, with the reference's own wire sizes:
 | 6 | server -> client | `0x014D` x5 | 8 each | the previous set comes off: the reference removes the worn pieces before it sends new ones, and a client still holding them asserts on the slot (`ItCliInv.cpp(105)`) |
 | 7 | server -> client | `0x00DB`, `0x00B7` | 4, 9 | the empty unlocked-skill list, then the agent and the new professions |
 | 8 | server -> client | `0x0161` + `0x015A` + `0x013E` + `0x014B` per item | variable | the new set: each piece created, the profession it was made for, the slot it moves into, the location it changes to |
-| 9 | client -> server | `0x808B` | 2 + 2 + 2n + 34 | the confirm: the header, a counted name of `n` units, two zero bytes and eight dwords - 58 bytes for a name of ten |
+| 9 | client -> server | `0x808B` | 16 + 2n | the confirm: the header, a counted name of `n` units, the packed appearance word and eight more bytes - 32 for a name of eight units, 30 for seven |
 | 10 | server -> client | `0x0188` | 102 for a name of eight units | written: the header, the id, the name, `0x2211`, the settings block |
 | 11 | server -> client | `0x0099` | 5 | and where the character now is: the map it starts in. Without it the client dials the creation instance back and waits there |
 | 12 | server -> client | `0x018B` | 6 | refused: the header and the error code |

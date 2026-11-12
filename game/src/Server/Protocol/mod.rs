@@ -245,6 +245,35 @@ mod tests {
     fn the_world_table_has_its_six_hundred_and_eighty_three_rows() {
         assert_eq!(tables::rows().count(), 683);
     }
+
+    /// The creation confirm frames to the client's own size: **sixteen bytes plus twice the name**
+    /// (`docs/game-rules.md`, E73: 32 bytes for an eight-unit name, 30 for seven). The row's own
+    /// fields give that: a two-byte header, a counted name of up to twenty units, then twelve bytes.
+    /// So nothing about this message is special-cased in the framer, and a client's confirm is
+    /// answered instead of being waited on.
+    #[test]
+    fn a_creation_confirm_frames_to_sixteen_bytes_plus_twice_its_name() {
+        for units in [0usize, 1, 7, 8, 10, 20] {
+            let mut message = vec![0u8; 16 + units * 2];
+            message[0..2].copy_from_slice(&0x808Bu16.to_le_bytes());
+            message[2..4].copy_from_slice(&(units as u16).to_le_bytes());
+            let (frame, used) =
+                decode_game_message(&message, true).expect("the confirm frames");
+            assert_eq!(frame.header(), 0x808B);
+            assert_eq!(used, 16 + units * 2, "{units} unit(s) of name");
+        }
+        // And a confirm cut short asks for the rest rather than reading into the next message.
+        let mut short = vec![0u8; 3 + 7 * 2];
+        short[0..2].copy_from_slice(&0x808Bu16.to_le_bytes());
+        short[2..4].copy_from_slice(&7u16.to_le_bytes());
+        assert!(
+            matches!(
+                decode_game_message(&short, true),
+                Err(FrameError::Incomplete { .. })
+            ),
+            "a message that stops inside its name is incomplete, not a frame"
+        );
+    }
     fn sample() -> GameVersion {
         GameVersion {
             version: 39167,

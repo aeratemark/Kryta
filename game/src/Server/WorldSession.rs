@@ -763,6 +763,11 @@ impl WorldSession {
         let mut creation = Creation::start();
         let mut pending: Vec<u8> = Vec::new();
         let mut buffer = vec![0u8; 1024];
+        // A message that never finishes framing is otherwise invisible: the client sends one, this
+        // world waits for bytes that are not coming, and all the client can say is its own connection
+        // error. It happens when a header's row disagrees with the client's own packing, so a wait
+        // longer than a client tolerates is said out loud, once.
+        let mut stalled: Option<(u16, usize, std::time::Instant)> = None;
         loop {
             // Everything already unscrambled and not yet answered, before any more is read.
             while let Some(bytes) = pending.first_chunk::<2>() {
@@ -782,7 +787,30 @@ impl WorldSession {
                         );
                         used
                     }
-                    Err(FrameError::Incomplete { .. }) => break,
+                    Err(FrameError::Incomplete { needed }) => {
+                        let now = std::time::Instant::now();
+                        let held = pending.len();
+                        match stalled {
+                            Some((seen, seen_len, since))
+                                if seen == header && seen_len == held =>
+                            {
+                                if now.duration_since(since) >= std::time::Duration::from_millis(900)
+                                {
+                                    self.say(
+                                        LogLevel::Warn,
+                                        format!(
+                                            "Gameplay connection from {peer}: a message with header 0x{header:04X} has been waiting {held} byte(s) for {} ms, and the row needs at least {needed}; the client is not sending the rest. The bytes so far are {}.",
+                                            now.duration_since(since).as_millis(),
+                                            shared::network::socket::hex(&pending[..pending.len().min(64)])
+                                        ),
+                                    );
+                                    stalled = None;
+                                }
+                            }
+                            _ => stalled = Some((header, held, now)),
+                        }
+                        break;
+                    }
                     Err(error) => {
                         self.say(
                             LogLevel::Warn,
@@ -3028,13 +3056,13 @@ Logger.root = 6,Console
         client.read_exact(&mut block).unwrap();
         reading.apply(&mut block);
 
-        // The confirm, in the shape the recording shows: the four-byte header, a counted name, then
-        // the thirty-four bytes this test leaves zero after the appearance's four.
+        // The confirm, in the client's own size: sixteen bytes plus twice the name
+        // (`docs/game-rules.md`, E73 - "32 bytes for an 8-character name, 30 for 7"), which is the
+        // header, the count, the name, the packed appearance word and eight more bytes.
         let name = "Kryta Test";
         let units: Vec<u16> = name.encode_utf16().collect();
         let appearance_at = 4 + units.len() * 2;
-        // Thirty-four bytes follow the name, and the appearance word is the first four of them.
-        let mut confirm = vec![0u8; 58];
+        let mut confirm = vec![0u8; 16 + units.len() * 2];
         confirm[0..2].copy_from_slice(&0x808Bu16.to_le_bytes());
         confirm[2..4].copy_from_slice(&(units.len() as u16).to_le_bytes());
         for (index, unit) in units.iter().enumerate() {
