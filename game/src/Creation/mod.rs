@@ -373,7 +373,10 @@ pub fn player_data_block(tables: &Tables, campaign: u8, profession: u8) -> Vec<V
         1,
     ));
     frames.push(character_packets::update_unlocked_skills(&[]));
-    frames.push(character_packets::character_update_factions(&[0u32; 13]));
+    frames.push(character_packets::character_update_factions(&[
+        0u32;
+        character_packets::FACTIONS_DWORDS
+    ]));
     frames.push(agent_packets::agent_update_attributes(agent, &[0u32; 42]));
 
     // The creation path's own numbers: `GameSrv_SendPlayerHealthEnergy` sends energy 20, health 100

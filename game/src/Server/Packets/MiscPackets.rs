@@ -23,6 +23,24 @@ pub const PVP_UPDATE_UNLOCKED_SKILLS: u16 = 0x001D;
 pub const PVP_UPDATE_UNLOCKED_HEROES: u16 = 0x0018;
 /// `GAME_SMSG_PVP_ITEM_STREAM_END`: the PvP item stream is over.
 pub const PVP_ITEM_STREAM_END: u16 = 0x001B;
+/// `GAME_SMSG_PVP_ITEM_STREAM_ADD` (`0x001A`): one unlockable PvP item.
+pub const PVP_ITEM_STREAM_ADD: u16 = 0x001A;
+/// `GAME_SMSG_ACCOUNT_FEATURE` (`0x000F`): one account entitlement.
+pub const ACCOUNT_FEATURE: u16 = 0x000F;
+/// `GAME_SMSG_MAP_UPDATE_UNLOCKED_LIST` (`0x0094`): five counted lists of dwords.
+pub const MAP_UPDATE_UNLOCKED_LIST: u16 = 0x0094;
+/// `GAME_SMSG_INSTANCE_LOADED` (`0x00F2`): the player's team token.
+pub const INSTANCE_LOADED: u16 = 0x00F2;
+/// `GAME_SMSG_CHAR_VISIBILITY_FLAGS` (`0x00EF`): a value and the mask it applies under.
+pub const CHAR_VISIBILITY_FLAGS: u16 = 0x00EF;
+/// `GAME_SMSG_PLAYER_UPDATE_FLAGS` (`0x003C`): a player's flags word, as a masked write.
+pub const PLAYER_UPDATE_FLAGS: u16 = 0x003C;
+/// `GAME_SMSG_WORLD_UPDATE_LOAD_TIME` (`0x001F`): how long the load took.
+pub const WORLD_UPDATE_LOAD_TIME: u16 = 0x001F;
+/// `GAME_SMSG_UPDATE_AGENT_VISUAL_EQUIPMENT` (`0x006E`): the nine items an agent is drawn wearing.
+pub const UPDATE_AGENT_VISUAL_EQUIPMENT: u16 = 0x006E;
+/// `GAME_SMSG_AGENT_DISPLAY_CAPE` (`0x0048`): whether an agent's cape is shown.
+pub const AGENT_DISPLAY_CAPE: u16 = 0x0048;
 
 /// A frame: the `u16` header and then the body.
 fn frame(header: u16, body: &[u8]) -> Vec<u8> {
@@ -96,6 +114,98 @@ pub fn pvp_item_stream_end() -> Vec<u8> {
     frame(PVP_ITEM_STREAM_END, &[])
 }
 
+/// `0x001A`: one unlockable PvP item - its id and the parameters the client pairs with it.
+///
+/// The parameter count is a **byte**, not the `u16` every other counted field uses: the reference's
+/// layout declares this one as a nested struct. Evidence: `ASURA/crates/asura-protocol/src/game/mod.rs`,
+/// `pvp_item_stream_add`, whose own log shows an entry with three parameters at 17 bytes (`2 + 2 + 1 + 12`).
+pub fn pvp_item_stream_add(item_id: u16, params: &[u32]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(3 + params.len() * 4);
+    body.extend_from_slice(&item_id.to_le_bytes());
+    body.push(params.len() as u8);
+    for param in params {
+        body.extend_from_slice(&param.to_le_bytes());
+    }
+    frame(PVP_ITEM_STREAM_ADD, &body)
+}
+
+/// `0x000F`: one account entitlement - a feature id and two parameters.
+pub fn account_feature(feature_id: u16, param1: u16, param2: u16) -> Vec<u8> {
+    let mut body = Vec::with_capacity(6);
+    body.extend_from_slice(&feature_id.to_le_bytes());
+    body.extend_from_slice(&param1.to_le_bytes());
+    body.extend_from_slice(&param2.to_le_bytes());
+    frame(ACCOUNT_FEATURE, &body)
+}
+
+/// `0x0094`: five lists of dwords - missions completed, their bonuses, the same two in hard mode, and
+/// the instances a character has reached. Each list is a `u16` count and then its dwords.
+///
+/// The two hard-mode lists go out **full length and zero-filled**, as the reference sends them for a
+/// character with no progress (`ASURA/crates/asura-world/src/player.rs`, `UNLOCKED_MAP_ZEROS`, 31
+/// words each): an empty list is not the same message, it is an array the client can index past the end
+/// of. The last list is the instance bitmap: instance `n` is bit `n % 32` of word `n / 32`.
+pub fn map_update_unlocked_list(lists: [&[u32]; 5]) -> Vec<u8> {
+    let mut body = Vec::new();
+    for list in lists {
+        body.extend_from_slice(&(list.len() as u16).to_le_bytes());
+        for value in list {
+            body.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    frame(MAP_UPDATE_UNLOCKED_LIST, &body)
+}
+
+/// `0x00F2`: the player's team token, once per load.
+pub fn instance_loaded(player_team_token: u32) -> Vec<u8> {
+    frame(INSTANCE_LOADED, &player_team_token.to_le_bytes())
+}
+
+/// `0x00EF`: two dwords, a value and the mask it applies under. A live load sends
+/// `FFFFFFFF, FFFFFFFF` once, immediately after the faction record; uninitialised, the inventory
+/// panel's per-slot display mode stays blank for every slot (`ASURA/crates/asura-protocol/src/game/mod.rs`,
+/// `char_visibility_flags`).
+pub fn char_visibility_flags(value: u32, mask: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(8);
+    body.extend_from_slice(&value.to_le_bytes());
+    body.extend_from_slice(&mask.to_le_bytes());
+    frame(CHAR_VISIBILITY_FLAGS, &body)
+}
+
+/// `0x003C`: one player's flags word as a masked read-modify-write - a `u16` player id, the value and
+/// the mask. A live load sends it once per player with mask 7, right after the visibility flags
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs`, `player_update_flags`).
+pub fn player_update_flags(player_id: u16, value: u32, mask: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(10);
+    body.extend_from_slice(&player_id.to_le_bytes());
+    body.extend_from_slice(&value.to_le_bytes());
+    body.extend_from_slice(&mask.to_le_bytes());
+    frame(PLAYER_UPDATE_FLAGS, &body)
+}
+
+/// `0x001F`: how long the load took, in milliseconds.
+pub fn world_update_load_time(load_time: u32) -> Vec<u8> {
+    frame(WORLD_UPDATE_LOAD_TIME, &load_time.to_le_bytes())
+}
+
+/// `0x006E`: the nine item ids the agent is drawn wearing - the equipped bag, in its own order.
+pub fn update_agent_visual_equipment(agent: u32, items: [u32; 9]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(4 + items.len() * 4);
+    body.extend_from_slice(&agent.to_le_bytes());
+    for item in items {
+        body.extend_from_slice(&item.to_le_bytes());
+    }
+    frame(UPDATE_AGENT_VISUAL_EQUIPMENT, &body)
+}
+
+/// `0x0048`: whether an agent's cape is shown.
+pub fn agent_display_cape(agent: u32, status: u8) -> Vec<u8> {
+    let mut body = Vec::with_capacity(5);
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.push(status);
+    frame(AGENT_DISPLAY_CAPE, &body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,6 +215,47 @@ mod tests {
         assert_eq!(pvp_update_unlocked_skills(&[]), vec![0x1D, 0x00, 0, 0]);
         assert_eq!(pvp_update_unlocked_heroes(&[]), vec![0x18, 0x00, 0, 0]);
         assert_eq!(pvp_item_stream_end(), vec![0x1B, 0x00]);
+    }
+
+    #[test]
+    fn a_pvp_item_counts_its_parameters_in_a_byte() {
+        let frame = pvp_item_stream_add(1, &[0x2408_0081, 0x2530_0102, 0x24B8_0300]);
+        assert_eq!(frame.len(), 2 + 2 + 1 + 12);
+        assert_eq!(&frame[..2], &[0x1A, 0x00]);
+        assert_eq!(&frame[2..4], &1u16.to_le_bytes(), "the item");
+        assert_eq!(frame[4], 3, "three parameters, counted by a byte");
+    }
+
+    #[test]
+    fn the_account_feature_is_a_id_and_two_parameters() {
+        assert_eq!(
+            account_feature(1, 10, 0),
+            vec![0x0F, 0x00, 1, 0, 10, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn the_unlocked_lists_carry_their_own_counts() {
+        let frame = map_update_unlocked_list([&[], &[], &[0u32; 2], &[0u32; 31], &[5]]);
+        assert_eq!(&frame[..2], &[0x94, 0x00]);
+        // Two empty lists, one of two words, one of thirty-one, one of one.
+        let expected = 4 + (2 + 8) + (2 + 124) + (2 + 4);
+        assert_eq!(frame.len(), 2 + expected);
+    }
+
+    #[test]
+    fn the_player_flags_are_a_word_a_value_and_a_mask() {
+        assert_eq!(
+            player_update_flags(1, 0, 7),
+            vec![0x3C, 0x00, 1, 0, 0, 0, 0, 0, 7, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn the_visual_equipment_is_the_agent_and_nine_items() {
+        let frame = update_agent_visual_equipment(1, [2, 3, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(frame.len(), 2 + 4 + 36);
+        assert_eq!(&frame[..2], &[0x6E, 0x00]);
     }
 
     #[test]

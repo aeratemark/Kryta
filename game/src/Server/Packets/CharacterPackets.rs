@@ -129,9 +129,27 @@ pub fn skillbar_update(agent: u32, skills: &[u32], pvp_masks: &[u32], unknown: u
     frame(SKILLBAR_UPDATE, &body)
 }
 
-/// `0x00E9`: a character's progress record - thirteen dwords, all zero for a character that is
-/// being made.
-pub fn character_update_factions(progress: &[u32; 13]) -> Vec<u8> {
+/// How many dwords a character's progress record is.
+///
+/// Evidence: `ASURA/crates/asura-protocol/src/game/mod.rs`, `character_update_factions`, which writes
+/// all fifteen fields of `CharacterProgress` (`GameSrv_UpdatePlayerFactions`). This tree sent thirteen
+/// dwords until 2026-11-12.
+pub const FACTIONS_DWORDS: usize = 15;
+
+/// `0x00E9`: a character's progress record - fifteen dwords, in the reference's own order.
+///
+/// | # | field |
+/// |---|---|
+/// | 0 | experience |
+/// | 1, 2 | the Kurzick faction, held and earned |
+/// | 3, 4 | the Luxon faction, held and earned |
+/// | 5, 6 | the Imperial faction, held and earned |
+/// | 7, 8 | two faction words the reference sends zero |
+/// | 9 | level |
+/// | 10 | morale |
+/// | 11, 12 | the Balthazar faction, held and earned |
+/// | 13, 14 | skill points, held and earned |
+pub fn character_update_factions(progress: &[u32; FACTIONS_DWORDS]) -> Vec<u8> {
     let mut body = Vec::with_capacity(progress.len() * 4);
     for value in progress {
         body.extend_from_slice(&value.to_le_bytes());
@@ -204,9 +222,9 @@ mod tests {
     }
 
     #[test]
-    fn the_faction_record_is_thirteen_dwords() {
-        let frame = character_update_factions(&[0u32; 13]);
-        assert_eq!(frame.len(), 2 + 13 * 4);
+    fn the_faction_record_is_fifteen_dwords() {
+        let frame = character_update_factions(&[0u32; FACTIONS_DWORDS]);
+        assert_eq!(frame.len(), 2 + 15 * 4, "fifteen dwords, as the reference sends");
     }
 
     #[test]

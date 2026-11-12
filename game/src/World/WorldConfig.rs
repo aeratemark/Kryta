@@ -41,6 +41,21 @@ pub struct WorldConfig {
     pub explorable_disconnect_hold: u32,
     /// Whether an outpost that offers a mission presents the "Enter Mission" button (R56).
     pub mission_button: bool,
+    /// The health a player agent is created with, sent as agent int-property 42 at load.
+    pub agent_health: u32,
+    /// The energy a player agent is created with, sent as agent int-property 41 at load.
+    pub agent_energy: u32,
+    /// The energy regeneration a player agent is created with, sent as agent float-property 43. Zero is
+    /// what the reference's own capture shows for a fresh agent.
+    pub agent_energy_regen: f32,
+    /// How fast a player agent walks, sent in its create message and used by the simulation.
+    pub agent_speed: f32,
+    /// The packed appearance a character with no bits of its own is drawn with.
+    ///
+    /// An all-zero word is `Profession_None`, which the client cannot build a model from, so the world
+    /// states the fallback: profession 1 (Warrior) and hair style 3, which is `0x03100000`
+    /// (`ASURA/config/World/Vanilla/character_defaults.json`, `appearance`).
+    pub appearance: u32,
 }
 
 impl Default for WorldConfig {
@@ -56,6 +71,11 @@ impl Default for WorldConfig {
             compass_range: 10_000.0,
             explorable_disconnect_hold: 15 * 60,
             mission_button: true,
+            agent_health: 400,
+            agent_energy: 25,
+            agent_energy_regen: 0.0,
+            agent_speed: 288.0,
+            appearance: 0x0310_0000,
         }
     }
 }
@@ -88,6 +108,15 @@ impl WorldConfig {
         settings.sweep_interval_ms = small(config, "SweepIntervalMs", settings.sweep_interval_ms)?;
         settings.mission_button = flag(config, "MissionButton", settings.mission_button)?;
 
+        // The agent a load creates, and the look of a character with no bits of its own. The numbers
+        // are the pack's (`ASURA/config/World/Vanilla/agent_defaults.json`, `character_defaults.json`):
+        // health 400, energy 25, regeneration 0, speed 288, profession 1 with hair style 3.
+        settings.agent_health = small(config, "AgentHealth", settings.agent_health)?;
+        settings.agent_energy = small(config, "AgentEnergy", settings.agent_energy)?;
+        settings.agent_energy_regen = number(config, "AgentEnergyRegen", settings.agent_energy_regen)?;
+        settings.agent_speed = number(config, "AgentSpeed", settings.agent_speed)?;
+        settings.appearance = small(config, "Appearance", settings.appearance)?;
+
         notes.push(format!(
             "World: a district holds {} player(s) (R5), a party is capped at {} (R15), a character lands within {:.0} units of its spawn point (R13), an explorable is held {} s for a network disconnect (R37), the compass range is {:.0} (R34), ticking is {} every {} ms, the instance table is swept every {} ms, the mission button is {} (R56).",
             settings.district_allotment,
@@ -99,6 +128,14 @@ impl WorldConfig {
             settings.simulation_tick_ms,
             settings.sweep_interval_ms,
             if settings.mission_button { "shown" } else { "hidden" },
+        ));
+        notes.push(format!(
+            "World: a player agent is created with {} health, {} energy, {:.1} energy a second and a walking speed of {:.0}; a character with no appearance of its own is drawn as 0x{:08X}.",
+            settings.agent_health,
+            settings.agent_energy,
+            settings.agent_energy_regen,
+            settings.agent_speed,
+            settings.appearance,
         ));
         Ok((settings, notes))
     }
@@ -149,7 +186,7 @@ mod tests {
     fn a_file_that_states_nothing_keeps_the_games_numbers() {
         let (settings, notes) = WorldConfig::read(&config("")).expect("reads");
         assert_eq!(settings, WorldConfig::default());
-        assert_eq!(notes.len(), 1, "the read is reported once");
+        assert_eq!(notes.len(), 2, "the read is reported: the rules, then the agent");
     }
 
     #[test]

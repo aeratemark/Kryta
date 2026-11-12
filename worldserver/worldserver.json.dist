@@ -78,6 +78,26 @@
     "MissionButton": {
       "value": true,
       "doc": "Whether an outpost that offers a mission presents the 'Enter Mission' button (R56)."
+    },
+    "AgentHealth": {
+      "value": 400,
+      "doc": "The health a player agent is created with, sent as agent int-property 42 at load. The game's value for a fresh body is 400."
+    },
+    "AgentEnergy": {
+      "value": 25,
+      "doc": "The energy a player agent is created with, sent as agent int-property 41 at load. The game's value for a fresh body is 25."
+    },
+    "AgentEnergyRegen": {
+      "value": 0,
+      "doc": "The energy regeneration a player agent is created with, sent as agent float-property 43. Zero is what the reference's own capture shows for a fresh agent."
+    },
+    "AgentSpeed": {
+      "value": 288,
+      "doc": "How fast a player agent walks, in units a second: the create message carries it and the client walks the model at it."
+    },
+    "Appearance": {
+      "value": 51380224,
+      "doc": "The packed appearance word a character with no bits of its own is drawn with - 51380224 is 0x03100000, profession 1 (Warrior) with hair style 3, everything else zero. An all-zero word is Profession_None, which the client cannot build a model from."
     }
   },
 

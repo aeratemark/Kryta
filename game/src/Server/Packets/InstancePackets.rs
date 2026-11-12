@@ -189,19 +189,18 @@ pub fn ready_for_map_spawn(dword: u32) -> Vec<u8> {
 
 /// `0x0059`: the player's own agent, as the client is told about it at a load.
 ///
-/// The field set is the ported row's: an id, the agent, a dword, a byte, two dwords and the name.
-/// The dword is `0x03100000` in every emission measured - the reference's own send log
-/// (`recordings/gwps/world/load-stream.log`, `SEND 0x0059 35 bytes : 59 00 01 00 00 00 01 00
-/// 00 00 00 00 10 03 ...`) and ASURA's session (`recordings/asura/world/live-client-session-202
-/// 61027-220258.jsonl` seq 481, 43 bytes, `... 00 00 10 03 ...`), on two different maps and for
-/// two different names. What the value means is not captured, so it is the measured constant
-/// rather than a setting - changing it is a measurement, not an option.
-pub fn player_create(agent: u32, name: &str) -> Vec<u8> {
+/// The field set is the ported row's: the player, the agent, the packed appearance word, a byte, two
+/// dwords and the name. The third dword is the appearance, not a constant: `0x03100000` is what every
+/// capture carries because that is the reference's own default look - bit 20 is profession 1 (Warrior)
+/// and bits 24-25 are hair style 3 (`docs/game-rules.md`, E74, packs sex, height, skin, hair colour,
+/// face, profession, hair style and campaign into that word). A character's own appearance comes from
+/// its row; `ASURA/crates/asura-protocol/src/game/mod.rs`, `player_create`, writes it from the row too.
+pub fn player_create(player: u32, agent: u32, appearance: u32, name: &str) -> Vec<u8> {
     let units: Vec<u16> = name.encode_utf16().take(20).collect();
     let mut body = Vec::with_capacity(21 + units.len() * 2);
-    body.extend_from_slice(&agent.to_le_bytes()); // the id the client keys the body by
+    body.extend_from_slice(&player.to_le_bytes()); // the id the client keys the body by
     body.extend_from_slice(&agent.to_le_bytes()); // the agent
-    body.extend_from_slice(&0x0310_0000u32.to_le_bytes()); // measured, meaning uncaptured
+    body.extend_from_slice(&appearance.to_le_bytes()); // the packed look the model is built from
     body.push(0);
     body.extend_from_slice(&0u32.to_le_bytes());
     body.extend_from_slice(&0u32.to_le_bytes());
@@ -258,7 +257,7 @@ mod tests {
 
     #[test]
     fn a_player_create_carries_the_agent_and_a_counted_name() {
-        let frame = player_create(1, "Aeris");
+        let frame = player_create(1, 1, 0x0310_0000, "Aeris");
         assert_eq!(&frame[..2], &[0x59, 0x00]);
         assert_eq!(&frame[2..6], &1u32.to_le_bytes(), "the id");
         assert_eq!(&frame[6..10], &1u32.to_le_bytes(), "the agent");

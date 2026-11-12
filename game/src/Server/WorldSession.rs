@@ -49,7 +49,26 @@ pub(crate) struct CharacterSheet {
     pub profession: u8,
     pub uuid: [u8; 16],
     pub gold: u32,
+    /// The packed look the client builds the model from, or 0 when the row records none.
+    pub appearance: u32,
+    /// The character's level, which the progress record and the agent's own property carry.
+    pub level: u8,
+    /// The professions the character has unlocked, as a bitmap.
+    pub unlocked_professions: u32,
 }
+
+/// The two dword lists a load sends at full length whether or not a character has used them: the
+/// hard-mode mission and bonus bitmaps. An empty list is not the same message - it is an array the
+/// client can index past the end of (`ASURA/crates/asura-world/src/player.rs`, `UNLOCKED_MAP_ZEROS`,
+/// copied from the reference's own send log: 31 zero words each).
+const UNLOCKED_MAP_ZEROS: &[u32] = &[0u32; 31];
+
+/// The team token a load gives the client. Evidence: the reference's own trace carried `0D F0 AD BA`
+/// in `0x00F2` (`recordings/gwps/world/load-stream.log`), which is `ASURA`'s `PLAYER_TEAM_TOKEN`.
+const PLAYER_TEAM_TOKEN: u32 = 0xBAAD_F00D;
+
+/// Full morale, which a fresh agent has (`ASURA/crates/asura-world/src/player.rs`, `MORALE_FULL`).
+const MORALE_FULL: u32 = 100;
 
 /// The client's asks on a gameplay connection, as the reference's dispatch reads them.
 ///
@@ -1019,6 +1038,9 @@ impl WorldSession {
             profession: character_packets::DEFAULT_PROFESSION,
             uuid: version.character,
             gold: 0,
+            appearance: 0,
+            level: 1,
+            unlocked_professions: character_packets::CREATION_UNLOCKED_PROFESSIONS,
         };
         let Some(pool) = self.characters.as_ref() else {
             return fallback;
@@ -1026,7 +1048,9 @@ impl WorldSession {
         let uuid = crate::characters::uuid_text(&version.character);
         let reply = match pool.lock() {
             Ok(pool) => pool.query_reply(
-                "SELECT \"name\", \"campaign\", \"primary_profession\", \"gold\"::bigint FROM \"characters\" WHERE \"uuid\" = $1",
+                "SELECT \"name\", \"campaign\", \"primary_profession\", \"gold\"::bigint, \
+                 \"appearance\"::bigint, \"level\"::bigint, \"unlocked_professions\"::bigint \
+                 FROM \"characters\" WHERE \"uuid\" = $1",
                 vec![Param::Text(uuid)],
             ),
             Err(_) => return fallback,
@@ -1055,6 +1079,9 @@ impl WorldSession {
                 profession: row.get::<usize, i64>(2) as u8,
                 uuid: version.character,
                 gold: row.get::<usize, i64>(3) as u32,
+                appearance: row.get::<usize, i64>(4) as u32,
+                level: row.get::<usize, i64>(5) as u8,
+                unlocked_professions: row.get::<usize, i64>(6) as u32,
             })
             .unwrap_or(fallback)
     }
@@ -1092,6 +1119,10 @@ impl WorldSession {
         let inventory = self.load_inventory(sheet);
         let mut tick: u32 = 500;
         let mut loaded = false;
+        // Where the character stands, chosen once: the entry-position answer and the agent the load
+        // creates have to be the same place.
+        let entry = self.entry_point(map);
+        let load_started = std::time::Instant::now();
 
         loop {
             while let Some(bytes) = pending.first_chunk::<2>() {
@@ -1137,7 +1168,7 @@ impl WorldSession {
                     // The spawn request: a random point of this map's own list, scattered (R13),
                     // and the first simulation tick.
                     instance_packets::CLIENT_LOAD_REQUEST_SPAWN => {
-                        let point = self.entry_point(map);
+                        let point = entry;
                         let mut frames = match point {
                             Some(point) => {
                                 self.say(
@@ -1175,39 +1206,202 @@ impl WorldSession {
                         frames.push(misc_packets::world_simulation_tick(500));
                         self.send(io, peer, crypt, &frames, "the entry position").await;
                     }
-                    // The players request: the PvP halves, the character's own body, the party it is
-                    // in, and the load is over. The connection stays: from here the world ticks it
-                    // (R33) and answers what the client asks on a live map.
-                    //
-                    // The party comes as the reference's own four frames, in its own order - created,
-                    // the player added, the member stream ended, and only then which party the
-                    // character is in. A client told about a party it was never given asserts
-                    // (`Assertion: m_partyClient`, `PyCliParty.cpp(650)`, measured 2026-11-12 on the
-                    // load of map 148). The order and the numbers are
-                    // `recordings/client/feature/travel/doors-20261031-095754.jsonl` seq 319-322 and
-                    // `ASURA/crates/asura-world/src/player.rs:382-388`.
+                    // The players request: the whole block the reference answers it with, frame for
+                    // frame and in its own order (`GameSrv_HandleInstanceLoadRequestPlayers`, ported
+                    // from `ASURA/crates/asura-world/src/player.rs`, `player_block`). It is one block,
+                    // not a menu: the PvP unlocks and the unlockable-item table, the account features,
+                    // the unlocked lists and the team token, the skills and the progress record, the
+                    // visibility and player flags, the player and the agent it is drawn as, the
+                    // agent's own properties and look, the party, and the message that ends the load.
                     instance_packets::CLIENT_LOAD_REQUEST_PLAYERS => {
-                        let frames = vec![
-                            misc_packets::pvp_update_unlocked_skills(&[]),
-                            misc_packets::pvp_update_unlocked_heroes(&[0xFFFF_FFFF; 8]),
-                            instance_packets::player_create(CREATION_AGENT, &sheet.name),
-                            agent_packets::world_update_controlled_agent(CREATION_AGENT, 3),
-                            party_packets::party_create(party_packets::PARTY_ID),
-                            party_packets::party_player_add(
-                                party_packets::PARTY_ID,
-                                CREATION_AGENT as u16,
-                                1,
-                            ),
-                            party_packets::party_member_stream_end(party_packets::PARTY_ID),
-                            character_packets::character_update_party(party_packets::PARTY_ID, 1),
-                            instance_packets::instance_load_finish(),
-                        ];
-                        self.send(io, peer, crypt, &frames, "the player and the load's last message")
+                        let agent = CREATION_AGENT;
+                        let player = CREATION_AGENT;
+                        let position = entry
+                            .map(|point| (point.0, point.1))
+                            .unwrap_or((0.0, 0.0));
+                        let plane = entry.map(|point| point.2).unwrap_or(0);
+                        // The look the client builds the model from: the character's own bits, or the
+                        // world's default when its row carries none (an all-zero word is
+                        // `Profession_None`, which the client cannot draw).
+                        let appearance = if sheet.appearance == 0 {
+                            self.settings.appearance
+                        } else {
+                            sheet.appearance
+                        };
+                        // The item ids the agent is drawn wearing, from the equipped bag, in its own
+                        // order. A slot the character wears nothing in is zero.
+                        let mut equipped = [0u32; 9];
+                        if let Some(bag) = self
+                            .creation
+                            .as_ref()
+                            .and_then(crate::creation::equipped_bag)
+                        {
+                            for item in inventory.items_in(bag.id) {
+                                if let Some(slot) = item.slot
+                                    && let Some(held) = equipped.get_mut(slot as usize)
+                                {
+                                    *held = item.id;
+                                }
+                            }
+                        }
+                        // The instances the character has reached, as the client addresses them: bit
+                        // `n % 32` of word `n / 32`.
+                        let mut unlocked = UNLOCKED_MAP_ZEROS.to_vec();
+                        if let Some(pool) = self.characters.as_ref() {
+                            let characters = crate::characters::DatabaseCharacters::new(
+                                std::sync::Arc::clone(pool),
+                                self.log.clone(),
+                            );
+                            match characters
+                                .unlocked_maps(&crate::characters::uuid_text(&sheet.uuid))
+                            {
+                                Ok(maps) => {
+                                    for map_id in maps {
+                                        let word = (map_id / 32) as usize;
+                                        if let Some(slot) = unlocked.get_mut(word) {
+                                            *slot |= 1 << (map_id % 32);
+                                        }
+                                    }
+                                }
+                                Err(error) => self.say(
+                                    LogLevel::Warn,
+                                    format!(
+                                        "Gameplay connection from {peer}: the character's reached instances cannot be read ({error}); the list is sent with only what this load knows."
+                                    ),
+                                ),
+                            }
+                        }
+                        let mut progress = [0u32; character_packets::FACTIONS_DWORDS];
+                        // Experience has no column yet; level and morale do, and the client shows 0
+                        // for a level it is not told (`ASURA/crates/asura-world/src/player.rs`).
+                        progress[9] = u32::from(sheet.level);
+                        progress[10] = MORALE_FULL;
+                        let load_ms = u32::try_from(load_started.elapsed().as_millis())
+                            .unwrap_or(u32::MAX);
+
+                        let mut frames = Vec::with_capacity(40);
+                        frames.push(misc_packets::pvp_update_unlocked_skills(&[]));
+                        frames.push(misc_packets::pvp_update_unlocked_heroes(&[0xFFFF_FFFF; 8]));
+                        for item in crate::data_stores::pvp_items::PVP_ITEMS {
+                            frames.push(misc_packets::pvp_item_stream_add(item.id, item.params));
+                        }
+                        frames.push(misc_packets::pvp_item_stream_end());
+                        for (feature, param1, param2) in [
+                            (1u16, 10u16, 0u16),
+                            (99, 3, 0),
+                            (100, 5, 0),
+                            (101, 5, 5),
+                            (102, 2, 2),
+                            (111, 1, 0),
+                            (124, 1, 0),
+                            (125, 1, 0),
+                            (131, 1, 0),
+                        ] {
+                            frames.push(misc_packets::account_feature(feature, param1, param2));
+                        }
+                        frames.push(misc_packets::map_update_unlocked_list([
+                            &[],
+                            &[],
+                            UNLOCKED_MAP_ZEROS,
+                            UNLOCKED_MAP_ZEROS,
+                            &unlocked,
+                        ]));
+                        frames.push(misc_packets::instance_loaded(PLAYER_TEAM_TOKEN));
+                        frames.push(agent_packets::agent_update_attribute_points(agent, 50, 50));
+                        frames.push(character_packets::player_update_profession(
+                            agent,
+                            sheet.profession,
+                            0,
+                            0,
+                        ));
+                        frames.push(character_packets::player_update_unlocked_professions(
+                            agent,
+                            sheet.unlocked_professions,
+                        ));
+                        frames.push(character_packets::skillbar_update(
+                            agent,
+                            &[0u32; 8],
+                            &[0u32; 8],
+                            1,
+                        ));
+                        frames.push(character_packets::update_unlocked_skills(&[]));
+                        frames.push(character_packets::character_update_factions(&progress));
+                        frames.push(misc_packets::char_visibility_flags(0xFFFF_FFFF, 0xFFFF_FFFF));
+                        frames.push(misc_packets::player_update_flags(player as u16, 0, 7));
+                        frames.push(agent_packets::agent_update_attributes(agent, &[0u32; 42]));
+                        frames.push(misc_packets::world_update_load_time(load_ms));
+                        frames.push(instance_packets::player_create(
+                            player,
+                            agent,
+                            appearance,
+                            &sheet.name,
+                        ));
+                        frames.push(character_packets::player_update_profession(
+                            agent,
+                            sheet.profession,
+                            0,
+                            0,
+                        ));
+                        frames.push(agent_packets::world_create_agent(
+                            &agent_packets::CreateAgent {
+                                agent_id: agent,
+                                model_id: agent_packets::CHAR_CLASS_PLAYER_BASE | player,
+                                agent_type: agent_packets::AGENT_TYPE_LIVING,
+                                position,
+                                plane,
+                                // Our spawn rows carry no facing yet: the reference's own create
+                                // message carries a unit vector (measured: -0.995, -0.104 on one
+                                // body), and an agent with no direction is not a thing the client
+                                // draws, so the neutral +y stands in until the angle is a column.
+                                direction: (0.0, 1.0),
+                                speed_base: self.settings.agent_speed,
+                                player_team_token: PLAYER_TEAM_TOKEN,
+                            },
+                        ));
+                        frames.push(agent_packets::agent_update_morale(agent, MORALE_FULL));
+                        frames.push(agent_packets::agent_property_update_int(
+                            agent_packets::AGENT_PROPERTY_ENERGY,
+                            agent,
+                            self.settings.agent_energy,
+                        ));
+                        frames.push(agent_packets::agent_property_update_int(
+                            agent_packets::AGENT_PROPERTY_HEALTH,
+                            agent,
+                            self.settings.agent_health,
+                        ));
+                        frames.push(agent_packets::agent_property_update_float(
+                            agent_packets::AGENT_PROPERTY_ENERGY_REGEN,
+                            agent,
+                            self.settings.agent_energy_regen,
+                        ));
+                        frames.push(agent_packets::agent_property_update_int(
+                            agent_packets::AGENT_PROPERTY_PUBLIC_LEVEL,
+                            agent,
+                            u32::from(sheet.level),
+                        ));
+                        frames.push(agent_packets::agent_initial_effects(agent, 0));
+                        frames.push(misc_packets::update_agent_visual_equipment(agent, equipped));
+                        frames.push(misc_packets::agent_display_cape(agent, 1));
+                        frames.push(agent_packets::world_update_controlled_agent(agent, 3));
+                        frames.push(party_packets::party_create(party_packets::PARTY_ID));
+                        frames.push(party_packets::party_player_add(
+                            party_packets::PARTY_ID,
+                            player as u16,
+                            1,
+                        ));
+                        frames.push(party_packets::party_member_stream_end(party_packets::PARTY_ID));
+                        frames.push(character_packets::character_update_party(
+                            party_packets::PARTY_ID,
+                            1,
+                        ));
+                        frames.push(instance_packets::instance_load_finish());
+                        let count = frames.len();
+                        self.send(io, peer, crypt, &frames, "the players and the load's last message")
                             .await;
                         self.say(
                             LogLevel::Info,
                             format!(
-                                "Gameplay connection from {peer}: map {} is loaded - the character '{}' is in it.",
+                                "Gameplay connection from {peer}: map {} is loaded - the character '{}' is in it ({count} message(s)).",
                                 map.id, sheet.name
                             ),
                         );
@@ -2012,6 +2206,38 @@ mod tests {
             .collect()
     }
 
+    /// Read whole frames off a scrambled connection until the message that ends a load, and answer
+    /// every frame that arrived: its header and its bytes.
+    fn read_load_frames(
+        client: &mut std::net::TcpStream,
+        reading: &mut common::cryptography::Arc4,
+    ) -> Vec<(u16, Vec<u8>)> {
+        let mut frames = Vec::new();
+        let mut pending: Vec<u8> = Vec::new();
+        let mut buffer = [0u8; 4096];
+        loop {
+            while pending.len() >= 2 {
+                match crate::server::protocol::decode_game_message(&pending, false) {
+                    Ok((frame, used)) => {
+                        let header = frame.header();
+                        let whole: Vec<u8> = pending.drain(..used).collect();
+                        frames.push((header, whole));
+                        if header == instance_packets::INSTANCE_LOAD_FINISH {
+                            return frames;
+                        }
+                    }
+                    Err(FrameError::Incomplete { .. }) => break,
+                    Err(error) => panic!("a frame of the load did not frame: {error}"),
+                }
+            }
+            let read = client.read(&mut buffer).expect("the load keeps arriving");
+            assert!(read > 0, "the connection ended before the load did");
+            let mut plain = buffer[..read].to_vec();
+            reading.apply(&mut plain);
+            pending.extend_from_slice(&plain);
+        }
+    }
+
     #[test]
     fn a_gameplay_connection_is_answered_with_the_creation_block() {
         // The whole conversation a client makes, played by a test: the version message, the seed
@@ -2401,57 +2627,55 @@ Logger.root = 6,Console
             "and the simulation's first tick, 500"
         );
 
-        // 7. The players request: the PvP halves, the character's body and the load's last message.
+        // 7. The players request: the whole load block, in the reference's order, ending at the
+        // message that takes the client off the loading screen. Read until that message arrives.
         let mut ask = vec![0x90, 0x80, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
                            0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0x00];
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
 
-        let player = instance_packets::player_create(1, "Player");
-        let controlled = agent_packets::world_update_controlled_agent(1, 3);
-        let party = [
-            party_packets::party_create(party_packets::PARTY_ID),
-            party_packets::party_player_add(party_packets::PARTY_ID, 1, 1),
-            party_packets::party_member_stream_end(party_packets::PARTY_ID),
-            character_packets::character_update_party(party_packets::PARTY_ID, 1),
-        ];
-        let party_len: usize = party.iter().map(Vec::len).sum();
-        let mut answered =
-            vec![0u8; 4 + 36 + player.len() + controlled.len() + party_len + 2];
-        client.read_exact(&mut answered).unwrap();
-        reading.apply(&mut answered);
-        assert_eq!(&answered[..4], &[0x1D, 0x00, 0x00, 0x00], "no unlocked PvP skills");
-        assert_eq!(
-            &answered[4..40],
-            misc_packets::pvp_update_unlocked_heroes(&[0xFFFF_FFFF; 8]).as_slice(),
-            "the unlocked-hero bitmap"
-        );
-        assert_eq!(
-            &answered[40..40 + player.len()],
-            player.as_slice(),
-            "the character's own body"
-        );
-        assert_eq!(
-            &answered[40 + player.len()..40 + player.len() + controlled.len()],
-            controlled.as_slice(),
-            "the agent the client drives"
-        );
-        // The party, in the reference's own order and its own bytes: created, the player added, the
-        // member stream ended, then which party the character is in.
-        let mut party_bytes = Vec::new();
-        for frame in &party {
-            party_bytes.extend_from_slice(frame);
+        let blocks = read_load_frames(&mut client, &mut reading);
+        let headers: Vec<u16> = blocks.iter().map(|(header, _)| *header).collect();
+        // The reference's own order (`ASURA/crates/asura-world/src/player.rs`, `player_block`): the
+        // PvP halves and the unlockable items, the account features, the unlocked lists and the team
+        // token, the skills and the progress record, the flags, the player and the agent, the agent's
+        // properties and look, the party, and the end.
+        for header in [
+            0x001D, 0x0018, 0x001A, 0x001B, // the PvP unlocks and the item table
+            0x000F, // an account feature
+            0x0094, 0x00F2, // the unlocked lists and the team token
+            0x0037, 0x00B7, 0x00B6, 0x00DA, 0x00DB, // attribute points, profession, skills
+            0x00E9, // the progress record
+            0x00EF, 0x003C, 0x003A, 0x001F, // the flags, the attributes, the load time
+            0x0059, 0x0020, 0x009C, // the player, the agent, its morale
+            0x009F, 0x00A2, 0x00F0, // the agent's properties and effects
+            0x006E, 0x0048, 0x0022, // what it wears, its cape, the agent the client drives
+            0x01D3, 0x01CC, 0x01D4, 0x01B3, // the party
+            0x018E, // and the load is over
+        ] {
+            assert!(
+                headers.contains(&header),
+                "the players answer carries 0x{header:04X}: {headers:04X?}"
+            );
         }
+        assert_eq!(headers.first(), Some(&0x001D), "it opens with the PvP half");
+        assert_eq!(headers.last(), Some(&0x018E), "and ends with the load's own end");
+        // The party comes after the agent and before the end, in the reference's own order: a client
+        // told about a party it was never given asserts `m_partyClient`.
+        let party_at = headers
+            .iter()
+            .position(|header| *header == 0x01D3)
+            .expect("the party is created");
         assert_eq!(
-            &answered[40 + player.len() + controlled.len()
-                ..40 + player.len() + controlled.len() + party_len],
-            party_bytes.as_slice(),
-            "the party the reference creates before the end"
+            &headers[party_at..party_at + 4],
+            &[0x01D3, 0x01CC, 0x01D4, 0x01B3],
+            "the party before the character's own party word: {headers:04X?}"
         );
-        assert_eq!(
-            &answered[40 + player.len() + controlled.len() + party_len..],
-            &[0x8E, 0x01],
-            "and the load is over"
+        // The agent's own body is the frame that puts a body in the map, and it carries the point the
+        // entry-position answer named.
+        assert!(
+            headers.contains(&0x0020),
+            "the load creates the agent it is played as: {headers:04X?}"
         );
 
         // 8. And the connection stays: the world ticks it, one per interval, with no prompt.

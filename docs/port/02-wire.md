@@ -152,7 +152,53 @@ working server's own trace of one login into map 146 (build 39112/39167), messag
 | 13 | server -> client | `0x001E` | 6 | the first simulation tick: the reference's dword alternates between 500 (`F4 01`) and 516/515 (`04 02`/`03 02`) across the ticks in both traces - not a counter, and what it is is not measured. This tree sends 500, the value the world's own log shows first |
 | 14 | client -> server | `0x8090` | 19 | it asks for the map's players: a 16-byte blob and one byte |
 | 15 | server -> client | `0x001D`, `0x0018` | 4, 36 | the PvP halves: no unlocked skills, and the unlocked-hero bitmap (eight dwords) |
-| 16 | server -> client | `0x001A` xN, `0x0059`, `0x0022`, `0x01D3`, `0x01CC`, `0x01D4`, `0x01B3`, `0x018E` | 17 or 25 each, 25 + 2n, 10, 4, 7, 4, 5, 2 | the map's agents (one `0x001A` per agent in the reference), the character's own body, the agent the client drives (`0x0022`: the agent and 3, which every emission measured carries), the party - created, the player added, the member stream ended - the character's own party word (`0x01B3`: the party id and the byte 1), and the load is over. The reference's own answer to this ask is longer; its measured order is the subsection below |
+| 16 | server -> client | the whole load block - see the list below | 4 to 1 + 4m each | the players answer: the PvP unlocks and the unlockable-item table, the account features, the unlocked lists and the team token, the skills and the progress record, the flags, the player and the agent it is drawn as, the agent's own properties and look, the party, and `0x018E` |
+
+### The players answer, frame for frame
+
+One block, in this order, ported from the working implementation's own
+(`ASURA/crates/asura-world/src/player.rs`, `player_block`), which is
+`GameSrv_HandleInstanceLoadRequestPlayers`:
+
+| # | header | is |
+|---|---|---|
+| 1 | `0x001D` | no unlocked PvP skills |
+| 2 | `0x0018` | the unlocked-hero bitmap, eight dwords of ones |
+| 3 | `0x001A` x387 | the unlockable-PvP-item table, one frame per entry (`game/src/DataStores/PvpItems.rs`) |
+| 4 | `0x001B` | the item stream ends |
+| 5 | `0x000F` x9 | the account features: (1,10), (99,3), (100,5), (101,5,5), (102,2,2), (111,1), (124,1), (125,1), (131,1) |
+| 6 | `0x0094` | five counted lists: missions, bonuses, the same two in hard mode at their full 31 zero words, and the reached instances |
+| 7 | `0x00F2` | the team token, `0xBAADF00D` |
+| 8 | `0x0037` | attribute points: 50 unspent, 50 spent |
+| 9 | `0x00B7` | the agent and its professions |
+| 10 | `0x00B6` | the unlocked-profession bitmap |
+| 11 | `0x00DA` | the skillbar: eight empty slots |
+| 12 | `0x00DB` | no unlocked skills |
+| 13 | `0x00E9` | the progress record, **fifteen** dwords |
+| 14 | `0x00EF` | the visibility flags, `FFFFFFFF FFFFFFFF` |
+| 15 | `0x003C` | the player's flags word, mask 7 |
+| 16 | `0x003A` | the agent's 42 attribute ranks, zero |
+| 17 | `0x001F` | how long the load took |
+| 18 | `0x0059` | the player: its id, the agent, the packed appearance and the name |
+| 19 | `0x00B7` | **the profession again** - the second one is what gives the new player the model's profession |
+| 20 | `0x0020` | the agent itself, 99 bytes: the point the entry answer named, speed 288 |
+| 21 | `0x009C` | its morale, 100 |
+| 22-25 | `0x009F` x2, `0x00A2`, `0x009F` | energy 25, health 400, energy regeneration 0.0, public level |
+| 26 | `0x00F0` | its initial effects, none |
+| 27 | `0x006E` | the nine item ids it is drawn wearing, from the equipped bag |
+| 28 | `0x0048` | its cape, shown |
+| 29 | `0x0022` | the agent the client drives |
+| 30-33 | `0x01D3`, `0x01CC`, `0x01D4`, `0x01B3` | the party: created, the player added, the member stream ended, and which party the character is in |
+| 34 | `0x018E` | the load is over |
+
+- Before 2026-11-12 this tree sent frames 16 to 18 only, and no party at all: the client hung on
+  the loading screen (`m_partyClient`, `PyCliParty.cpp(650)`), and the agent it is played as was
+  never created.
+- The appearance word is the character's own from its row, or `World.Appearance` when the row has
+  none - `0x03100000`, profession 1 and hair style 3, which is what every capture carries because it
+  is the reference's own default (E74 packs the word's fields).
+- The agent's numbers are settings (`AgentHealth`, `AgentEnergy`, `AgentEnergyRegen`, `AgentSpeed`),
+  read from the world's file and logged at start-up.
 
 - **The party is four frames and the order is the party object.** `0x01D3` creates it, `0x01CC` adds
   the player, `0x01D4` ends the member stream, and only then does `0x01B3` say which party the
@@ -183,47 +229,24 @@ working server's own trace of one login into map 146 (build 39112/39167), messag
   byte, the manifest end a byte, a word and a dword, the item stream a word and a byte, a bag a type,
   a model and the bag's own item - the same headers and field orders this tree sends, which is why a
   frame ported from the reference's trace and a frame ported from ASURA's records agree.
-- `0x0059`'s third dword is `0x03100000` in every emission measured - the reference's own log for
-  map 449 and ASURA's session for map 148, two different names - so it is sent as measured; what the
-  value means is not captured (`InstancePackets::player_create`).
+- `0x0059`'s third dword is the character's packed appearance, not a constant: `0x03100000` in every
+  capture because every captured character wore the reference's own default look - profession 1 and
+  hair style 3 (E74). A character's own appearance comes from its row, and `World.Appearance` is the
+  fallback for one that records none (`InstancePackets::player_create`).
 
-### The measured order of the players answer, and what this tree sends
+### What the reference's own trace shows, and what this tree sends
 
 The reference's own log for a load of map 146 (`recordings/gwps/world/load-stream.log`) answers the
-client's `0x8090` with a long tail. Its order, as the trace prints it:
+client's `0x8090` with the block above, and then with the map's own content: one `0x001A` per agent in
+the map, hundreds of them in that trace, interleaved with the frames that describe them.
 
-| frames | sizes | what the trace shows |
-|---|---|---|
-| `0x001D`, `0x0018` | 4, 36 | the PvP halves (this tree sends these) |
-| `0x001A` per agent | 17 or 25 | the map's agents - one frame per agent, hundreds of them in the trace |
-| `0x0020`, `0x000F` x5 | 99, 8 each | an agent to create, then five agent frames before the content block |
-| `0x0094` | 260 | a body of mostly zeros with a repeated `5B 5E 5D 5A 5C 0B 0B 0B 0B 0B` run and two timestamps - not named |
-| `0x00F2`, `0x0037` | 6, 8 | the header and inert bytes (`0x00F2` carries `0D F0 AD BA`, an uninitialised-memory marker) |
-| `0x00B7`, `0x00B6` | 9, 10 | the player's agent, its professions and PvP flag, and the unlocked-profession bitmap - the pair the creation screen also sends |
-| `0x00DA`, `0x00DB`, `0x00E9` | 75, 4, 62 | the agent's attributes, largely zeros - not decoded |
-| `0x003A`, `0x001F` | 176, 6 | not decoded; `0x001F` is the load-time message |
-| `0x0059` | 35 | the player's own body (this tree sends it, earlier) |
-| `0x00B7`, `0x0020` | 9, 99 | the player's agent and the agent to create |
-| `0x009F` x3, `0x00A2`, `0x009F` | 14 each | an id, a dword and a zero dword - a position or an attribute |
-| `0x00F0`, `0x006E`, `0x0048`, `0x0022` | 10, 42, 7, 10 | the closing content frames - not decoded |
-| `0x01D3`, `0x01CC`, `0x01D4`, `0x01B3` | 4, 7, 4, 5 | closing messages, not decoded |
-| `0x018E` | 2 | the end of the load |
+This tree sends the block for the player itself - all thirty-four frames listed above - and **not yet**
+the map's own agents: which agents a map has is the map's content, and it arrives with plan step 6
+(`game/Agents/`). An outpost will therefore be empty, and the block itself is what says so.
 
-This tree sends the same answer compressed to `0x001D`, `0x0018`, `0x0059`, `0x0022`, `0x01B3`,
-`0x018E`: the halves, the player's body, the agent the client drives (`0x0022`, the agent and the
-reference's constant 3), the party update and the load's end. Everything between the halves and the
-party update is the map's content (plan step 6). The position of the content follows the client's asks -
-the same block appears between `0x0196` and the end in
-`recordings/gwps/session/login-travel-session.log`, where that client asked `0x8088` first - so the
-answer is ask-driven, not a fixed script.
-
-None of the unported frames is named in the ledger, and the capture does not say what selects them. The
-frames in the list this tree can already build are the player's profession pair (`0x00B7`/`0x00B6`, the
-creation screen sends it), the agent creation (`0x0020`, 99 bytes, `AgentPackets::world_create_agent`,
-ported field by field from the reference's own builder), and an agent's morale (`0x009C`), float property
-(`0x00A2`) and initial effects (`0x00F0`); what remains is the map's content - which agents a map has -
-which arrives with the capture the plan's step 6 names, or a run with a client that shows what each one
-draws.
+The position of the content follows the client's asks - the same block appears between `0x0196` and the
+end in `recordings/gwps/session/login-travel-session.log`, where that client asked `0x8088` first - so
+the answer is ask-driven, not a fixed script.
 
 ## The file check
 

@@ -35,6 +35,22 @@ pub const AGENT_PROPERTY_ENERGY: u32 = 41;
 pub const AGENT_PROPERTY_HEALTH: u32 = 42;
 /// The third property the creation screen is sent, always zero there.
 pub const AGENT_PROPERTY_VALUE64: u32 = 64;
+/// The property an agent's public level is reported through.
+///
+/// The party window draws it, and it is not a field of the create message: `ASURA` reads the reference's
+/// own property 36 as `PublicLevel` and the client stores it in its agent record
+/// (`crates/asura-world/src/player.rs`, `AGENT_PROPERTY_PUBLIC_LEVEL`).
+pub const AGENT_PROPERTY_PUBLIC_LEVEL: u32 = 36;
+/// The property an agent's energy regeneration is reported through, as a float.
+pub const AGENT_PROPERTY_ENERGY_REGEN: u32 = 43;
+/// The model word a player agent is drawn with: this base or'd with the player's id.
+///
+/// Evidence: `ASURA/crates/asura-world/src/player.rs` (`CHAR_CLASS_PLAYER_BASE`), and the reference's
+/// own create message in this tree's capture (`recordings/client/feature/maps/pre-searing-load-3.jsonl`
+/// seq 221: agent 40 is drawn with model `0x30000035`).
+pub const CHAR_CLASS_PLAYER_BASE: u32 = 0x3000_0000;
+/// `1` for a living body, `4` for a dropped item.
+pub const AGENT_TYPE_LIVING: u8 = 1;
 
 /// One agent, in the field order `GAME_SMSG_WORLD_CREATE_AGENT` writes it.
 ///
