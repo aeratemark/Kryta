@@ -57,8 +57,10 @@ cargo run -p kryta-supervisor                # the stack: both programs, stopped
 cargo run -p kryta-supervisor -- --check     # start, wait for every READY, stop, report
 ```
 
-The binaries it starts are `target/debug/<program>.exe`, so `cargo build` runs first; the supervisor
-says which one is missing rather than failing quietly.
+The binaries it starts are `target/debug/<program>.exe`; one that is missing is built by the
+supervisor itself (`cargo build -p <program>`, with cargo's own output on the console), so the single
+command is enough from a fresh checkout, and a program that fails to build says so with cargo's reason
+rather than starting nothing.
 
 | page | is | state |
 |---|---|---|

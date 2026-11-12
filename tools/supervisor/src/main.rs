@@ -76,16 +76,30 @@ fn exe_of(program: &str) -> std::path::PathBuf {
     root.join("target").join("debug").join(name)
 }
 
+/// Build a service's program when its binary is missing, so the one command is enough from a
+/// fresh checkout. The build is cargo's own, printing its own progress to this console.
+fn ensure_built(program: &str) -> Result<(), String> {
+    let exe = exe_of(program);
+    if exe.exists() {
+        return Ok(());
+    }
+    println!("{program} is not built yet; building it now (cargo build -p {program})...");
+    let status = Command::new("cargo")
+        .args(["build", "-p", program])
+        .status()
+        .map_err(|error| format!("cannot run cargo build for {program}: {error}"))?;
+    if exe.exists() {
+        return Ok(());
+    }
+    Err(format!(
+        "{program} did not build (cargo answered {status}); `cargo build -p {program}` says why"
+    ))
+}
+
 /// Start one service, and hand every line it prints to the supervisor.
 fn start(service: &Service, lines: Sender<(String, String)>) -> Result<Child, String> {
+    ensure_built(&service.program)?;
     let exe = exe_of(&service.program);
-    if !exe.exists() {
-        return Err(format!(
-            "{} is not built: run `cargo build` first ({} is missing)",
-            service.program,
-            exe.display()
-        ));
-    }
     let mut child = Command::new(&exe)
         .args(&service.args)
         .stdout(Stdio::piped())

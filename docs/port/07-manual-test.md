@@ -33,15 +33,15 @@ makes and drops a database of its own and needs the role to have `CREATEDB`.
 One command, from the repository root:
 
 ```powershell
-cargo build                              # once, or after a change
 cargo run -p kryta-supervisor            # both programs; Ctrl+C stops them together
 ```
 
 The supervisor prints each program's output under its own name (`auth | ...`, `world | ...`), waits for
 both READY lines, says `the stack is up: auth on 6112, world on 6113`, and stops everything on Ctrl+C.
-`cargo run -p kryta-supervisor -- --check` starts, waits for both READY lines, stops and reports -
-it is the way to know the stack can come up without leaving it running. The list it starts is
-`tools/supervisor/stack.json`.
+A program that is not built yet is built by the supervisor itself (`cargo build -p <program>`), so the
+single command is enough from a fresh checkout. `cargo run -p kryta-supervisor -- --check` starts, waits
+for both READY lines, stops and reports - the way to know the stack can come up without leaving it
+running. The list it starts is `tools/supervisor/stack.json`.
 
 The same programs by hand, each in its own window, if that is preferred:
 
