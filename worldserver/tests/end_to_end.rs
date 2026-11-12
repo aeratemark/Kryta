@@ -618,6 +618,19 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             0x018E,
             "the load's last message: {players:?}"
         );
+        // The party, in the reference's own order: created, the player added, the member stream ended,
+        // and only then which party the character is in. A client given `0x01B3` alone asserts
+        // `m_partyClient` (`PyCliParty.cpp(650)`, measured 2026-11-12).
+        let headers: Vec<u16> = players.iter().map(|(header, _)| *header).collect();
+        let party_at = headers
+            .iter()
+            .position(|header| *header == 0x01D3)
+            .unwrap_or_else(|| panic!("the party is created in the players answer: {headers:04X?}"));
+        assert_eq!(
+            &headers[party_at..party_at + 4],
+            &[0x01D3, 0x01CC, 0x01D4, 0x01B3],
+            "the party comes before the character's own party word: {headers:04X?}"
+        );
 
         // From here the world ticks the connection: one `0x001E` arrives on the interval.
         let mut tick = read_exact(&mut stream, 6);
