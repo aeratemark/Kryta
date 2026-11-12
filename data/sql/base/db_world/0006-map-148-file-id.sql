@@ -1,0 +1,22 @@
+-- Map 148's file id, corrected: the client must be told a file its own Gw.dat can load.
+--
+-- 0002-maps.sql wrote 112509 (0x0001B77D). This client's Gw.dat holds no such map file, so a load
+-- that names it ends where it did on 2026-11-12:
+--
+--   Map file '0x01b77d' failed to load.  Attempting to re-bloat.
+--   Map '0x01b77d' is not a valid riff type
+--   Map '0x01b77d' failed to load
+--   Creating default map
+--
+-- and then an assertion in `P:\Code\Engine\Map\Map.cpp(1762)`, build 39167.
+--
+-- 113021 (0x0001B97D) is the value a load of map 148 really carried, in this tree's own capture:
+-- `recordings/client/feature/maps/pre-searing-load-3.jsonl` seq 137, the `0x0196` frame, whose fourth
+-- byte onward reads `7D B9 01 00`. The working implementation's catalogue states the same number for
+-- map 148 (`ASURA/config/World/Vanilla/maps/Prophecies/Ascalon (pre-Searing)/Outposts/148/basic.json`,
+-- `map_file_id`). 0002's own comment already cites 0x0001B97D; the row was the thing that disagreed.
+--
+-- A new file rather than an edit to 0002: an applied file is immutable, and the updater refuses a
+-- changed one instead of silently applying something else.
+
+UPDATE "map" SET "file_id" = 113021 WHERE "id" = 148;

@@ -281,7 +281,10 @@ mod tests {
             .find(|map| map.id == 148)
             .expect("map 148 is seeded");
         assert_eq!(outpost.kind, 0, "Ascalon City is an outpost");
-        assert_eq!(outpost.file_id, 112_509, "the file id the recording carried");
+        assert_eq!(
+            outpost.file_id, 113_021,
+            "the file id the recording carried (0x0001B97D)"
+        );
         assert!(
             spawns.iter().any(|spawn| spawn.map_id == 148),
             "and it has a point to stand on"

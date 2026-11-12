@@ -156,6 +156,13 @@ working server's own trace of one login into map 146 (build 39112/39167), messag
 
 - The position is a point of the map's own list, scattered per R13 (`docs/game-rules.md`), so
   `0x0196`'s x and y differ from run to run; the file id and plane are the map's, from its row.
+- **The file id is the one thing in this block the client cannot be wrong about.** It is an entry in
+  its own `Gw.dat`: a number that names no map file there makes it log `Map '0x...' is not a valid riff
+  type`, `Creating default map`, and then assert in `Map.cpp(1762)`. Measured 2026-11-12 with map 148's
+  row carrying 112509 (`0x0001B77D`); the value a real load of that map carried is **113021**
+  (`0x0001B97D`, `recordings/client/feature/maps/pre-searing-load-3.jsonl` seq 137, the fourth byte of
+  the `0x0196` frame onward, and ASURA's own catalogue row for map 148). `0006-map-148-file-id.sql`
+  corrects the row.
 - `0x017D`'s name is the character row's `name`, as the creation confirm wrote it; the campaign and
   profession of the same row choose which starting set the item stream carries.
 - The agent stream (row 16) is the reference's map content - one `0x001A` per agent in the map - and

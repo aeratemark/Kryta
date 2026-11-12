@@ -1921,7 +1921,7 @@ mod tests {
                 MapEntry {
                     id: 148,
                     kind: map_kind::OUTPOST,
-                    file_id: 112_509,
+                    file_id: 113_021,
                     name: "Ascalon City (pre-Searing)".to_string(),
                 },
             ],
@@ -2371,7 +2371,7 @@ Logger.root = 6,Console
         assert_eq!(&spawn[..2], &[0x96, 0x01], "the entry position");
         assert_eq!(
             &spawn[2..6],
-            &112_509u32.to_le_bytes(),
+            &113_021u32.to_le_bytes(),
             "map 148's file id, as the recording carried it"
         );
         // The point is scattered around the map's own spawn, so it is near it and not equal to it.
@@ -2677,7 +2677,7 @@ Logger.root = 6,Console
         reading.apply(&mut spawn);
         assert_eq!(
             &spawn[2..6],
-            &112_509u32.to_le_bytes(),
+            &113_021u32.to_le_bytes(),
             "the outpost's file, so the record decided the map"
         );
         assert_eq!(&spawn[26..32], &[0x1E, 0x00, 0xF4, 0x01, 0x00, 0x00], "the first tick");

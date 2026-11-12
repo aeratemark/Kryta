@@ -570,9 +570,14 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         let mut spawn = read_exact(&mut stream, 26 + 6);
         reading.apply(&mut spawn);
         assert_eq!(&spawn[..2], &[0x96, 0x01], "the entry position");
+        // The one number in this block the client cannot be wrong about: an entry in its own `Gw.dat`.
+        // 113021 (0x0001B97D) is what a real load of map 148 carried - `7D B9 01 00` at the fourth byte
+        // of the `0x0196` frame in `recordings/client/feature/maps/pre-searing-load-3.jsonl` seq 137.
+        // 112509 (0x0001B77D) is not a map file in this client, and a load naming it ended with "not a
+        // valid riff type", "Creating default map" and an assertion in `Map.cpp(1762)`.
         assert_eq!(
             &spawn[2..6],
-            &112_509u32.to_le_bytes(),
+            &113_021u32.to_le_bytes(),
             "map 148's file id, as the recording carried it"
         );
         let x = f32::from_le_bytes([spawn[6], spawn[7], spawn[8], spawn[9]]);
