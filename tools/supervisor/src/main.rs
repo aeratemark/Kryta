@@ -76,14 +76,15 @@ fn exe_of(program: &str) -> std::path::PathBuf {
     root.join("target").join("debug").join(name)
 }
 
-/// Build a service's program when its binary is missing, so the one command is enough from a
-/// fresh checkout. The build is cargo's own, printing its own progress to this console.
+/// Build a service's program before it starts, so the one command always runs the code that is in the
+/// tree - not a binary left over from the last build. Cargo is incremental: a tree that has not
+/// changed builds in a fraction of a second, and a tree that has changed says so instead of being
+/// quietly ignored. The build is cargo's own, printing its own progress to this console.
 fn ensure_built(program: &str) -> Result<(), String> {
     let exe = exe_of(program);
-    if exe.exists() {
-        return Ok(());
+    if !exe.exists() {
+        println!("{program} is not built yet; building it now (cargo build -p {program})...");
     }
-    println!("{program} is not built yet; building it now (cargo build -p {program})...");
     let status = Command::new("cargo")
         .args(["build", "-p", program])
         .status()

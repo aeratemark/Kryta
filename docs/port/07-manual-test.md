@@ -38,8 +38,9 @@ cargo run -p kryta-supervisor            # both programs; Ctrl+C stops them toge
 
 The supervisor prints each program's output under its own name (`auth | ...`, `world | ...`), waits for
 both READY lines, says `the stack is up: auth on 6112, world on 6113`, and stops everything on Ctrl+C.
-A program that is not built yet is built by the supervisor itself (`cargo build -p <program>`), so the
-single command is enough from a fresh checkout. `cargo run -p kryta-supervisor -- --check` starts, waits
+Each program is built before it starts (`cargo build -p <program>`), so the stack always runs the code
+that is in the tree and never a binary left over from an earlier build - a tree that has not changed
+builds in a fraction of a second. `cargo run -p kryta-supervisor -- --check` starts, waits
 for both READY lines, stops and reports - the way to know the stack can come up without leaving it
 running. The list it starts is `tools/supervisor/stack.json`.
 
