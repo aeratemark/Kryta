@@ -152,8 +152,15 @@ working server's own trace of one login into map 146 (build 39112/39167), messag
 | 13 | server -> client | `0x001E` | 6 | the first simulation tick: the reference's dword alternates between 500 (`F4 01`) and 516/515 (`04 02`/`03 02`) across the ticks in both traces - not a counter, and what it is is not measured. This tree sends 500, the value the world's own log shows first |
 | 14 | client -> server | `0x8090` | 19 | it asks for the map's players: a 16-byte blob and one byte |
 | 15 | server -> client | `0x001D`, `0x0018` | 4, 36 | the PvP halves: no unlocked skills, and the unlocked-hero bitmap (eight dwords) |
-| 16 | server -> client | `0x001A` xN, `0x0059`, `0x0022`, `0x01B3`, `0x018E` | 17 or 25 each, 25 + 2n, 10, 5, 2 | the map's agents (one `0x001A` per agent in the reference), the character's own body, the agent the client drives (`0x0022`: the agent and 3, which every emission measured carries), the party update (`0x01B3`: the word 1 and the byte 1), and the load is over - the reference's own answer to this ask is longer; its measured order is the subsection below |
+| 16 | server -> client | `0x001A` xN, `0x0059`, `0x0022`, `0x01D3`, `0x01CC`, `0x01D4`, `0x01B3`, `0x018E` | 17 or 25 each, 25 + 2n, 10, 4, 7, 4, 5, 2 | the map's agents (one `0x001A` per agent in the reference), the character's own body, the agent the client drives (`0x0022`: the agent and 3, which every emission measured carries), the party - created, the player added, the member stream ended - the character's own party word (`0x01B3`: the party id and the byte 1), and the load is over. The reference's own answer to this ask is longer; its measured order is the subsection below |
 
+- **The party is four frames and the order is the party object.** `0x01D3` creates it, `0x01CC` adds
+  the player, `0x01D4` ends the member stream, and only then does `0x01B3` say which party the
+  character is in. A client given `0x01B3` alone asserts `m_partyClient` in `PyCliParty.cpp(650)` -
+  measured 2026-11-12 on the load of map 148. The four, with their numbers, are
+  `recordings/client/feature/travel/doors-20261031-095754.jsonl` seq 319-322 (`d3 01 | 01 00`,
+  `cc 01 | 01 00 | 01 00 | 01`, `d4 01 | 01 00`, `b3 01 | 01 00 | 01`) and
+  `game/src/Server/Packets/PartyPackets.rs`.
 - The position is a point of the map's own list, scattered per R13 (`docs/game-rules.md`), so
   `0x0196`'s x and y differ from run to run; the file id and plane are the map's, from its row.
 - **The file id is the one thing in this block the client cannot be wrong about.** It is an entry in

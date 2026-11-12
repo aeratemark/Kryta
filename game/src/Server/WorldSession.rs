@@ -25,7 +25,7 @@ use shared::network::socket::{Session, SessionFuture, SessionIo};
 
 use crate::server::packets::{
     agent_packets, character_packets, creation_load_block, instance_packets, item_packets,
-    misc_packets,
+    misc_packets, party_packets,
 };
 use crate::server::protocol::GameVersion;
 use crate::server::protocol::FrameError;
@@ -1175,17 +1175,31 @@ impl WorldSession {
                         frames.push(misc_packets::world_simulation_tick(500));
                         self.send(io, peer, crypt, &frames, "the entry position").await;
                     }
-                    // The players request: the PvP halves and the character's own body, and the load
-                    // is over. The connection stays: from here the world ticks it (R33) and answers
-                    // what the client asks on a live map. The party update before the end is the
-                    // frame the reference's own log sends (`0x01B3`, one member), measured.
+                    // The players request: the PvP halves, the character's own body, the party it is
+                    // in, and the load is over. The connection stays: from here the world ticks it
+                    // (R33) and answers what the client asks on a live map.
+                    //
+                    // The party comes as the reference's own four frames, in its own order - created,
+                    // the player added, the member stream ended, and only then which party the
+                    // character is in. A client told about a party it was never given asserts
+                    // (`Assertion: m_partyClient`, `PyCliParty.cpp(650)`, measured 2026-11-12 on the
+                    // load of map 148). The order and the numbers are
+                    // `recordings/client/feature/travel/doors-20261031-095754.jsonl` seq 319-322 and
+                    // `ASURA/crates/asura-world/src/player.rs:382-388`.
                     instance_packets::CLIENT_LOAD_REQUEST_PLAYERS => {
                         let frames = vec![
                             misc_packets::pvp_update_unlocked_skills(&[]),
                             misc_packets::pvp_update_unlocked_heroes(&[0xFFFF_FFFF; 8]),
                             instance_packets::player_create(CREATION_AGENT, &sheet.name),
                             agent_packets::world_update_controlled_agent(CREATION_AGENT, 3),
-                            character_packets::character_update_party(1, 1),
+                            party_packets::party_create(party_packets::PARTY_ID),
+                            party_packets::party_player_add(
+                                party_packets::PARTY_ID,
+                                CREATION_AGENT as u16,
+                                1,
+                            ),
+                            party_packets::party_member_stream_end(party_packets::PARTY_ID),
+                            character_packets::character_update_party(party_packets::PARTY_ID, 1),
                             instance_packets::instance_load_finish(),
                         ];
                         self.send(io, peer, crypt, &frames, "the player and the load's last message")
@@ -2395,8 +2409,15 @@ Logger.root = 6,Console
 
         let player = instance_packets::player_create(1, "Player");
         let controlled = agent_packets::world_update_controlled_agent(1, 3);
-        let party = character_packets::character_update_party(1, 1);
-        let mut answered = vec![0u8; 4 + 36 + player.len() + controlled.len() + party.len() + 2];
+        let party = [
+            party_packets::party_create(party_packets::PARTY_ID),
+            party_packets::party_player_add(party_packets::PARTY_ID, 1, 1),
+            party_packets::party_member_stream_end(party_packets::PARTY_ID),
+            character_packets::character_update_party(party_packets::PARTY_ID, 1),
+        ];
+        let party_len: usize = party.iter().map(Vec::len).sum();
+        let mut answered =
+            vec![0u8; 4 + 36 + player.len() + controlled.len() + party_len + 2];
         client.read_exact(&mut answered).unwrap();
         reading.apply(&mut answered);
         assert_eq!(&answered[..4], &[0x1D, 0x00, 0x00, 0x00], "no unlocked PvP skills");
@@ -2415,13 +2436,20 @@ Logger.root = 6,Console
             controlled.as_slice(),
             "the agent the client drives"
         );
+        // The party, in the reference's own order and its own bytes: created, the player added, the
+        // member stream ended, then which party the character is in.
+        let mut party_bytes = Vec::new();
+        for frame in &party {
+            party_bytes.extend_from_slice(frame);
+        }
         assert_eq!(
-            &answered[40 + player.len() + controlled.len()..40 + player.len() + controlled.len() + party.len()],
-            party.as_slice(),
-            "the party update the reference sends before the end"
+            &answered[40 + player.len() + controlled.len()
+                ..40 + player.len() + controlled.len() + party_len],
+            party_bytes.as_slice(),
+            "the party the reference creates before the end"
         );
         assert_eq!(
-            &answered[40 + player.len() + controlled.len() + party.len()..],
+            &answered[40 + player.len() + controlled.len() + party_len..],
             &[0x8E, 0x01],
             "and the load is over"
         );

@@ -14,6 +14,8 @@ pub mod instance_packets;
 pub mod item_packets;
 #[path = "MiscPackets.rs"]
 pub mod misc_packets;
+#[path = "PartyPackets.rs"]
+pub mod party_packets;
 
 pub use instance_packets::{
     CHAR_CREATION_START, INSTANCE_LOAD_HEAD, INSTANCE_PLAYER_DATA_DONE, INSTANCE_PLAYER_DATA_START,
