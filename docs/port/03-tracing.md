@@ -34,6 +34,11 @@ Then, while it runs:
 | `Connection from ADDRESS: the plaintext half of the exchange is answered` | the seed exchange completed |
 | `Connection from ADDRESS: greeted with the session info and a heartbeat, N bytes` | the two messages the reference sends before the client asks for anything |
 | `Connection from ADDRESS: login request N, user UUID session UUID character '...' type '...'` | the client's first scrambled message, read back as the portal login |
+| `Connection from ADDRESS: the client chose the character '...', and this server answers yes.` | `0x800A`: the click on the list, and the character a following travel is placed by |
+| `Connection from ADDRESS: request N for map M (type T, region R, district D, language L) - the client wants a world.` | `0x8029`, in the client's own numbers |
+| `Connection from ADDRESS: the client named the creation instance as a place; map M is where it is sent instead, from ...` | the placement rule moved the destination to where the character stands - not a fault, and it names the row it used |
+| `Connection from ADDRESS: neither the character's row nor its last outpost names a map, so it is sent to the fallback outpost M (FallbackOutpost).` | a character that has never been anywhere: the setting decided, and the line says so |
+| `Connection from ADDRESS: the travel to map M (district D, language L) of account ... is recorded for world W; the world claims it when the connection presents token 0x...` | the hand-off row the world reads; M is the placed map, not the client's |
 | `status: up N s, listening on ADDRESS:PORT, N connection(s) accepted, L live` | every `StatusInterval` seconds; `live` is what is being served now |
 | `Portal: listening on ADDRESS:PORT.` | when the portal is enabled, on the address it bound |
 | `ADDRESS: GET /Spawned/WebGate/session/create.xml -> 200 (N bytes)` | one line per portal request, with its status |

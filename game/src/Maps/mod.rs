@@ -11,6 +11,9 @@
 #[path = "Travels.rs"]
 pub mod travels;
 
+#[path = "Placement.rs"]
+pub mod placement;
+
 pub use travels::{DatabaseTravels, Travel};
 
 use std::sync::{Arc, Mutex};

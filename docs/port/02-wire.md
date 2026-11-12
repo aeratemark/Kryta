@@ -357,6 +357,25 @@ A request this server cannot place is answered with the response alone and statu
 address: the client then shows an error it can describe, where an address nothing listens on is a
 connect timeout with no message.
 
+**The map in the answer is not always the map the client asked for.** A client has no business knowing
+which outpost its character stands in, so the character's own row decides the destination
+(`AuthSrv_HandleRequestGameInstance`; the rule is `game/src/Maps/Placement.rs`, ported from
+`ASURA/crates/asura-rules/src/lib.rs`, `placement`):
+
+| what the client names | where it is sent |
+|---|---|
+| `CreationMap` **with** the creation map type (11) | the creation instance: a creation visit is its own destination |
+| `CreationMap` as a place - which is what this client sends when a character is clicked | the map the character's row names, then its last outpost, then `FallbackOutpost` |
+| any other map | that map |
+
+- Measured, 2026-11-12, build 39167: after a character was created and the list clicked, the client
+  sent `0x8029` with `req_id` 6, **map 0, type 0, district 0 and language `-1`** - the creation map
+  named as a place. A login that echoed it back handed the client the creation instance again and the
+  client waited on a loading screen that never ended. Both numbers the rule needs are settings:
+  `CreationMap` and `FallbackOutpost` (`docs/port/04-configuration.md`).
+- The same request is the first one to carry a language of `-1`, which no district record can hold; the
+  world reads anything above `0xFF` as "none named" and uses 0.
+
 - Source: `recordings/gwps/world/load-stream.log` for the order and the bytes, and
   `docs/evidence/client-protocol.md` section 5a for the two layouts and the refusal rule.
 - In this tree: `authserver/src/Server/login_reply.rs` (`game_server_info`, `host_blob`,

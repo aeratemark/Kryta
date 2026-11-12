@@ -538,6 +538,42 @@ fn an_end_to_end_login_and_load_against_the_live_programs() {
     assert_eq!(&answered[2..6], &9u32.to_le_bytes(), "the request is echoed");
     assert_eq!(&answered[6..10], &0u32.to_le_bytes(), "the name is on the account");
 
+    // 5d. What this client really sends next: `0x8029` naming the **creation map** as a place to
+    // stand - request 6, map 0, type 0, district 0, language -1, measured 2026-11-12 (`Auth.log`). The
+    // character the click chose stands in map 148, and that is where the login has to send it: a
+    // client told the creation instance again waits on a loading screen that never ends
+    // (`game/src/Maps/Placement.rs`).
+    remove_travel(&account);
+    let mut place = vec![0u8; 26];
+    place[0..2].copy_from_slice(&0x8029u16.to_le_bytes());
+    place[2..6].copy_from_slice(&6u32.to_le_bytes());
+    place[22..26].copy_from_slice(&u32::MAX.to_le_bytes());
+    let mut scrambled = place;
+    sending.apply(&mut scrambled);
+    stream.write_all(&scrambled).expect("the map request after a character click");
+    let answered = read_quiet(&mut stream, &mut reading);
+    assert!(
+        answered.len() >= 52,
+        "the answer is the info and the response: {}",
+        shared::network::socket::hex(&answered)
+    );
+    // The info message: header, the request, the map token, then the map id.
+    assert_eq!(&answered[..2], &[0x09, 0x00], "the game server info");
+    assert_eq!(&answered[2..6], &6u32.to_le_bytes(), "the request is echoed");
+    assert_eq!(
+        &answered[10..14],
+        &148u32.to_le_bytes(),
+        "the client is sent to the character's own map, not the creation instance: {}",
+        shared::network::socket::hex(&answered[..answered.len().min(44)])
+    );
+    // And the hand-off the world claims names that map too.
+    let travels = travel_rows(&account);
+    assert_eq!(
+        travels.first().copied(),
+        Some((148, 0, u32::MAX as i64)),
+        "the travel the login recorded: {travels:?}"
+    );
+
     // 6. The map request: the client names the map it wants, and the login answers with the world it
     // was told to dial and records the hand-off the world claims (R9). The wire is the traced six
     // dwords: request, map type, map, region, district, language.

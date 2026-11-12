@@ -6,6 +6,14 @@
     "doc": "Where this program answers login connections. Reference: GetOption<int32>(\"RealmServerPort\", 3724). It is 6112 here because that is the port this client was launched against and reaches; 3724 is the reference's default and no client of this game asks for it."
   },
 
+  "CreationMap": {
+    "value": 0,
+    "doc": "The map id that means the character-creation instance. A client naming it as a place - which this client does when a character is clicked, 0x8029 with map 0 and type 0 - is placed where the character's row says instead (game/src/Maps/Placement.rs). 0 is the creation instance's own id in the world's catalogue."
+  },
+  "FallbackOutpost": {
+    "value": 148,
+    "doc": "Where a character whose row names no map and which has never been in an outpost enters. A setting rather than a rule: the outpost a character starts in is written by creation and by travelling, never derived, and this program holds no map catalogue to pick one from (docs/port/04-configuration.md)."
+  },
   "BindIP": {
     "value": "0.0.0.0",
     "doc": "The address the listener binds. 0.0.0.0 is every interface."

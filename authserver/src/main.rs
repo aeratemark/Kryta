@@ -358,6 +358,30 @@ fn run(args: &[String]) -> Result<(), String> {
         log.clone(),
     ));
 
+    // The two numbers a travel request is placed by, both settings: which map id is the creation
+    // instance, and where a character with no map anywhere enters. Reference: the same decision is
+    // `AuthSrv_HandleRequestGameInstance`'s, and the working implementation keeps the pair in its own
+    // defaults file (`ASURA/crates/asura-rules/src/lib.rs`, `placement`).
+    let (creation_map, notes) = config
+        .value::<u16>("CreationMap", 0)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let (fallback_outpost, notes) = config
+        .value::<u16>("FallbackOutpost", 148)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        format!(
+            "Travel placement: the creation instance is map {creation_map}, and a character with no map anywhere enters map {fallback_outpost}."
+        ),
+    );
+
     // The portal, when the configuration asks for it. It is served by this program rather than a
     // third one: it hands out the identity this program then resolves, and a third service is a third
     // thing to start before a client can log in - `docs/decisions/0003-portal-host.md`.
@@ -578,7 +602,8 @@ fn run(args: &[String]) -> Result<(), String> {
                     Some(std::sync::Arc::clone(&characters)),
                 )
                 .with_travels(std::sync::Arc::clone(&travels))
-                .with_accounts(std::sync::Arc::clone(&accounts)),
+                .with_accounts(std::sync::Arc::clone(&accounts))
+                .with_placement(creation_map, fallback_outpost),
             ) as Box<dyn Session>
         })
     };

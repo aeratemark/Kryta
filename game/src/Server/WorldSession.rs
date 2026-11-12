@@ -552,7 +552,19 @@ impl WorldSession {
             None => None,
         };
         let map_id = travel.map(|travel| travel.map_id).unwrap_or(version.map_id);
-        let language = travel.map(|travel| travel.language.min(0xFF) as u8).unwrap_or(0);
+        // The language the client named, or the world's own when it named none: a travel may carry
+        // `-1` (`0xFFFFFFFF`) for "any", which is not a language the client's district record can
+        // hold. Measured 2026-11-12: the map request that follows a character click carries exactly
+        // that, so an unclamped `-1` reaches the load block as 255.
+        let language = travel
+            .map(|travel| {
+                if travel.language > u32::from(u8::MAX) {
+                    0
+                } else {
+                    travel.language as u8
+                }
+            })
+            .unwrap_or(0);
 
         // 4. The block the world sends unasked, once the connection is scrambled.
         let Some(map) = self.maps.iter().find(|map| map.id == map_id) else {

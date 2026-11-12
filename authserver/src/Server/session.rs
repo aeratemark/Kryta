@@ -101,6 +101,14 @@ pub struct AuthSession {
     /// The account table, when the program opened one: the EULA version a client accepts is
     /// recorded there, which is what stops it asking again.
     accounts: Option<std::sync::Arc<game::accounts::DatabaseAccounts>>,
+    /// The character the client has chosen (`0x800A`), as the map its row names. A travel request
+    /// (`0x8029`) is placed by it: a client naming the creation instance as a place is put where the
+    /// character actually stands (`game::maps::placement`).
+    character_map: Option<u16>,
+    /// The map id that means "the character-creation instance" - a setting (`CreationMap`).
+    creation_map: u16,
+    /// Where a character with no map anywhere enters - a setting (`FallbackOutpost`).
+    fallback_outpost: u16,
 }
 
 impl AuthSession {
@@ -125,7 +133,21 @@ impl AuthSession {
             characters,
             travels: None,
             accounts: None,
+            character_map: None,
+            creation_map: 0,
+            fallback_outpost: 0,
         }
+    }
+
+    /// Give the session the two numbers a travel is placed by: which map id is the creation instance,
+    /// and where a character with no map anywhere enters.
+    ///
+    /// Both are settings (`docs/port/04-configuration.md`); a session without them keeps 0 for each,
+    /// which leaves every travel exactly as the client named it.
+    pub fn with_placement(mut self, creation_map: u16, fallback_outpost: u16) -> Self {
+        self.creation_map = creation_map;
+        self.fallback_outpost = fallback_outpost;
+        self
     }
 
     /// Give the session an account table to record the EULA version in.
@@ -605,15 +627,22 @@ impl AuthSession {
             CHANGE_PLAY_CHARACTER => {
                 let request = request_id(body);
                 let name = counted_name(body.get(4..).unwrap_or_default());
-                let found = match (self.characters.as_ref(), self.account) {
-                    (Some(characters), Some(account)) => Some(
-                        characters
-                            .for_account(&game::characters::uuid_text(&account))
-                            .into_iter()
-                            .any(|character| character.name == name),
-                    ),
+                let chosen = match (self.characters.as_ref(), self.account) {
+                    (Some(characters), Some(account)) => characters
+                        .for_account(&game::characters::uuid_text(&account))
+                        .into_iter()
+                        .find(|character| character.name == name),
                     _ => None,
                 };
+                let found = match (self.characters.as_ref(), self.account) {
+                    (Some(_), Some(_)) => Some(chosen.is_some()),
+                    _ => None,
+                };
+                // The character the client is about to enter, and the map its row names: a travel
+                // request that follows is placed by it.
+                if let Some(character) = &chosen {
+                    self.character_map = Some(character.settings.last_outpost);
+                }
 
                 let status = if found.unwrap_or(false) {
                     crate::server::login_reply::GM_ERROR_NONE
@@ -829,13 +858,47 @@ impl AuthSession {
             ),
         );
 
+        // Where the character actually enters. A client has no business knowing which outpost its
+        // character stands in, and this client names the creation map when a character is clicked
+        // (`0x8029` with map 0 and type 0), so the row decides - the rule and its cases are
+        // `game::maps::placement`.
+        let (destination, substituted) = game::maps::placement::place(
+            game::maps::placement::Requested {
+                map_id: request.map_id as u16,
+                map_type: request.map_type,
+            },
+            game::maps::placement::Character {
+                // This tree keeps one map on a character, which is both where it stands and the
+                // outpost it last entered: a character that has never been anywhere names neither.
+                map_id: self.character_map.unwrap_or(self.creation_map),
+                last_outpost: self.character_map.unwrap_or(self.creation_map),
+            },
+            self.creation_map,
+            self.fallback_outpost,
+        );
+        match substituted {
+            Some(game::maps::placement::Substituted::CreationNamedAsPlace(why)) => self.say(
+                LogLevel::Info,
+                format!(
+                    "Connection from {peer}: the client named the creation instance as a place; map {destination} is where it is sent instead, from {why}."
+                ),
+            ),
+            Some(game::maps::placement::Substituted::NothingToPlace) => self.say(
+                LogLevel::Warn,
+                format!(
+                    "Connection from {peer}: neither the character's row nor its last outpost names a map, so it is sent to the fallback outpost {destination} (FallbackOutpost)."
+                ),
+            ),
+            None => {}
+        }
+        let destination = u32::from(destination);
+
         let world = self.front_door.as_ref().and_then(|door| door.pick());
         let Some(server) = world else {
             self.say(
                 LogLevel::Warn,
                 format!(
-                    "Connection from {peer}: no world is configured to serve map {}, so the request is refused with status {} and no address - what the reference does when it has no game server, and better than naming a port nothing listens on.",
-                    request.map_id,
+                    "Connection from {peer}: no world is configured to serve map {destination}, so the request is refused with status {} and no address - what the reference does when it has no game server, and better than naming a port nothing listens on.",
                     crate::server::login_reply::GM_ERROR_NETWORK_ERROR
                 ),
             );
@@ -863,7 +926,7 @@ impl AuthSession {
         let info = crate::server::login_reply::game_server_info(
             request.request,
             server.token,
-            request.map_id,
+            destination,
             &host,
             player_token,
         );
@@ -880,7 +943,7 @@ impl AuthSession {
                 let travel = game::maps::Travel {
                     account,
                     world: server.token,
-                    map_id: request.map_id,
+                    map_id: destination,
                     district: request.district,
                     language: request.language,
                     player_token,
@@ -889,8 +952,7 @@ impl AuthSession {
                     Ok(()) => self.say(
                         LogLevel::Info,
                         format!(
-                            "Connection from {peer}: the travel to map {} (district {}, language {}) of account {} is recorded for world {}; the world claims it when the connection presents token 0x{player_token:08X}.",
-                            request.map_id,
+                            "Connection from {peer}: the travel to map {destination} (district {}, language {}) of account {} is recorded for world {}; the world claims it when the connection presents token 0x{player_token:08X}.",
                             request.district,
                             request.language,
                             uuid_le_text(&account),
@@ -900,8 +962,7 @@ impl AuthSession {
                     Err(error) => self.say(
                         LogLevel::Error,
                         format!(
-                            "Connection from {peer}: the travel to map {} was not recorded ({error}); the world will read the map from the version message instead.",
-                            request.map_id
+                            "Connection from {peer}: the travel to map {destination} was not recorded ({error}); the world will read the map from the version message instead."
                         ),
                     ),
                 }
