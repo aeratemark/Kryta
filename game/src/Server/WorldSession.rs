@@ -890,6 +890,7 @@ impl WorldSession {
                 Some(true)
             }
             CHAR_CREATION_CHANGE_PROF => {
+                let previous = *creation;
                 if message.len() >= 4 {
                     creation.campaign = message[2];
                     creation.profession = message[3];
@@ -901,18 +902,46 @@ impl WorldSession {
                         creation.campaign, creation.profession
                     ),
                 );
-                let frames = vec![
-                    character_packets::player_update_profession(
-                        CREATION_AGENT,
-                        creation.profession,
-                        0,
-                        0,
-                    ),
-                    character_packets::player_update_unlocked_professions(
-                        CREATION_AGENT,
-                        character_packets::CREATION_UNLOCKED_PROFESSIONS,
-                    ),
-                ];
+                // The reference's own answer (`GameSrv_HandleCharCreationChangeProf`), in its order:
+                // the previous set comes off the client first, then the profession, then the new set
+                // is created and placed. A client still holding the old set asserts on an item created
+                // into a slot it thinks is occupied (`Assertion: !bagParent->GetItem(slot)`,
+                // `ItCliInv.cpp(105)`, which `ASURA/crates/asura-world/src/creation.rs` records
+                // against build 39112 when it omitted the removal).
+                let mut frames = Vec::new();
+                let tables = self.creation.clone().unwrap_or_default();
+                for item in tables
+                    .inventory(previous.campaign, previous.profession)
+                    .equipped_items()
+                {
+                    frames.push(item_packets::item_remove(item_packets::ITEM_STREAM, item.id));
+                }
+                frames.push(character_packets::update_unlocked_skills(&[]));
+                frames.push(character_packets::player_update_profession(
+                    CREATION_AGENT,
+                    creation.profession,
+                    0,
+                    0,
+                ));
+                let equipped_bag =
+                    crate::creation::equipped_bag(&tables).map(|bag| bag.id).unwrap_or(0);
+                for item in tables
+                    .inventory(creation.campaign, creation.profession)
+                    .equipped_items()
+                {
+                    let slot = item.slot;
+                    frames.push(item_packets::create_named_item(
+                        &crate::creation::named_item(item),
+                    ));
+                    if let Some(slot) = slot {
+                        frames.push(item_packets::item_move_to_location(
+                            item_packets::ITEM_STREAM,
+                            item.id,
+                            equipped_bag,
+                            slot,
+                        ));
+                    }
+                }
                 self.send(io, peer, crypt, &frames, "the new profession")
                     .await;
                 Some(true)
@@ -1595,12 +1624,12 @@ impl WorldSession {
                 // R12: a character starts with one map unlocked. The world's first outpost is the
                 // one - the lowest map id this world hosts of that kind - and the gate that reads
                 // these rows arrives with the travel answer.
-                if let Some(outpost) = self
+                let starting_outpost = self
                     .maps
                     .iter()
                     .filter(|map| map.kind == crate::world::map_kind::OUTPOST)
-                    .min_by_key(|map| map.id)
-                {
+                    .min_by_key(|map| map.id);
+                if let Some(outpost) = starting_outpost {
                     match characters.unlock_map(&crate::characters::uuid_text(&id), outpost.id) {
                         Ok(true) => self.say(
                             LogLevel::Info,
@@ -1629,10 +1658,30 @@ impl WorldSession {
                     helm_status: 1,
                     pieces: Vec::new(),
                 };
-                let answer =
-                    character_packets::char_creation_success(id, &name, &settings.to_blob());
+                let mut answer = vec![character_packets::char_creation_success(
+                    id,
+                    &name,
+                    &settings.to_blob(),
+                )];
+                // And where the character now is, in the **five-byte login shape**. The client
+                // reconnects naming the map it believes it is in, and that belief came from the
+                // transfer, which named the creation instance: without this it dials back into the
+                // creation screen and waits there forever (`ASURA/crates/asura-world/src/creation.rs`,
+                // `handle_confirm`, measured against a real client). The four-byte-header redirect
+                // generation is ignored by this client, so it is not the frame to send here.
+                match starting_outpost {
+                    Some(outpost) => {
+                        answer.push(misc_packets::map_update_current(outpost.id as u16, 0))
+                    }
+                    None => self.say(
+                        LogLevel::Warn,
+                        format!(
+                            "Gameplay connection from {peer}: the character '{name}' is created and this world hosts no outpost, so the client is told no map and will dial the creation instance again."
+                        ),
+                    ),
+                }
                 let _ = self
-                    .send(io, peer, crypt, &[answer], "the character creation")
+                    .send(io, peer, crypt, &answer, "the character creation")
                     .await;
             }
             Ok(Err(error)) => {
@@ -2012,6 +2061,88 @@ mod tests {
         }
         let item_count = headers.iter().filter(|header| **header == 0x0161).count();
         assert!(item_count > 9, "the screen is sent the profession's equipment too");
+
+        // 6. The screen chooses another campaign and profession (`0x8060`: campaign, profession).
+        // The reference answers `GameSrv_HandleCharCreationChangeProf`'s own way, and this is the
+        // step whose omission crashed the client: it keeps holding a set the server no longer names,
+        // so the old pieces come off (`0x014D`) before the new ones are created (`0x0161`) and placed
+        // (`0x013E`). The profession is told in between (`0x00B7`), and nothing else is.
+        let tables = world.creation();
+        let previous_set = tables.inventory(0, 1);
+        let previous = previous_set.equipped_items();
+        let next_set = tables.inventory(1, 2);
+        let next = next_set.equipped_items();
+        let equipped_bag = crate::creation::equipped_bag(tables)
+            .expect("the creation data names an equipped bag")
+            .id;
+        let mut expected: Vec<Vec<u8>> = Vec::new();
+        for item in &previous {
+            expected.push(item_packets::item_remove(item_packets::ITEM_STREAM, item.id));
+        }
+        expected.push(character_packets::update_unlocked_skills(&[]));
+        expected.push(character_packets::player_update_profession(
+            CREATION_AGENT,
+            2,
+            0,
+            0,
+        ));
+        for item in &next {
+            expected.push(item_packets::create_named_item(&crate::creation::named_item(
+                item,
+            )));
+            if let Some(slot) = item.slot {
+                expected.push(item_packets::item_move_to_location(
+                    item_packets::ITEM_STREAM,
+                    item.id,
+                    equipped_bag,
+                    slot,
+                ));
+            }
+        }
+        let expected_bytes: usize = expected.iter().map(Vec::len).sum();
+
+        let mut choose = vec![0x60, 0x80, 1, 2];
+        sending.apply(&mut choose);
+        client.write_all(&choose).unwrap();
+
+        let mut answered = vec![0u8; expected_bytes];
+        client.read_exact(&mut answered).unwrap();
+        opening.apply(&mut answered);
+        let mut whole = Vec::new();
+        for frame in &expected {
+            whole.extend_from_slice(frame);
+        }
+        assert_eq!(
+            answered, whole,
+            "the change of profession is the reference's answer, byte for byte"
+        );
+
+        // The headers, in the reference's order: every old piece removed, the profession, then each
+        // new piece created and placed.
+        let mut at = 0usize;
+        let mut answer_headers = Vec::new();
+        for frame in &expected {
+            answer_headers.push(u16::from_le_bytes([answered[at], answered[at + 1]]));
+            at += frame.len();
+        }
+        assert_eq!(at, answered.len(), "every byte is accounted for");
+        let mut wanted: Vec<u16> = vec![0x014D; previous.len()];
+        wanted.push(0x00DB);
+        wanted.push(0x00B7);
+        for item in &next {
+            wanted.push(0x0161);
+            if item.slot.is_some() {
+                wanted.push(0x013E);
+            }
+        }
+        assert_eq!(
+            answer_headers, wanted,
+            "the old set goes first, then the profession, then the new set"
+        );
+        assert!(
+            !answer_headers.contains(&0x00B6),
+            "a profession change does not re-state the unlocked-profession bitmap"
+        );
 
         manager.stop_network();
         log.shutdown();

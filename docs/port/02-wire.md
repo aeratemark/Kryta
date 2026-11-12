@@ -97,11 +97,26 @@ The frames, with the reference's own wire sizes:
 | 4f | client -> server | `0x808A` | 2 | it asks for its armoury: the creation screen's own PvP half |
 | 4g | server -> client | `0x001D`, `0x0018`, `0x001B` | 4, 4, 2 | the creation screen's PvP half: no unlocked skills, no unlocked heroes, and the stream ends |
 | 5 | client -> server | `0x8060` | 4 | campaign and profession, chosen |
-| 6 | server -> client | `0x00B7` | 9 | the agent, the professions and the PvP flag |
-| 7 | server -> client | `0x00B6` | 10 | the agent and the unlocked-profession bitmap |
-| 8 | client -> server | `0x808B` | 2 + 2 + 2n + 34 | the confirm: the header, a counted name of `n` units, two zero bytes and eight dwords - 58 bytes for a name of ten |
-| 9 | server -> client | `0x0188` | 102 for a name of eight units | written: the header, the id, the name, `0x2211`, the settings block |
-| 10 | server -> client | `0x018B` | 6 | refused: the header and the error code |
+| 6 | server -> client | `0x014D` x5 | 8 each | the previous set comes off: the reference removes the worn pieces before it sends new ones, and a client still holding them asserts on the slot (`ItCliInv.cpp(105)`) |
+| 7 | server -> client | `0x00DB`, `0x00B7` | 4, 9 | the empty unlocked-skill list, then the agent and the new professions |
+| 8 | server -> client | `0x0161` + `0x015A` + `0x013E` + `0x014B` per item | variable | the new set: each piece created, the profession it was made for, the slot it moves into, the location it changes to |
+| 9 | client -> server | `0x808B` | 2 + 2 + 2n + 34 | the confirm: the header, a counted name of `n` units, two zero bytes and eight dwords - 58 bytes for a name of ten |
+| 10 | server -> client | `0x0188` | 102 for a name of eight units | written: the header, the id, the name, `0x2211`, the settings block |
+| 11 | server -> client | `0x0099` | 5 | and where the character now is: the map it starts in. Without it the client dials the creation instance back and waits there |
+| 12 | server -> client | `0x018B` | 6 | refused: the header and the error code |
+| 13 | client -> server | `0x0084` | 12 per piece | the seven dye requests a client makes while a profession change is being applied |
+
+- Rows 5 to 8 are the reference's own order, read off its capture of a Necromancer-to-Factions
+  character change and back again
+  (`ASURA/recordings/client/feature/character_creation/character_creation-live-necro_factions.jsonl`,
+  records 305-330 and 355-380: five `0x014D`, then `0x00B7`, `0x00DB`, then per item `0x0161`,
+  `0x015A`, `0x013E`, `0x014B`). A capture of a **struct dump**, so it fixes the messages and their
+  order, not their bytes.
+- What this tree sends on `0x8060` is the working implementation's answer, which is the same order
+  except that the skill list comes before the profession and each item is created and placed only:
+  `ASURA/crates/asura-world/src/creation.rs`, `handle_change_profession`. It omits the reference's
+  `0x015A` and `0x014B`, and a client that has drawn the creation screen from it does not mind.
+  Adopting those two is open, not done.
 
 - The two answers whose length follows a counted field (`0x0188`'s name and settings) are sized from
   what they carry; the rest are fixed by the reference's table.
