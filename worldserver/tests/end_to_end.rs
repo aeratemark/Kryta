@@ -607,7 +607,9 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         let mut ask = vec![0x88, 0x80];
         sending.apply(&mut ask);
         stream.write_all(&ask).expect("the spawn ask");
-        let mut spawn = read_exact(&mut stream, 26 + 6);
+        // The entry point, one frame: that is `spawn_block` whole (`ASURA/crates/asura-world/src/map.rs:13-20`),
+        // and the simulation's ticks come from the ticker, not from this answer.
+        let mut spawn = read_exact(&mut stream, 26);
         reading.apply(&mut spawn);
         assert_eq!(&spawn[..2], &[0x96, 0x01], "the entry position");
         // The one number in this block the client cannot be wrong about: an entry in its own `Gw.dat`.
@@ -631,12 +633,7 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             near,
             "the point is scattered within the world's spawn scatter of one of the map's own spawns ({x}, {y})"
         );
-        assert_eq!(&spawn[26..28], &[0x1E, 0x00], "the first simulation tick");
-        assert_eq!(
-            &spawn[28..32],
-            &500u32.to_le_bytes(),
-            "the load's first tick is the measured 500"
-        );
+
 
         // The players ask: the PvP halves, the character's body and the end of the load. The ask's
         // own wire is nineteen bytes: a sixteen-byte blob and one byte (docs/port/02-wire.md row 14).

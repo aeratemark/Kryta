@@ -2620,7 +2620,12 @@ impl WorldSession {
                                 Vec::new()
                             }
                         };
-                        frames.push(misc_packets::world_simulation_tick(500));
+                        // The answer is the entry point and nothing else: `spawn_block` in the working
+                        // implementation is exactly one `0x0196` frame
+                        // (`ASURA/crates/asura-world/src/map.rs:13-20`), and the simulation's ticks
+                        // come from the ticker, not from this answer. This answer used to append a
+                        // first `0x001E` of its own, which is one message the client was never sent
+                        // by the working implementation.
                         self.send(io, peer, crypt, &frames, "the entry position").await;
                     }
                     // The players request: the whole block the reference answers it with, frame for
@@ -4099,13 +4104,14 @@ Logger.root = 6,Console
         }
         assert_eq!(*headers.last().unwrap(), 0x0198, "the manifest ends the block");
 
-        // 6. The spawn request: the world answers with the map file and a point of its own list,
-        // and the first simulation tick.
+        // 6. The spawn request: the world answers with the map file and a point of its own list, and
+        // nothing else - one `0x0196` frame, which is `spawn_block` exactly
+        // (`ASURA/crates/asura-world/src/map.rs:13-20`). The simulation's ticks come from the ticker.
         let mut ask = vec![0x88, 0x80];
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
 
-        let mut spawn = vec![0u8; 32];
+        let mut spawn = vec![0u8; 26];
         client.read_exact(&mut spawn).unwrap();
         reading.apply(&mut spawn);
         assert_eq!(&spawn[..2], &[0x96, 0x01], "the entry position");
@@ -4121,11 +4127,7 @@ Logger.root = 6,Console
             (x - 9541.87).abs() <= 250.0 + 1.0 && (y - 4796.46).abs() <= 250.0 + 1.0,
             "the point {x}, {y} is within the scatter of the map's own"
         );
-        assert_eq!(
-            &spawn[26..],
-            &[0x1E, 0x00, 0xF4, 0x01, 0x00, 0x00],
-            "and the simulation's first tick, 500"
-        );
+
 
         // 7. The players request: the whole load block, in the reference's order, ending at the
         // message that takes the client off the loading screen. Read until that message arrives.
@@ -4283,7 +4285,9 @@ Logger.root = 6,Console
         let mut ask = vec![0x88, 0x80];
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
-        let mut spawn = vec![0u8; 32];
+        // The entry point, one frame: `spawn_block` in the working implementation is exactly that
+        // (`ASURA/crates/asura-world/src/map.rs:13-20`).
+        let mut spawn = vec![0u8; 26];
         client.read_exact(&mut spawn).unwrap();
         reading.apply(&mut spawn);
         let mut ask = vec![0x90, 0x80];
@@ -4598,7 +4602,9 @@ Logger.root = 6,Console
         let mut ask = vec![0x88, 0x80];
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
-        let mut spawn = vec![0u8; 32];
+        // The entry point, one frame: `spawn_block` in the working implementation is exactly that
+        // (`ASURA/crates/asura-world/src/map.rs:13-20`).
+        let mut spawn = vec![0u8; 26];
         client.read_exact(&mut spawn).unwrap();
         reading.apply(&mut spawn);
         assert_eq!(

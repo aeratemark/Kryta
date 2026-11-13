@@ -92,7 +92,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x8060` | `GAME_CMSG_CHAR_CREATION_CHANGE_PROF` (4) | `creation.rs:275` | handled | ported |
 | `0x8064` | `GAME_CMSG_SEND_CHAT_MESSAGE` (286) | `chat.rs:193`, `handle_chat_message` | `answer_chat_message` | ported |
 | `0x8072` | `GAME_CMSG_ITEM_MOVE` (9) | `item.rs:255`, `move_item` | `answer_item_move` | ported |
-| `0x8088` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_SPAWN` | `agent.rs:1219` | handled | ported thin: the first tick travels with the answer, as the reference's own log has it, and ASURA's ticker sends it separately |
+| `0x8088` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_SPAWN` | `agent.rs:1219`, `map.rs:13-20` | `load_map`, the entry position | ported: one `0x0196` frame, which is `spawn_block` whole (the answer used to append a first `0x001E` of its own; the ticker sends the ticks) |
 | `0x8089` | `GAME_CMSG_CHAR_CREATION_REQUEST_PLAYER` (2) | `creation.rs:190` | handled | ported |
 | `0x808A` | `GAME_CMSG_CHAR_CREATION_REQUEST_ARMORS` (2) | `creation.rs:259` | handled | ported |
 | `0x808B` | `GAME_CMSG_CHAR_CREATION_CONFIRM` (58) | `creation.rs:346` | handled | ported |
@@ -191,8 +191,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x0198` | manifest done | `instance_manifest_done(phase, map_id)` | the 877 sentinel then the map, as ASURA sends them | ported |
 | `0x0199` | manifest phase | `instance_manifest_phase` | same | ported |
 | `0x019A` | instance load info | `instance_load_info` | same | ported |
-| `0x01A0` | the instance table (102) | `instance_table` | `instance_packets::instance_table` | ported thin: ASURA's shape, and the content is the maps whose rows state a value (one today) |
-| `0x01A6` | transfer game server info (46) | `transfer_game_server_info` | `misc_packets::transfer_game_server_info` | ported |
+| `0x01A0` | the instance table (102) | `instance_table` | `instance_packets::instance_table` | ported: ASURA's shape, and the content is every row with an `instance_value` - 137 pairs in ten batches |
 | `0x01AC` | ready for a spawn | `ready_for_map_spawn` | same | ported |
 | `0x01B3` | which party the character is in | `character_update_party` | same | ported |
 | `0x01CC` | party player add | `party_player_add` | same | ported |
@@ -219,13 +218,13 @@ setting that selects one.
 | the login answer | one `character_info` per character, `account_settings`, `friend_stream_end`, `account_info`, `request_response` (`asura-auth/src/lib.rs:669-746`) | same five, same order | ported |
 | the creation conversation | `0x8089` -> the player-data block; `0x808A` -> the PvP half; `0x8060` -> removals, `0x00DB`, `0x00B7`, the new set; `0x808B` -> `0x0188` + `0x0099` (`creation.rs:190-519`) | same | ported |
 | the items ask | the stream, the bags and items, four weapon sets, the gold, four faction caps, the hard-mode flag, the character summary, the map, ready-for-spawn, the manifest (`item.rs:70`) | same, plus the reference's own `0x0196`-before-manifest order | ported |
-| the spawn ask | the entry point (`agent.rs:1219`) | the entry point and the first tick, as the reference's own send log has it | ported thin |
+| the spawn ask | the entry point (`agent.rs:1219`, `map.rs:13-20`) | the same one frame | ported |
 | the players ask | 34 frames, in one order (`player.rs:382-388` for the party) | the same 34, the same order | ported |
-| the travel | the redirect `0x01A6`, `0x0099` in its twelve-byte form, `0x00B0`, `0x00B1`, `0x005A`, `0x0021` (`travel.rs:480-518`) | the same eight, in the same order, out of `begin_transfer` | ported thin: no seat reservation and no doorway crossing |
+| the travel | the redirect `0x01A6`, `0x0099` in its twelve-byte form, `0x00B0`, `0x00B1`, `0x005A`, `0x0021` (`travel.rs:480-518`) | the same eight, in the same order, out of `begin_transfer` | ported: the crossing starts it from a step (`cross_portal`) and hands its landing over; the seat reservation is 7.4's named difference |
 | a player joining a map others are in | `introduction` (`0x0059`, `0x00B0`, `0x00B1`, `0x0020`) and `farewell` (`0x005A`, `0x0021`) (`instance.rs:432-473`, `player.rs:499-532`) | the same, plus the worn items in the unnamed form and the agent's look, out of `game/Districts/Peers.rs` | ported |
 | chat | `0x005D` body plus `0x0061` who spoke, and every generated answer printed (`chat.rs:193-353`) | the same pair, and `/maps`, `/stuck`, `/tp` and `Unknown command` printed | ported |
 | the exploration grid | `0x008B` then `0x008A`, 0.58-0.73 s into the load, once per instance (`cartography.rs`, `map.rs:22-48`) | the same two, right after the instance's record, with every band empty (`maps::cartography::init_frames`) | ported |
-| the instance table | `0x01A0` batches of fifteen pairs, in the same phase (`instance_table.rs`, `map.rs:49-58`) | the same batches, from the maps whose rows state a value (`maps::instance_table::table_for`) | ported thin: one pair today |
+| the instance table | `0x01A0` batches of fifteen pairs, in the same phase (`instance_table.rs`, `map.rs:49-58`) | the same batches, from every row with a value (`maps::instance_table::table_for`) | ported |
 
 ## 6. What the protocol audit says, in numbers
 
@@ -240,7 +239,7 @@ setting that selects one.
 | ... this tree emits | **87** (8 auth, 79 game) |
 | ... this tree does not emit | **0** |
 | messages this tree emits that ASURA does not have | 1: the district-count answer on the auth connection |
-| sequences ported whole | **9 of 11**, with 2 ported thin (the spawn ask and the instance table) and none missing |
+| sequences ported whole | **11 of 11**, none ported thin and none missing |
 | the packet table | identical, 782 rows (682 game + 100 auth) |
 | `ASURA/crates/asura-world/src` | 36 files | all 36 have a verdict in 9: 29 ported (code or data), 4 this tree's arrangement, 3 ASURA's own harness |
 
