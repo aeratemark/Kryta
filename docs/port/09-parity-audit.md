@@ -304,6 +304,39 @@ Three ways out, and the owner picks one - this is a decision, not a piece of wor
 
 Rule 0 says a missing counterpart is a stop, not a guess, so the audit stops here and asks.
 
+## 7b. The walking subject, surveyed the way Rule 0a requires
+
+The owner named walking. Under Rule 0a the survey comes before any estimate, so the four ASURA files
+were opened and read for their shape, not their size:
+
+| file | lines | what it is |
+|---|---|---|
+| `graph_dump.rs` | 473 | **the portable form of a path graph**: `DumpedGraph`, `encode`, `decode`, and its own little-endian container (`ASURAPG1`, version 1). ASURA's world loads this at start-up with `--path-graphs` so a server needs a few megabytes instead of a 3.6 GB archive. It carries **exactly what the reference's A\* consumes**: every plane, its trapezoids with neighbour and portal ids, its x/y split nodes and sink nodes, its portals with the paired portal on the other plane. It is deliberately our own format and not a `.pmap` reader, because a `.pmap` drops the portals and the node tree the finder needs. |
+| `map_data.rs` | 1,196 | `PathStaticData` and the types the dump carries (`Plane`, `Trapezoid`, `XNode`, `YNode`, `SinkNode`, `Portal`, `NodeRef`, `Vec2f`), and the importer that builds them from one `Gw.dat` blob (`GmMapDataImport.c`, 590 lines, ported function for function, with three reference oddities kept on purpose). **Needed to *produce* a dump; not needed to walk from one.** |
+| `pathfind.rs` | 1,794 | the finder over `PathStaticData`: `PathFindTrapezoid`, A\* over the trapezoid graph, the table-driven costs - `GmPaths.c`'s other half. |
+| `pathfind/directional.rs` | 320 | the directional queries over the same graph. |
+
+**What this corrects.** A previous session read `gwdat.rs` and built the archive reader in
+`game/Pack/`, then reported that reading `Gw.dat` was the road to walking. It is not: ASURA's own
+server walks from the dump, and the archive is the *dumper's* tool. The archive work stands on its own
+(it proves a map's file id is real and lets a dump be produced here), but it is not on the walking
+road.
+
+**The order the subject therefore takes, largest-and-first:**
+
+1. **The types** `map_data.rs` defines - `Vec2f`, `NodeRef`, `XNode`, `YNode`, `SinkNode`,
+   `Trapezoid`, `Portal`, `Plane`, `PathStaticData`, `Bounds`, with the constants (`PATH_DATA_*`,
+   `STAGE_*`, the node index bases) - ported as they are, same names, same fields, same order.
+2. **`graph_dump.rs`**, whole: the `ASURAPG1` container, `encode`, `decode`, and its own tests.
+3. **`pathfind.rs`** and **`pathfind/directional.rs`**, whole: the finder, with the reference's own
+   quirks kept - `PathReciproc`/`PathSqrt` through the ported tables, `PathFindTrapezoid` by the same
+   walk, no FPU substitutions, no tidying.
+4. **The importer** in `map_data.rs` last, only so this machine can produce a dump from its own
+   `Gw.dat`; the world's start-up then loads a dump the way ASURA does.
+
+Nothing in 1-4 is restructured or improved. The types keep ASURA's names and field order; the search
+keeps its traversal order, its tie-breaking and its quirks; the dump keeps its byte layout.
+
 ## 8. The order this audit imposes
 
 1. The map's path graph, which is what the ported movement family asks: `map_data.rs` (the blob's own
