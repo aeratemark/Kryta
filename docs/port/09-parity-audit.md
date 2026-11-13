@@ -377,8 +377,31 @@ road.
    **Left**: `PathGraphs::load` and `PathGraphs::import` (1507-1592) and `import_graph` (1703-1744) -
    all three wait on `PathStaticData::import` in `map_data.rs`, which is step 4 below and the last
    piece of this subject.
-4. **The importer** in `map_data.rs` last, only so this machine can produce a dump from its own
-   `Gw.dat`; the world's start-up then loads a dump the way ASURA does.
+4. **The importer** in `map_data.rs` - the last piece, and its own session's work. Surveyed function by
+   function (ASURA's line numbers), so the port starts from this map rather than from the file:
+   - `Reader` and its `new`/`len`/`take`/`tagged` (336-383), the `u16_at`/`u32_at`/`f32_at` reads
+     (385-396), `riff_type` (398), and the RIFF container: `Chunks::parse` (408), `get` (434), `iter`
+     (442), `len`/`is_empty` (446-455). `Chunks` and `MapChunk` are already ported in outline in the
+     types step; this is their parser.
+   - `node_ref` (457) and `trap_ref` (472): a dat node id -> `NodeRef`, and a dat trapezoid index ->
+     a position, or `None` the way the reference's NULL pointer answers.
+   - `PathStaticData::import` (490) and `read` (506): the `PATH_DATA_SIGNATURE`/`PATH_DATA_VERSION`
+     check, then `read_planes` (535) -> `read_plane` (551) -> per plane `read_counts` (578),
+     `skip_tag11` (606), `read_vectors` (618), `read_trapezoids` (639), `read_root_node` (681),
+     `read_xnodes` (705), `read_ynodes` (732), `read_sink_nodes` (753), `read_portal_traps` (786),
+     `read_portals` (816), and `vector_at` (911).
+   - The three reference oddities the file's own header names and the port must keep: `skip_tag11`
+     advances `h000C * 8` bytes of a section measured as `sub_length` (the two differ in every plane of
+     every map measured, 283 planes), `node_ref`/`trap_ref` answer `None` past their arrays instead of
+     failing the import, and `read_plane` takes a length from byte **1** of a five-byte header.
+   - ASURA's own tests to port with it: a blob that is not a container refused by its first five bytes
+     (946), a record past the blob refused (971), a node id naming its array's range (994), a
+     trapezoid naming itself as its neighbour answering `None` (1025), the spawn points of the
+     reference's configured maps landing inside the graphs in the archive (1045), and a plane walking
+     to the position's trapezoid and stopping at a dead end (1146).
+   Then the three callers that need it, in one commit: `import_graph` (pathfind.rs 1703-1744) and
+   `PathGraphs::load` / `PathGraphs::import` (1507-1592); the world's start-up then reads a `Gw.dat`
+   (or a dump) the way ASURA does.
 
 Nothing in 1-4 is restructured or improved. The types keep ASURA's names and field order; the search
 keeps its traversal order, its tie-breaking and its quirks; the dump keeps its byte layout.
