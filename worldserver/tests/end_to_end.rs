@@ -622,9 +622,14 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         );
         let x = f32::from_le_bytes([spawn[6], spawn[7], spawn[8], spawn[9]]);
         let y = f32::from_le_bytes([spawn[10], spawn[11], spawn[12], spawn[13]]);
+        // Map 148's own list, as its pack states it (`Outposts/148/spawns.json`): two points, and an
+        // entry picks one at random and lands inside World.SpawnScatter (250) of it (R13).
+        let near = [(9497.82f32, 4835.33f32), (9686.74, 7979.27)]
+            .iter()
+            .any(|(px, py)| (x - px).abs() <= 250.0 && (y - py).abs() <= 250.0);
         assert!(
-            (x - 9541.87).abs() <= 250.0 && (y - 4796.46).abs() <= 250.0,
-            "the point is scattered within the world's spawn scatter of the map's own spawn ({x}, {y})"
+            near,
+            "the point is scattered within the world's spawn scatter of one of the map's own spawns ({x}, {y})"
         );
         assert_eq!(&spawn[26..28], &[0x1E, 0x00], "the first simulation tick");
         assert_eq!(

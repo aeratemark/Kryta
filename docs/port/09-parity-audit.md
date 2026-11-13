@@ -278,7 +278,8 @@ setting that selects one.
      is the reference's). The capacity it enforces has a counterpart here: a district holds
      `World.DistrictAllotment` players, a full outpost opens the next district and a named full district
      is refused (`game/Districts/mod.rs`, `enter`, R5/R22/R58).
-   - **The doorway crossing** is ported (round 18): `game/Maps/Portals.rs` is `portals.rs` whole - the
+   - **The entry's facing is a row**: a spawn point now states the direction a character entering there faces (`map_spawn.angle`, ASURA `agent.rs:460-476`, `Standing::at_spawn`), so the create message carries the point's own vector instead of the neutral +y, and map 148's two points are the pack's own (`Outposts/148/spawns.json`), with their angles.
+- **The doorway crossing** is ported (round 18): `game/Maps/Portals.rs` is `portals.rs` whole - the
      wall test, the point box, `Crossed`, and the three lookups - with the rows in place of the pack's
      `portals.json` (`map_arch` for arches, `map_arrival` for arrivals, which gains the facing as
      `angle`), and `WorldSession::cross_portal` is `travel.rs:319-388`: the step between two reports,

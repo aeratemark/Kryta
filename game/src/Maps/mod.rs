@@ -51,6 +51,20 @@ pub struct MapSpawn {
     pub y: f32,
     /// Which plane it is on.
     pub plane: i16,
+    /// The facing, in radians, a character entering at this point is created with, when the row states
+    /// one (`ASURA/crates/asura-world/src/agent.rs:460-476`).
+    pub angle: Option<f32>,
+}
+
+impl MapSpawn {
+    /// The direction vector the agent is created facing: `(cos, sin)`, or the neutral `+y`, which is
+    /// what a row that states no angle keeps.
+    pub fn direction(&self) -> (f32, f32) {
+        match self.angle {
+            Some(angle) => (angle.cos(), angle.sin()),
+            None => (0.0, 1.0),
+        }
+    }
 }
 
 /// Where a portal crossing puts a character: the destination's entry for the map it came from (R21).
@@ -89,7 +103,7 @@ const SELECT_ARCHES: &str = "SELECT \"map_id\"::bigint, \"idx\"::bigint, \"to_ma
 
 const SELECT_MAPS: &str = "SELECT \"id\"::bigint, \"type\"::bigint, \"file_id\"::bigint, \"name\", \"party_cap\"::bigint, \"instance_value\"::bigint FROM \"map\" ORDER BY \"id\"";
 
-const SELECT_SPAWNS: &str = "SELECT \"map_id\"::bigint, \"idx\"::bigint, \"x\", \"y\", \"plane\"::bigint FROM \"map_spawn\" ORDER BY \"map_id\", \"idx\"";
+const SELECT_SPAWNS: &str = "SELECT \"map_id\"::bigint, \"idx\"::bigint, \"x\", \"y\", \"plane\"::bigint, \"angle\" FROM \"map_spawn\" ORDER BY \"map_id\", \"idx\"";
 
 /// The maps a world hosts, read from one database.
 pub struct DatabaseMaps {
@@ -136,6 +150,9 @@ impl DatabaseMaps {
                         .try_get::<_, f32>("y")
                         .map_err(|error| format!("column y: {error}"))?,
                     plane: read_number(row, "plane")? as i16,
+                    angle: row
+                        .try_get::<_, Option<f32>>("angle")
+                        .map_err(|error| format!("column angle: {error}"))?,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;

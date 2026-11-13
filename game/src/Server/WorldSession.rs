@@ -2569,13 +2569,10 @@ impl WorldSession {
                                         self.player_id(),
                                         (point.0, point.1),
                                         point.2,
-                                        // A doorway crossing hands over its arrival's facing; every
-                                        // other entry faces the neutral +y, because a spawn row
-                                        // states no angle (the working implementation's create
-                                        // message carries the spawn point's own vector - measured:
-                                        // -0.995, -0.104 on one body - and a spawn angle column is
-                                        // the gap, named in the audit).
-                                        self.claimed_facing(map).unwrap_or((0.0, 1.0)),
+                                        // A doorway crossing hands its arrival's facing over, and
+                                        // every other entry faces the direction its spawn point
+                                        // states (`Standing::at_spawn`, `agent.rs:460-476`).
+                                        point.3,
                                         self.settings.agent_speed,
                                     ));
                                 }
@@ -3088,18 +3085,7 @@ impl WorldSession {
         }
     }
 
-    /// The facing a claimed doorway crossing handed over, when this map is the one it named.
-    ///
-    /// `ASURA/crates/asura-world/src/travel.rs:359-362` and `portals::arrival_at`: the receiving map's
-    /// arrival states where a character arriving from a given map stands and which way it faces.
-    fn claimed_facing(&self, map: &crate::world::MapEntry) -> Option<(f32, f32)> {
-        match self.landing.lock() {
-            Ok(claimed) => claimed
-                .filter(|claimed| claimed.map_id == map.id)
-                .map(|claimed| claimed.facing),
-            Err(_) => None,
-        }
-    }
+
 
     /// One point of a map's own spawn list, scattered by the world's setting (R13) - or, when the
     /// travel this connection claimed was a doorway crossing, the landing that doorway states (R21).
@@ -3108,7 +3094,7 @@ impl WorldSession {
     /// `spawn_scatter` units around it, and faces the point's angle. The scatter is a setting, never a
     /// constant. A crossing states its own point and its own facing, which the receiving map owns
     /// (`ASURA/crates/asura-world/src/travel.rs:319-338`, `portals::arrival`).
-    fn entry_point(&self, map: &crate::world::MapEntry) -> Option<(f32, f32, u16)> {
+    fn entry_point(&self, map: &crate::world::MapEntry) -> Option<(f32, f32, u16, (f32, f32))> {
         if let Ok(claimed) = self.landing.lock()
             && let Some(claimed) = *claimed
             && claimed.map_id == map.id
@@ -3117,6 +3103,7 @@ impl WorldSession {
                 claimed.landing.x,
                 claimed.landing.y,
                 claimed.landing.plane.max(0) as u16,
+                claimed.facing,
             ));
         }
         let points: Vec<crate::maps::MapSpawn> = self
@@ -3145,7 +3132,14 @@ impl WorldSession {
         } else {
             (0.0, 0.0)
         };
-        Some((point.x + dx, point.y + dy, point.plane.max(0) as u16))
+        // The point states which way a character entering there faces
+        // (`ASURA/crates/asura-world/src/agent.rs:460-476`, `Standing::at_spawn`).
+        Some((
+            point.x + dx,
+            point.y + dy,
+            point.plane.max(0) as u16,
+            point.direction(),
+        ))
     }
 
     /// The creation screen's confirm: write the character, and say whether it was written.
@@ -3561,6 +3555,7 @@ mod tests {
                 x: 9541.87,
                 y: 4796.46,
                 plane: 0,
+                angle: None,
             }],
         );
         assert_eq!(world.maps().len(), 2);
@@ -4872,6 +4867,7 @@ Logger.root = 6,Console
             x: 1000.0,
             y: 2000.0,
             plane: 0,
+            angle: None,
         });
         prepared.set_maps(maps, spawns);
         let world = Arc::new(prepared);

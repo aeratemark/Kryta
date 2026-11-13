@@ -363,6 +363,7 @@ mod tests {
                 x: 9541.87,
                 y: 4796.46,
                 plane: 0,
+                angle: None,
             }],
         );
         world
