@@ -17,6 +17,9 @@ pub mod placement;
 #[path = "TravelTargets.rs"]
 pub mod travel_targets;
 
+#[path = "Cartography.rs"]
+pub mod cartography;
+
 pub use travel_targets::{TRAVEL_TARGETS, TravelTarget};
 pub use travels::{DatabaseTravels, Travel};
 

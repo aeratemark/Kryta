@@ -771,7 +771,7 @@ impl WorldSession {
 
             let sheet = self.character_sheet(&version);
             let is_explorable = u8::from(map.kind == crate::world::map_kind::EXPLORABLE);
-            let frames = vec![
+            let mut frames = vec![
                 instance_packets::instance_load_head(),
                 instance_packets::instance_player_data_start(),
                 instance_packets::instance_load_player_name(&sheet.name),
@@ -784,6 +784,14 @@ impl WorldSession {
                     0,
                 ),
             ];
+            // The exploration grid, right after the instance's record: that is where a live server
+            // sends it, once per instance (`ASURA/crates/asura-world/src/map.rs:22-48`), and a client
+            // without it asserts on its own world map the first time the map view opens
+            // (`GmMapView.cpp(1731)`, client build 39112).
+            let grid = crate::maps::cartography::init_frames(crate::maps::cartography::grid_for(
+                map.id,
+            ));
+            frames.extend(grid);
             let mut block = Vec::new();
             for frame in &frames {
                 block.extend_from_slice(frame);
@@ -793,8 +801,15 @@ impl WorldSession {
                 Ok(()) => self.say(
                     LogLevel::Info,
                     format!(
-                        "Gameplay connection from {peer}: map {} ({}, type {}) is loading - {} message(s), {} bytes: the load head, the player-data start, the name '{}' and the instance's record (district {district}, language {language}).",
-                        map.id, map.name, map.kind, frames.len(), block.len(), sheet.name
+                        "Gameplay connection from {peer}: map {} ({}, type {}) is loading - {} message(s), {} bytes: the load head, the player-data start, the name '{}', the instance's record (district {district}, language {language}) and the exploration grid ({} x {}, nothing explored).",
+                        map.id,
+                        map.name,
+                        map.kind,
+                        frames.len(),
+                        block.len(),
+                        sheet.name,
+                        crate::maps::cartography::grid_for(map.id).0,
+                        crate::maps::cartography::grid_for(map.id).1
                     ),
                 ),
                 Err(error) => {
@@ -3287,13 +3302,16 @@ Logger.root = 6,Console
         let mut reading = common::cryptography::Arc4::new(&key);
         let mut sending = common::cryptography::Arc4::new(&key);
 
-        // 3. The head block: load head, player-data start, the name, the instance's record.
-        let expected = [
+        // 3. The head block: load head, player-data start, the name, the instance's record, and the
+        // exploration grid a live server sends right after it.
+        let grid = crate::maps::cartography::init_frames(crate::maps::cartography::grid_for(148));
+        let mut expected = vec![
             instance_packets::instance_load_head(),
             instance_packets::instance_player_data_start(),
             instance_packets::instance_load_player_name("Player"),
             instance_packets::instance_load_info(1, 148, 0, 1, 0, 0),
         ];
+        expected.extend(grid);
         let expected_bytes: usize = expected.iter().map(Vec::len).sum();
         let mut block = vec![0u8; expected_bytes];
         client.read_exact(&mut block).unwrap();
@@ -3307,7 +3325,10 @@ Logger.root = 6,Console
             .iter()
             .map(|frame| u16::from_le_bytes([frame[0], frame[1]]))
             .collect();
-        assert_eq!(headers, vec![0x017C, 0x0186, 0x017D, 0x019A]);
+        assert_eq!(
+            headers,
+            vec![0x017C, 0x0186, 0x017D, 0x019A, 0x008B, 0x008A]
+        );
 
         // 4. The ping pair the measured load follows the head block with.
         let mut ping = vec![0u8; 8];

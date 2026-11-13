@@ -455,11 +455,15 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         };
         let (mut stream, mut reading, mut sending) = open_connection(port, version);
 
-        // The block: head, player-data start, the name, the instance's record.
+        // The block: head, player-data start, the name, the instance's record, and the exploration
+        // grid - right after the record, which is where a live server sends it
+        // (`ASURA/crates/asura-world/src/map.rs:22-48`).
+        let grid = game::maps::cartography::init_frames(game::maps::cartography::grid_for(148));
         let block_size = instance_packets::instance_load_head().len()
             + instance_packets::instance_player_data_start().len()
             + instance_packets::instance_load_player_name(name).len()
-            + instance_packets::instance_load_info(1, 148, 0, 1, 0, 0).len();
+            + instance_packets::instance_load_info(1, 148, 0, 1, 0, 0).len()
+            + grid.iter().map(Vec::len).sum::<usize>();
         let mut block = read_exact(&mut stream, block_size);
         reading.apply(&mut block);
         assert_eq!(
@@ -477,9 +481,24 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             "the character's own name, from its row"
         );
         assert_eq!(
-            &block[name_at + name_size..],
+            &block[name_at + name_size..name_at + name_size + 16],
             instance_packets::instance_load_info(1, 148, 0, 1, 0, 0).as_slice(),
             "the instance's record: map 148, an outpost, district 1"
+        );
+        // And the grid: the announcement, then one slice of the compressed bands - every band empty,
+        // which is what a character that has explored nothing has.
+        let grid_at = name_at + name_size + 16;
+        assert_eq!(&block[grid_at..grid_at + 2], &[0x8B, 0x00], "the grid's dims");
+        assert_eq!(
+            &block[grid_at..grid_at + 14],
+            grid[0].as_slice(),
+            "64 x 128 cells and sixteen compressed bytes"
+        );
+        assert_eq!(&block[grid_at + 14..grid_at + 16], &[0x8A, 0x00], "a slice");
+        assert_eq!(
+            &block[grid_at + 14..],
+            grid[1].as_slice(),
+            "the slice is the blob in a counted, fixed array"
         );
 
         // The ping pair, unasked.

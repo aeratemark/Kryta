@@ -90,8 +90,8 @@ These are the plan's known gaps, each waiting on a capture rather than on work:
 - **Walking on real terrain**: movement is read and kept on the player's agent, but the world has no
   terrain data - the `Gw.dat` archive format has not been measured in this tree, so every walk answers
   `NoGraph` and nothing goes on the wire.
-- **The map view's exploration grid**: the map opens, and the pair that fills it in (`0x008B`, `0x008A`)
-  is not ported yet, so the map view is what asserts and not the load.
+- **The map view's contents**: the grid that sizes its world map is sent (`0x008B`, `0x008A`) with
+  nothing explored, and the map's own art and areas come from the client's archive.
 
 ## What to send back
 

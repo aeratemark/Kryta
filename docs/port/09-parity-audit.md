@@ -150,8 +150,8 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x0061` | chat: which player spoke | `chat_message_local` | `chat_packets::chat_message_local` | ported |
 | `0x006E` | visual equipment | `update_agent_visual_equipment` | same | ported |
 | `0x0070` | hard mode | `hard_mode_unlocked` | same | ported |
-| `0x008A` | cartography data (262) | `cartography_data` | - | **missing** |
-| `0x008B` | map init start (14) | `map_init_start` | - | **missing** |
+| `0x008A` | cartography data (262) | `cartography_data` | `instance_packets::cartography_data` | ported |
+| `0x008B` | map init start (14) | `map_init_start` | `instance_packets::map_init_start` | ported |
 | `0x0094` | unlocked lists (662) | `map_update_unlocked_list` | same | ported |
 | `0x0099` | map update current | `map_update_current` and its redirect form | both forms | ported |
 | `0x009C` | morale | `agent_update_morale` | same | ported |
@@ -198,7 +198,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x01D3` | party create | `party_create` | same | ported |
 | `0x01D4` | party member stream end | `party_member_stream_end` | same | ported |
 
-**Score: 75 ported or ported thin, 4 missing, 0 ours among the emitted set.**
+**Score: 77 ported or ported thin, 2 missing, 0 ours among the emitted set.**
 
 ### 4.3 Builders ASURA has that no message above covers
 
@@ -223,7 +223,7 @@ setting that selects one.
 | the travel | the redirect `0x01A6`, `0x0099` in its twelve-byte form, `0x00B0`, `0x00B1`, `0x005A`, `0x0021` (`travel.rs:480-518`) | the same eight, in the same order, out of `begin_transfer` | ported thin: no seat reservation and no doorway crossing |
 | a player joining a map others are in | `introduction` (`0x0059`, `0x00B0`, `0x00B1`, `0x0020`) and `farewell` (`0x005A`, `0x0021`) | nothing | **missing** |
 | chat | `0x005D` body plus `0x0061` who spoke, and every generated answer printed (`chat.rs:193-353`) | the same pair, and `/maps`, `/stuck`, `/tp` and `Unknown command` printed | ported |
-| the exploration grid | `0x008B` then `0x008A`, 0.58-0.73 s into the load, once per instance (`cartography.rs`) | nothing | **missing** |
+| the exploration grid | `0x008B` then `0x008A`, 0.58-0.73 s into the load, once per instance (`cartography.rs`, `map.rs:22-48`) | the same two, right after the instance's record, with every band empty (`maps::cartography::init_frames`) | ported |
 
 ## 6. What the protocol audit says, in numbers
 
@@ -235,8 +235,8 @@ setting that selects one.
 | ... of those, answered differently | 1 (`0x800D`: echoed instead of answered with the ping reply) |
 | ... this tree does not handle | **4** (`0x8000`, `0x8001`, `0x8002`, `0x8007`) |
 | messages ASURA emits (server -> client) | 87 |
-| ... this tree emits | **83** (8 auth, 75 game) |
-| ... this tree does not emit | **4** (`0x008A`, `0x008B`, `0x015F`, `0x01A0`) |
+| ... this tree emits | **85** (8 auth, 77 game) |
+| ... this tree does not emit | **2** (`0x015F`, `0x01A0`) |
 | messages this tree emits that ASURA does not have | 1: the district-count answer on the auth connection |
 | sequences ported whole | 6 of 9 |
 | the packet table | identical, 782 rows (682 game + 100 auth) |
@@ -249,17 +249,16 @@ setting that selects one.
    (`gwdat.rs`, `fa_compress.rs`, `map_data.rs`, `path_tables.rs`, `pathfind.rs`), so every walk is
    answered exactly as the working implementation answers a map it holds no graph for: `NoGraph`, and
    nothing on the wire.
-2. **The exploration grid is absent** (`0x008B`, `0x008A`), so the map view asserts.
-3. **`0x015F` (the unnamed item) and `0x01A0` (the instance table) are absent**, and the items block
+2. **`0x015F` (the unnamed item) and `0x01A0` (the instance table) are absent**, and the items block
    goes without `0x015E`.
-4. **The thin rows**: `0x0030` with no name, `0x00DA` and `0x00DB` always empty, `0x017C`'s two unlock
+3. **The thin rows**: `0x0030` with no name, `0x00DA` and `0x00DB` always empty, `0x017C`'s two unlock
    bytes as a constant, `0x0198`'s words carried rather than derived, and `0x009F`'s three properties.
-5. **The travel is ported thin**: the eight frames and the three triggers are ASURA's, but there is no
+4. **The travel is ported thin**: the eight frames and the three triggers are ASURA's, but there is no
    seat reservation and no doorway crossing (`portals.rs`), so a portal in the map does nothing.
-6. **`0x800D` is ours**: the ping is echoed instead of answered with the ping reply.
-7. **`introduction` and `farewell` are absent**: a player joining a map others are in is not announced,
+5. **`0x800D` is ours**: the ping is echoed instead of answered with the ping reply.
+6. **`introduction` and `farewell` are absent**: a player joining a map others are in is not announced,
    and one leaving is not withdrawn.
-8. **Four auth messages are absent** (`0x8000`, `0x8001`, `0x8002`, `0x8007`), and the two settings
+7. **Four auth messages are absent** (`0x8000`, `0x8001`, `0x8002`, `0x8007`), and the two settings
    uploads are acknowledged rather than stored.
 
 ## 8. The order this audit imposes
@@ -268,9 +267,8 @@ setting that selects one.
    `fa_compress.rs`, `map_data.rs`, `path_tables.rs` and `pathfind.rs` out of ASURA. Until it lands a
    walk is refused with `NoGraph` - the working implementation's own answer for a map with no graph -
    and nothing else about movement is outstanding.
-2. The cartography pair (`0x008B`, `0x008A`), which the map view waits for.
-3. `0x015F` and `0x01A0`, and with them the items block's `0x015E`.
-4. The thin rows, each replaced by ASURA's own.
-5. The introduction and farewell pair.
-6. `0x800D` answered as ASURA answers it, then the four absent auth messages.
-7. The travel's own remaining half: the seat reservation and the doorway crossing.
+2. `0x015F` and `0x01A0`, and with them the items block's `0x015E`.
+3. The thin rows, each replaced by ASURA's own.
+4. The introduction and farewell pair.
+5. `0x800D` answered as ASURA answers it, then the four absent auth messages.
+6. The travel's own remaining half: the seat reservation and the doorway crossing.

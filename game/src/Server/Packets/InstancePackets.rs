@@ -80,6 +80,31 @@ pub const READY_FOR_MAP_SPAWN: u16 = 0x01AC;
 /// player's own agent.
 pub const PLAYER_CREATE: u16 = 0x0059;
 
+/// `GAME_SMSG_MAP_INIT_START` (`0x008B`, 14 bytes): the exploration grid's dimensions and how many
+/// compressed bytes the `0x008A` messages that follow carry.
+///
+/// Unnamed in the generated table (it records three dwords and nothing else); the name is the client's
+/// own handler, `OnMsgSrvMapInitStart`, and the shape is measured - `{dims.x, dims.y, compressed byte
+/// count}` (`ASURA/crates/asura-protocol/src/game/mod.rs:90-96`, `map_init_start`).
+pub const MAP_INIT_START: u16 = 0x008B;
+
+/// `GAME_SMSG_CARTOGRAPHY_DATA` (`0x008A`, 262 bytes): one slice of the exploration grid - a `u16` count
+/// and the fixed 64-dword array (`ASURA/crates/asura-protocol/src/game/mod.rs:97-112`).
+///
+/// The shape is the one this client frames to, and it is not the one a capture shows: a live capture
+/// reports the same message at 132 bytes with a `u32` count, and a server that sent *that* shape got
+/// `007` at map load from this client, measured 2026-10-30
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs:99-106`). The table's own field list settles it: the
+/// row's `Array32` is 64 long, so the message is a `u16` count and 256 bytes.
+pub const CARTOGRAPHY_DATA: u16 = 0x008A;
+
+/// The dwords one [`CARTOGRAPHY_DATA`] message carries: the packet table's own `Array32` length
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs:110`).
+pub const CARTOGRAPHY_DATA_SLOTS: usize = 64;
+
+/// The blob bytes one [`CARTOGRAPHY_DATA`] message carries.
+pub const CARTOGRAPHY_DATA_BYTES: usize = CARTOGRAPHY_DATA_SLOTS * 4;
+
 /// A frame: the `u16` header and then the body.
 fn frame(header: u16, body: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(2 + body.len());
@@ -218,6 +243,39 @@ pub fn creation_load_block() -> Vec<u8> {
     block
 }
 
+/// `0x008B`: the exploration grid's dimensions and the byte count the `0x008A` slices add up to.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:904`, `map_init_start`: three dwords after the header.
+pub fn map_init_start(dims_x: u32, dims_y: u32, byte_count: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(12);
+    body.extend_from_slice(&dims_x.to_le_bytes());
+    body.extend_from_slice(&dims_y.to_le_bytes());
+    body.extend_from_slice(&byte_count.to_le_bytes());
+    frame(MAP_INIT_START, &body)
+}
+
+/// `0x008A`: one slice of the compressed grid - a `u16` count of the dwords that arrived, then the
+/// fixed 64-dword array, zero past the slice.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:914`, `cartography_data`, which is the shape this
+/// client frames to (see the constant above).
+pub fn cartography_data(blob: &[u8]) -> Vec<u8> {
+    let bytes = &blob[..blob.len().min(CARTOGRAPHY_DATA_BYTES)];
+    let mut body = Vec::with_capacity(2 + CARTOGRAPHY_DATA_BYTES);
+    body.extend_from_slice(&(bytes.len().div_ceil(4) as u16).to_le_bytes());
+    for slot in 0..CARTOGRAPHY_DATA_SLOTS {
+        let at = slot * 4;
+        let mut word = [0u8; 4];
+        for (index, byte) in word.iter_mut().enumerate() {
+            if let Some(source) = bytes.get(at + index) {
+                *byte = *source;
+            }
+        }
+        body.extend_from_slice(&word);
+    }
+    frame(CARTOGRAPHY_DATA, &body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,5 +345,47 @@ mod tests {
             creation_load_block(),
             vec![0x7C, 0x01, 0x3F, 0x3F, 0x00, 0x00, 0x89, 0x01]
         );
+    }
+
+    #[test]
+    fn the_grid_is_announced_in_fourteen_bytes() {
+        let frame = map_init_start(64, 128, 16);
+        assert_eq!(frame.len(), 14, "the table's declared size");
+        assert_eq!(&frame[..2], &[0x8B, 0x00]);
+        assert_eq!(&frame[2..6], &64u32.to_le_bytes(), "the width");
+        assert_eq!(&frame[6..10], &128u32.to_le_bytes(), "the height");
+        assert_eq!(&frame[10..14], &16u32.to_le_bytes(), "the byte count");
+    }
+
+    /// A slice is the `u16` count, the fixed 64-dword array and nothing else: 260 bytes, which is what
+    /// the working implementation's own test asserts (`ASURA/crates/asura-world/src/cartography.rs:198-217`).
+    #[test]
+    fn a_grid_slice_is_the_count_and_the_fixed_array() {
+        let blob = vec![0u8; 16];
+        let frame = cartography_data(&blob);
+        assert_eq!(frame.len(), 2 + 2 + CARTOGRAPHY_DATA_BYTES);
+        assert_eq!(&frame[..2], &[0x8A, 0x00]);
+        assert_eq!(
+            u16::from_le_bytes([frame[2], frame[3]]),
+            4,
+            "four dwords arrived"
+        );
+        assert_eq!(&frame[4..4 + 16], &blob[..], "the slice");
+        assert!(
+            frame[4 + 16..].iter().all(|byte| *byte == 0),
+            "the rest of the fixed array is zero"
+        );
+    }
+
+    /// A slice longer than the array is cut to it, and one that does not end on a dword still counts
+    /// the dword it starts.
+    #[test]
+    fn a_slice_is_cut_to_the_array_and_counted_in_dwords() {
+        let frame = cartography_data(&vec![0xFFu8; CARTOGRAPHY_DATA_BYTES + 32]);
+        assert_eq!(frame.len(), 2 + 2 + CARTOGRAPHY_DATA_BYTES);
+        assert_eq!(u16::from_le_bytes([frame[2], frame[3]]), 64);
+        let odd = cartography_data(&[1, 2, 3]);
+        assert_eq!(u16::from_le_bytes([odd[2], odd[3]]), 1, "three bytes, one dword");
+        assert_eq!(&odd[4..8], &[1, 2, 3, 0], "padded inside the dword");
     }
 }
