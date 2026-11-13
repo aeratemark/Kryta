@@ -384,8 +384,14 @@ road.
      `RIFF_TYPES` = 9, `MapChunk`, `Chunks::parse`/`get`/`iter`/`len`/`is_empty`, 408-455) and
      `node_ref` (457) - the dat node id to `NodeRef`, past the array's end answering `None`. All in
      `game/src/Terrain/MapData.rs`, with the `ImportError` they answer with and its `Display`.
-   - `trap_ref` (472): a dat trapezoid index to a position, or `None` the way the reference's NULL
-     pointer answers - the next piece.
+   - **(done)** `trap_ref` (472) and, of the plane readers, `read_counts` (578), `skip_tag11` (606 -
+     the `h000C * 8` of a `sub_length` section, the reference's own arithmetic kept with its
+     measurement in the comment), `read_vectors` (618), `read_trapezoids` (639 - the `trap_id` counter
+     and the four neighbour `trap_ref`s), `read_root_node` (681), `read_xnodes` (705), and the
+     `vector_at` they all read through (911), with `Trapezoid::SIZE` = 44.
+   - **Left**: `read_ynodes` (732), `read_sink_nodes` (753), `read_portal_traps` (786), `read_portals`
+     (816) - the four that finish a plane - then `PathStaticData::import` (490), `read` (506),
+     `read_planes` (535) and `read_plane` (551), which wire the readers into the section walk.
    - `PathStaticData::import` (490) and `read` (506): the `PATH_DATA_SIGNATURE`/`PATH_DATA_VERSION`
      check, then `read_planes` (535) -> `read_plane` (551) -> per plane `read_counts` (578),
      `skip_tag11` (606), `read_vectors` (618), `read_trapezoids` (639), `read_root_node` (681),

@@ -666,3 +666,186 @@ fn node_ref(node_id: u32, plane: &Plane) -> Option<NodeRef> {
         (index < plane.sink_nodes.len()).then_some(NodeRef::Sink(index))
     }
 }
+impl Trapezoid {
+    /// How many bytes one trapezoid record is: `trap_ref`'s four neighbour indices, two portals and six
+    /// corner floats (`GmMapDataImport.c`).
+    pub const SIZE: usize = 44;
+}
+
+/// `GetTrapHelper`: a neighbour reference, where `UINT32_MAX` is the reference's own spelling of "none".
+fn trap_ref(dat_idx: u32, count: usize) -> Result<Option<usize>, ImportError> {
+    if dat_idx == u32::MAX {
+        return Ok(None);
+    }
+    if dat_idx as usize >= count {
+        return Err(ImportError::Index {
+            what: "a trapezoid names a neighbour the plane does not have",
+        });
+    }
+    Ok(Some(dat_idx as usize))
+}
+
+impl PathStaticData {
+    /// `PathImport_PlaneReadCounts`: eight counts, which size the plane's arrays.
+    fn read_counts(&mut self, index: usize, reader: &mut Reader<'_>) -> Result<(), ImportError> {
+        let length = reader.tagged(0)?;
+        if length < 32 {
+            return Err(ImportError::Shape(
+                "the plane's count section is shorter than its eight counts",
+            ));
+        }
+        let head = reader.take(32, "the plane's counts")?;
+        let plane = &mut self.planes[index];
+        plane.h000c = u32_at(head, 0);
+        plane.vectors = vec![Vec2f::default(); u32_at(head, 4) as usize];
+        plane.trapezoids = vec![Trapezoid::default(); u32_at(head, 8) as usize];
+        plane.xnodes = vec![XNode::default(); u32_at(head, 12) as usize];
+        plane.ynodes = vec![YNode::default(); u32_at(head, 16) as usize];
+        plane.sink_nodes = vec![SinkNode::default(); u32_at(head, 20) as usize];
+        plane.portals = vec![Portal::default(); u32_at(head, 24) as usize];
+        plane.portals_traps = vec![None; u32_at(head, 28) as usize];
+        Ok(())
+    }
+
+    /// `PathImport_PlaneTag11`: a section of `h000C` eight-byte records, which the reference skips without
+    /// reading. It advances `h000C * 8` of the section's `sub_length` bytes, not all of them.
+    ///
+    /// Measured over the seven map blobs the catalogue names: every one of their 283 planes declares
+    /// `sub_length == 2 * h000C * 8`, and the next section's tag sits exactly at the midpoint. The
+    /// reference reads the next section from inside this one's declared bounds, and it works because the
+    /// file is written that way - not because the arithmetic is right. Advancing `sub_length` instead
+    /// would step over the vector section, and every plane would fail on its next tag.
+    fn skip_tag11(&mut self, index: usize, reader: &mut Reader<'_>) -> Result<(), ImportError> {
+        let length = reader.tagged(11)?;
+        let skip = self.planes[index].h000c as usize * 8;
+        debug_assert!(
+            skip <= length,
+            "the reference asserts h000C * 8 <= sub_length"
+        );
+        reader.take(skip, "the plane's tag-11 section")?;
+        Ok(())
+    }
+
+    /// `PathImport_PlaneReadVectors`: the positions every node and trapezoid edge refers to.
+    fn read_vectors(&mut self, index: usize, reader: &mut Reader<'_>) -> Result<(), ImportError> {
+        let length = reader.tagged(1)?;
+        let count = self.planes[index].vectors.len();
+        if length != count * 8 {
+            return Err(ImportError::Shape(
+                "the vector section is not eight bytes per vector",
+            ));
+        }
+        let rows = reader.take(length, "the plane's vectors")?;
+        let plane = &mut self.planes[index];
+        for (slot, row) in plane.vectors.iter_mut().zip(rows.as_chunks::<8>().0) {
+            *slot = Vec2f {
+                x: f32_at(row, 0),
+                y: f32_at(row, 4),
+            };
+        }
+        Ok(())
+    }
+
+    /// `PathImport_PlaneReadTrapezoids`: neighbours by index, two portals, six corner floats, and a
+    /// `trap_id` from the import's own counter - so ids are unique across a map's planes.
+    fn read_trapezoids(
+        &mut self,
+        index: usize,
+        reader: &mut Reader<'_>,
+    ) -> Result<(), ImportError> {
+        let length = reader.tagged(2)?;
+        let count = self.planes[index].trapezoids.len();
+        if length != count * Trapezoid::SIZE {
+            return Err(ImportError::Shape(
+                "the trapezoid section is not 44 bytes per trapezoid",
+            ));
+        }
+        let rows = reader.take(length, "the plane's trapezoids")?;
+
+        let traps_count = &mut self.traps_count;
+        for (slot, row) in self.planes[index]
+            .trapezoids
+            .iter_mut()
+            .zip(rows.as_chunks::<44>().0)
+        {
+            *slot = Trapezoid {
+                trap_id: *traps_count,
+                top_left: trap_ref(u32_at(row, 0), count)?,
+                top_right: trap_ref(u32_at(row, 4), count)?,
+                bottom_left: trap_ref(u32_at(row, 8), count)?,
+                bottom_right: trap_ref(u32_at(row, 12), count)?,
+                portal_left: u16_at(row, 16),
+                portal_right: u16_at(row, 18),
+                yt: f32_at(row, 20),
+                yb: f32_at(row, 24),
+                xtl: f32_at(row, 28),
+                xtr: f32_at(row, 32),
+                xbl: f32_at(row, 36),
+                xbr: f32_at(row, 40),
+            };
+            // The reference's `static_data->traps_count++`: a plain u32, wrapping rather than panicking.
+            *traps_count = traps_count.wrapping_add(1);
+        }
+        Ok(())
+    }
+
+    /// `PathImport_ReadRootNode`: which array's first element the descent starts from.
+    fn read_root_node(&mut self, index: usize, reader: &mut Reader<'_>) -> Result<(), ImportError> {
+        let length = reader.tagged(3)?;
+        if length < 1 {
+            return Err(ImportError::Shape("the root-node section is empty"));
+        }
+        let kind = reader.take(1, "the root node")?[0];
+        let plane = &self.planes[index];
+        // The reference stores `&array[0]` without checking the array has one; an empty array leaves it
+        // NULL there, so a graph with no nodes of the named kind has no root here either.
+        let root = match kind {
+            NODE_TYPE_X => (!plane.xnodes.is_empty()).then_some(NodeRef::X(0)),
+            NODE_TYPE_Y => (!plane.ynodes.is_empty()).then_some(NodeRef::Y(0)),
+            NODE_TYPE_SINK => (!plane.sink_nodes.is_empty()).then_some(NodeRef::Sink(0)),
+            _ => {
+                return Err(ImportError::Shape(
+                    "the root node is not one of the three node kinds",
+                ))
+            }
+        };
+        self.planes[index].root_node = root;
+        Ok(())
+    }
+
+    /// `PathImport_ReadXNodes`: a position, a second position the direction points at, and the halves.
+    fn read_xnodes(&mut self, index: usize, reader: &mut Reader<'_>) -> Result<(), ImportError> {
+        let length = reader.tagged(4)?;
+        let count = self.planes[index].xnodes.len();
+        if length != count * 16 {
+            return Err(ImportError::Shape(
+                "the x-node section is not sixteen bytes per node",
+            ));
+        }
+        let rows = reader.take(length, "the plane's x nodes")?;
+
+        for (idx, row) in rows.as_chunks::<16>().0.iter().enumerate() {
+            let plane = &self.planes[index];
+            let pos = vector_at(plane, u32_at(row, 0), "an x node's position")?;
+            let toward = vector_at(plane, u32_at(row, 4), "an x node's direction")?;
+            let left = node_ref(u32_at(row, 8), plane);
+            let right = node_ref(u32_at(row, 12), plane);
+            self.planes[index].xnodes[idx] = XNode {
+                pos,
+                dir: toward.sub(pos),
+                left,
+                right,
+            };
+        }
+        Ok(())
+    }
+}
+
+/// A vector reference, or an error naming what asked for it.
+fn vector_at(plane: &Plane, index: u32, what: &'static str) -> Result<Vec2f, ImportError> {
+    plane
+        .vectors
+        .get(index as usize)
+        .copied()
+        .ok_or(ImportError::Index { what })
+}
