@@ -48,6 +48,30 @@ impl MapEntry {
         self.kind == map_kind::CREATION
     }
 
+    /// How the map is named in an answer or a log line: its name when it has one, its id when it does
+    /// not, and never an empty string.
+    ///
+    /// `ASURA/crates/asura-world/src/catalogue.rs:120-129`, `MapEntry::label`.
+    pub fn label(&self) -> String {
+        if self.name.is_empty() {
+            format!("map {}", self.id)
+        } else {
+            format!("{} ({})", self.name, self.id)
+        }
+    }
+
+    /// What kind of place it is, in words: `0` and `1` are the reference's own `MapType` values, and
+    /// every other value it can carry is a kind of instance this world does not host.
+    ///
+    /// `ASURA/crates/asura-world/src/catalogue.rs:144-152`, `MapEntry::kind`.
+    pub fn kind_name(&self) -> &'static str {
+        match self.kind {
+            map_kind::OUTPOST => "outpost",
+            map_kind::EXPLORABLE => "explorable",
+            _ => "other",
+        }
+    }
+
     /// The alias `/tp` would take for this map: the reference's aliases are lower-case names with
     /// single spaces ("lakeside county"), so this is the name lower-cased. An unnamed map has no alias
     /// to type and says so, rather than inventing one.
@@ -256,6 +280,38 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A map is named the way the working implementation names it: its name and its id, its id alone
+    /// when it has no name, and never an empty string (`catalogue.rs:120-152`).
+    #[test]
+    fn a_map_is_named_as_the_working_implementation_names_it() {
+        let named = MapEntry {
+            id: 148,
+            kind: map_kind::OUTPOST,
+            file_id: 113_021,
+            name: "Ascalon City (pre-Searing)".to_string(),
+            instance_value: Some(0xBB14_F539),
+        };
+        assert_eq!(named.label(), "Ascalon City (pre-Searing) (148)");
+        assert_eq!(named.kind_name(), "outpost");
+        let unnamed = MapEntry {
+            id: 999,
+            kind: map_kind::EXPLORABLE,
+            file_id: 0,
+            name: String::new(),
+            instance_value: None,
+        };
+        assert_eq!(unnamed.label(), "map 999", "an unnamed map names its id");
+        assert_eq!(unnamed.kind_name(), "explorable");
+        let other = MapEntry {
+            id: 0,
+            kind: map_kind::CREATION,
+            file_id: 0,
+            name: "Character creation".to_string(),
+            instance_value: None,
+        };
+        assert_eq!(other.kind_name(), "other", "a kind this world does not host");
+    }
 
     /// A world with two maps and one spawn point, as the database would give it.
     fn world() -> World {

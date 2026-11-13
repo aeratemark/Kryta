@@ -1085,10 +1085,8 @@ impl WorldSession {
                 Ok(()) => self.say(
                     LogLevel::Info,
                     format!(
-                        "Gameplay connection from {peer}: map {} ({}, type {}) is loading - {} message(s), {} bytes: the load head, the player-data start, the name '{}', the instance's record (district {district}, language {language}), the exploration grid ({} x {}, nothing explored) and the instance table ({} pair(s)).",
-                        map.id,
-                        map.name,
-                        map.kind,
+                        "Gameplay connection from {peer}: {} is loading - {} message(s), {} bytes: the load head, the player-data start, the name '{}', the instance's record (district {district}, language {language}), the exploration grid ({} x {}, nothing explored) and the instance table ({} pair(s)).",
+                        map.label(),
                         frames.len(),
                         block.len(),
                         sheet.name,
