@@ -88,7 +88,7 @@ client got inside the game:
 | `... names world W and this world is R; closing it.` | the client asked for another world; nothing else happens |
 | `... the exchange is answered. Everything after it is scrambled.` | the seed exchange completed on this socket |
 | `... the character-creation instance is opened, 8 bytes (load head and creation start).` | the unasked block went out and the creation screen may appear |
-| `... map M ('name', type T) is loading - N message(s), B bytes: ... (district D, language L).` | an outpost or explorable load went out, and D/L are the district and language `0x019A` reports - the district the copy the connection entered holds (R22, R57) |
+| `... 'name' (M) is loading - N message(s), B bytes: ... (district D, language L).` | an outpost or explorable load went out, and D/L are the district and language `0x019A` reports - the district the copy the connection entered holds (R22, R57); the map is named the way the working implementation names it, `MapEntry::label` |
 | `... the ping pair` / `... the inventory and the map's record` / `... the entry position` / `... the player and the load's last message` | the four answers of a measured load, each logged with what it carried - the last one ends with the load's own message |
 | `... a ping on the loaded map, N bytes.` | the client is awake on a loaded map; the reference answers it with nothing, and so does this |
 | `... item N is not the character's, so its move to bag B slot S is refused.` | a drag that names an item the character does not hold: nothing is written, and the client is told nothing |
