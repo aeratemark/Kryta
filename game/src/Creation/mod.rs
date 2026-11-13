@@ -472,11 +472,17 @@ pub fn load_item_stream(inventory: &Inventory, gold: u32) -> Vec<Vec<u8>> {
     frames
 }
 
-/// The inventory a load draws when the character's items are rows: the client's bags (the setting)
-/// and each row's definition resolved from the world's templates.
+/// The inventory a load draws when the character's items are rows: the client's bags (the setting) and
+/// each row as the item it is.
 ///
-/// A row whose definition the templates do not hold is left out and reported: the item exists in the
-/// character's state, and the client cannot be drawn an item the world does not know.
+/// The row carries the whole item (`data/sql/base/db_characters/0005-item-instance-definition.sql`),
+/// so nothing here reads the world's templates: an item cannot go missing from a load because a
+/// template did. That is the working implementation's arrangement too
+/// (`ASURA/crates/asura-store/src/state/inventory.rs`, `NewItem`).
+///
+/// A row written before the definition columns keeps zeros there, and the template it names is what
+/// fills them in; a row whose template is also gone is drawn as its own columns say, and the log says
+/// so - an item the client is not drawn is one the paper doll cannot wear.
 pub fn inventory_from_held(
     bags: &[Bag],
     held: &[crate::characters::HeldItem],
@@ -487,49 +493,64 @@ pub fn inventory_from_held(
         bags: bags.to_vec(),
         items: Vec::with_capacity(held.len()),
     };
-    // The rows come back grouped by where the items sit; the stream is drawn in the order the
-    // runtime ids were allocated, which is the order the set listed them, so the block a load
-    // sends is the block the creation screen sent.
+    // The rows come back grouped by where the items sit; the stream is drawn in the order the runtime
+    // ids were allocated, which is the order the set listed them, so the block a load sends is the
+    // block the creation screen sent.
     let mut held: Vec<crate::characters::HeldItem> = held.to_vec();
     held.sort_by_key(|row| row.item_id);
     for row in &held {
-        // The row names its template by id; a row written before the column keeps 0 and is found by
-        // the key columns it already carries.
-        let template = templates.iter().find(|template| {
-            (row.template_id != 0 && template.id == row.template_id)
-                || (row.template_id == 0
-                    && template.file_id == row.file_id
-                    && template.dye_tint == row.dye_tint
-                    && template.dye_colors == row.dye_colors)
-        });
-        let Some(template) = template else {
+        // The row's own definition; for a row written before the definition columns, the template it
+        // was written from - or, when that template is gone, the one whose key columns (the file id
+        // and the dyes) are the row's, which is what an item's identity is.
+        let template = if row.item_type == 0 && row.name.is_empty() && row.modifiers.is_empty() {
+            templates
+                .iter()
+                .find(|template| row.template_id != 0 && template.id == row.template_id)
+                .or_else(|| {
+                    templates.iter().find(|template| {
+                        template.file_id == row.file_id
+                            && template.dye_tint == row.dye_tint
+                            && template.dye_colors == row.dye_colors
+                    })
+                })
+        } else {
+            None
+        };
+        if template.is_none() && row.item_type == 0 {
             log.out(
                 LogLevel::Warn,
                 "server.worldserver",
                 format!(
-                    "The character holds item {} (file {}), which no item template describes; it is left out of the load.",
+                    "The character holds item {} (file {}), which says what kind of item it is nowhere - neither its row nor a template. It is drawn as it stands.",
                     row.item_id, row.file_id
                 ),
             );
-            continue;
-        };
+        }
         inventory.items.push(Item {
             id: row.item_id,
             bag_id: Some(row.bag_id),
             slot: Some(row.slot),
-            file_id: template.file_id,
-            item_type: template.item_type,
-            dye_tint: template.dye_tint,
-            dye_colors: template.dye_colors,
-            materials: template.materials,
-            unk1: template.unk1,
-            flags: template.flags,
-            value: template.value,
-            model_id: template.model_id,
+            file_id: row.file_id,
+            item_type: template.map_or(row.item_type, |t| t.item_type),
+            dye_tint: row.dye_tint,
+            dye_colors: row.dye_colors,
+            materials: template.map_or(row.materials, |t| t.materials),
+            unk1: template.map_or(row.unk1, |t| t.unk1),
+            flags: template.map_or(row.flags, |t| t.flags),
+            value: template.map_or(row.value, |t| t.value),
+            model_id: template.map_or(row.model_id, |t| t.model_id),
             quantity: row.quantity,
             profession: row.profession,
-            name: template.name.clone(),
-            modifiers: template.modifiers.clone(),
+            name: if row.name.is_empty() {
+                template.map(|t| t.name.clone()).unwrap_or_default()
+            } else {
+                row.name.clone()
+            },
+            modifiers: if row.modifiers.is_empty() {
+                template.map(|t| t.modifiers.clone()).unwrap_or_default()
+            } else {
+                row.modifiers.clone()
+            },
         });
     }
     inventory

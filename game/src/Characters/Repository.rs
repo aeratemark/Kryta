@@ -25,26 +25,48 @@ const SELECT_CHARACTERS: &str = "SELECT \"uuid\", \"name\", \"appearance\", \"pr
 \"secondary_profession\", \"campaign\", \"level\", \"is_pvp\", \"helm_status\", \"last_outpost\" \
 FROM \"characters\"";
 
+/// The row an item a character owns is: everything the client is told about it, plus where it sits.
+///
+/// The definition lives on the row, not behind `template_id`: a load draws a character's items from
+/// these rows alone, so an item cannot go missing because a template did
+/// (`data/sql/base/db_characters/0005-item-instance-definition.sql`).
 const INSERT_HELD_ITEM: &str = "INSERT INTO \"item_instance\" (\"character_uuid\", \"template_id\", \
 \"file_id\", \"dye_tint\", \"dye_colors\", \"item_id\", \"bag_id\", \"slot\", \"quantity\", \
-\"profession\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING 1";
+\"profession\", \"item_type\", \"model_id\", \"materials\", \"unk1\", \"flags\", \"value\", \
+\"name\", \"modifiers\") \
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) \
+RETURNING 1";
 
 const SELECT_HELD_ITEMS: &str = "SELECT \"file_id\"::bigint, \"dye_tint\"::bigint, \
 \"dye_colors\"::bigint, \"item_id\"::bigint, \"bag_id\"::bigint, \"slot\"::bigint, \
-\"quantity\"::bigint, \"profession\"::bigint, \"template_id\"::bigint FROM \"item_instance\" \
+\"quantity\"::bigint, \"profession\"::bigint, \"template_id\"::bigint, \"item_type\"::bigint, \
+\"model_id\"::bigint, \"materials\"::bigint, \"unk1\"::bigint, \"flags\"::bigint, \
+\"value\"::bigint, \"name\", \"modifiers\" FROM \"item_instance\" \
 WHERE \"character_uuid\" = $1 ORDER BY \"bag_id\", \"slot\"";
 
-/// One item a character holds: which template it is, the item's own id, and where it sits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One item a character holds: the whole item, and where it sits.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeldItem {
-    /// The `item_template` row the item was written from; 0 for a row written before the column.
+    /// The `item_template` row the item was written from; 0 for an item no template describes.
     pub template_id: i64,
-    /// The `Gw.dat` file id of the definition.
+    /// The `Gw.dat` file id the client draws.
     pub file_id: u32,
+    /// The item's kind code.
+    pub item_type: u8,
     /// Which dye slot mask applies.
     pub dye_tint: u8,
     /// The four packed dye colours.
     pub dye_colors: u16,
+    /// Crafting materials, as the reference packs them.
+    pub materials: u16,
+    /// The reference's own unverified byte.
+    pub unk1: u8,
+    /// Item flags.
+    pub flags: u32,
+    /// The item's value in gold.
+    pub value: u32,
+    /// The model id the client draws.
+    pub model_id: u32,
     /// The runtime id the client keys the item by.
     pub item_id: u32,
     /// The bag it sits in.
@@ -55,6 +77,10 @@ pub struct HeldItem {
     pub quantity: u32,
     /// The profession the item was made for, or zero.
     pub profession: u8,
+    /// The name, as UTF-16 code units.
+    pub name: Vec<u16>,
+    /// The modifier list, as dwords.
+    pub modifiers: Vec<u32>,
 }
 
 /// The character database, as a program uses it.
@@ -197,7 +223,11 @@ impl DatabaseCharacters {
     ) -> Result<usize, String> {
         let mut written = 0usize;
         for item in &inventory.items {
-            let Some(template) = templates.iter().find(|template| {
+            // The template is the row's key, not its content: everything the client is told lives on
+            // the row, so an item no template describes is still written and still drawn. It is said
+            // in the log because it means the world's template table and the creation record
+            // disagree.
+            let template_id = match templates.iter().find(|template| {
                 template.file_id == item.file_id
                     && template.item_type == item.item_type
                     && template.dye_tint == item.dye_tint
@@ -209,25 +239,26 @@ impl DatabaseCharacters {
                     && template.model_id == item.model_id
                     && template.quantity == item.quantity
                     && template.profession == item.profession
-                    && template.name == item.name
-                    && template.modifiers == item.modifiers
-            }) else {
-                self.log.out(
-                    LogLevel::Warn,
-                    "server.characters",
-                    format!(
-                        "The creation set names item {} (file {}), which no item template describes; it is not written.",
-                        item.id, item.file_id
-                    ),
-                );
-                continue;
+            }) {
+                Some(template) => template.id,
+                None => {
+                    self.log.out(
+                        LogLevel::Warn,
+                        "server.characters",
+                        format!(
+                            "The creation set names item {} (file {}), which no item template describes; it is written from the record list alone.",
+                            item.id, item.file_id
+                        ),
+                    );
+                    0
+                }
             };
             let reply = match self.pool.lock() {
                 Ok(pool) => pool.query_reply(
                     INSERT_HELD_ITEM,
                     vec![
                         Param::Text(uuid.to_string()),
-                        Param::Integer(template.id),
+                        Param::Integer(template_id),
                         Param::Integer(i64::from(item.file_id)),
                         Param::Integer(i64::from(item.dye_tint)),
                         Param::Integer(i64::from(item.dye_colors)),
@@ -236,6 +267,14 @@ impl DatabaseCharacters {
                         Param::Integer(i64::from(item.slot.unwrap_or(0))),
                         Param::Integer(i64::from(item.quantity)),
                         Param::Integer(i64::from(item.profession)),
+                        Param::Integer(i64::from(item.item_type)),
+                        Param::Integer(i64::from(item.model_id)),
+                        Param::Integer(i64::from(item.materials)),
+                        Param::Integer(i64::from(item.unk1)),
+                        Param::Integer(i64::from(item.flags)),
+                        Param::Integer(i64::from(item.value)),
+                        Param::Text(units_text(&item.name)),
+                        Param::Text(dwords_text(&item.modifiers)),
                     ],
                 ),
                 Err(_) => {
@@ -288,6 +327,10 @@ impl DatabaseCharacters {
                     row.try_get::<usize, i64>(at)
                         .map_err(|error| format!("column {at}: {error}"))
                 };
+                let text = |at: usize| {
+                    row.try_get::<usize, String>(at)
+                        .map_err(|error| format!("column {at}: {error}"))
+                };
                 Ok(HeldItem {
                     file_id: column(0)? as u32,
                     dye_tint: column(1)? as u8,
@@ -298,6 +341,14 @@ impl DatabaseCharacters {
                     quantity: column(6)? as u32,
                     profession: column(7)? as u8,
                     template_id: column(8)?,
+                    item_type: column(9)? as u8,
+                    model_id: column(10)? as u32,
+                    materials: column(11)? as u16,
+                    unk1: column(12)? as u8,
+                    flags: column(13)? as u32,
+                    value: column(14)? as u32,
+                    name: units(&text(15)?),
+                    modifiers: dwords(&text(16)?),
                 })
             })
             .collect()
@@ -502,6 +553,40 @@ impl DatabaseCharacters {
             },
         })
     }
+}
+
+/// A list of code units as comma-separated decimal text, the form the definition columns keep.
+fn units_text(units: &[u16]) -> String {
+    units
+        .iter()
+        .map(|unit| unit.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// A list of dwords as comma-separated decimal text.
+fn dwords_text(values: &[u32]) -> String {
+    values
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// A column's code units, from the comma-separated decimal text it keeps.
+fn units(text: &str) -> Vec<u16> {
+    text.split(',')
+        .filter(|part| !part.trim().is_empty())
+        .filter_map(|part| part.trim().parse::<u16>().ok())
+        .collect()
+}
+
+/// A column's dwords, from the comma-separated decimal text it keeps.
+fn dwords(text: &str) -> Vec<u32> {
+    text.split(',')
+        .filter(|part| !part.trim().is_empty())
+        .filter_map(|part| part.trim().parse::<u32>().ok())
+        .collect()
 }
 
 #[cfg(test)]
