@@ -62,13 +62,13 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x8001` | `AUTH_CMSG_SEND_COMPUTER_INFO` | `lib.rs:250-254` | `COMPUTER_INFO`: recorded, answered with nothing | ported |
 | `0x8002` | `AUTH_CMSG_SEND_COMPUTER_HASH` | `lib.rs:256-275` | `COMPUTER_HASH`: the session info, with the salt already on the wire | ported |
 | `0x8007` | `AUTH_CMSG_DELETE_CHARACTER` | `lib.rs:409-474` | `DELETE_CHARACTER`: by name on the account, status 0 / 23 / 2 | ported |
-| `0x8009` | `AUTH_CMSG_UPDATE_CHARACTER_SETTINGS` | `lib.rs:507` | `session.rs` acknowledged | ported thin: not stored |
+| `0x8009` | `AUTH_CMSG_UPDATE_CHARACTER_SETTINGS` | `lib.rs:369-382` | `session.rs`: acknowledged with status 0 | ported |
 | `0x800A` | `AUTH_CMSG_CHANGE_PLAY_CHARACTER` | `lib.rs`, `decode_change_character` | `session.rs`, recorded on the session | ported |
 | `0x800D` | `AUTH_CMSG_DISCONNECT` | `lib.rs` | `session.rs` | ported |
 | `0x800E` | `AUTH_CMSG_SET_PLAYER_STATUS` | `lib.rs` | `session.rs` | ported |
-| `0x801C` | `AUTH_CMSG_ADD_ACCESS_KEY` | `lib.rs` | `session.rs` | ported thin: not decoded |
-| `0x8020` | `AUTH_CMSG_SETTING_UPDATE_CONTENT` (522) | `lib.rs` | `session.rs` | ported thin: not stored |
-| `0x8021` | `AUTH_CMSG_SETTING_UPDATE_SIZE` | `lib.rs` | `session.rs` | ported thin: not stored |
+| `0x801C` | `AUTH_CMSG_ADD_ACCESS_KEY` | `lib.rs:384-406` | `session.rs`: the units counted, status 0, nothing kept | ported |
+| `0x8020` | `AUTH_CMSG_SETTING_UPDATE_CONTENT` (522) | `lib.rs:369-382` | `session.rs`: acknowledged with status 0 | ported |
+| `0x8021` | `AUTH_CMSG_SETTING_UPDATE_SIZE` | `lib.rs:369-382` | `session.rs`: acknowledged with status 0 | ported |
 | `0x8026` | `AUTH_CMSG_ACCEPT_EULA` | `lib.rs:487`, `decode_eula` | `session.rs`, recorded | ported |
 | `0x8029` | `AUTH_CMSG_REQUEST_GAME_INSTANCE` | `lib.rs:507`, `travel::answer` | `session.rs` `answer_game_instance` | ported thin: no lease, no capacity, no world probe, 1 of 3 placement rules |
 | `0x8035` | `AUTH_CMSG_ASK_SERVER_RESPONSE` | `lib.rs` | `session.rs` | ported |
@@ -263,8 +263,7 @@ setting that selects one.
 4. **The travel is ported thin**: the eight frames and the three triggers are ASURA's, but there is no
    seat reservation and no doorway crossing (`portals.rs`), so a portal in the map does nothing.
 
-5. **The settings uploads are acknowledged rather than stored** (`0x8009`, `0x8020`, `0x8021`): the
-   reference decodes them, and nothing in this tree reads what they carry yet.
+
 
 ## 8. The order this audit imposes
 
@@ -273,6 +272,6 @@ setting that selects one.
    they land a walk is refused with `NoGraph` - the working implementation's own answer for a map with
    no graph - and nothing else about movement is outstanding.
 2. The instance table's content: an `instance_value` on every map row the world hosts.
-3. The settings uploads, decoded rather than acknowledged - the last client message family that is
-   answered with a status and no data.
+3. The instance table's content: an `instance_value` on every map row the world hosts, and the map rows
+   themselves for the places a character can travel to.
 4. The travel's own remaining half: the seat reservation and the doorway crossing.

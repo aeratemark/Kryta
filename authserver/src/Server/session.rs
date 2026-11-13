@@ -684,9 +684,12 @@ impl AuthSession {
                     .await
             }
 
-            // The settings uploads and the access key: acknowledged, because an unacknowledged upload
-            // is a hang. The reference decodes them and stores nothing that matters here.
-            UPDATE_CHARACTER_SETTINGS | SETTING_UPDATE_CONTENT | SETTING_UPDATE_SIZE | ADD_ACCESS_KEY => {
+            // The settings uploads, which must be acknowledged: an unacknowledged one is a hang, and the
+            // working implementation names exactly that as the reason it does not decode them
+            // (`ASURA/crates/asura-auth/src/lib.rs:369-382`). Answering every request the client makes
+            // keeps that trap shut without having to understand the payload - and the reference stores
+            // nothing of it either.
+            UPDATE_CHARACTER_SETTINGS | SETTING_UPDATE_CONTENT | SETTING_UPDATE_SIZE => {
                 let request = request_id(body);
                 self.say(
                     LogLevel::Info,
@@ -700,6 +703,27 @@ impl AuthSession {
                     crate::server::login_reply::GM_ERROR_NONE,
                 );
                 self.send(io, peer, crypt, &[answer], "a settings upload")
+                    .await
+            }
+
+            // `AUTH_CMSG_ADD_ACCESS_KEY`: the reference decodes the key to a string, logs it and stores
+            // **nothing**; the working implementation counts the units instead, because a key in a log is
+            // a secret in a log, and answers the request with status 0
+            // (`ASURA/crates/asura-auth/src/lib.rs:384-406`). Parity means exactly that.
+            ADD_ACCESS_KEY => {
+                let request = request_id(body);
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Connection from {peer}: an access key of {} unit(s), answered with status 0 and kept nowhere, as the reference keeps it.",
+                        access_key_units(body)
+                    ),
+                );
+                let answer = crate::server::login_reply::request_response(
+                    request,
+                    crate::server::login_reply::GM_ERROR_NONE,
+                );
+                self.send(io, peer, crypt, &[answer], "an access key")
                     .await
             }
 
@@ -1150,6 +1174,18 @@ impl AuthSession {
 ///
 /// A counted string on this wire is a `u16` count of UTF-16 units and twice that many bytes, so it is
 /// walked rather than fixed: the count is what says how long the name is.
+/// How many units an access key's counted string holds.
+///
+/// The reference decodes the same field into a string and logs it (`AuthSrv_HandleAddAccessKey`); this
+/// tree only counts it, because it stores nothing and a key in a log is a secret in a log
+/// (`ASURA/crates/asura-auth/src/lib.rs:541-548`).
+fn access_key_units(body: &[u8]) -> usize {
+    if body.len() < 6 {
+        return 0;
+    }
+    u16::from_le_bytes([body[4], body[5]]) as usize
+}
+
 fn counted_name(bytes: &[u8]) -> String {
     let Some(count) = bytes.get(0..2) else {
         return String::new();
