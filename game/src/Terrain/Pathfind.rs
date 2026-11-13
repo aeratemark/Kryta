@@ -458,6 +458,118 @@ fn precise_cross(left: Vec2f, right: Vec2f) -> f32 {
     0.0
 }
 
+// ---------------------------------------------------------------------------------------------
+// ASURA/crates/asura-world/src/pathfind.rs, lines 456-557: the context a search runs in, and the two
+// lookups it answers with. `PathFinding` itself (line 779 on) is the next piece.
+// ---------------------------------------------------------------------------------------------
+
+use crate::terrain::map_data::{PathStaticData, Portal};
+
+/// A path finder over one map's imported graph.
+///
+/// The node array, the priority queue and the corridor steps are kept between searches, because the
+/// reference keeps them in its context: a second search on the same map does not reallocate, and the
+/// node array is cleared rather than rebuilt.
+///
+/// The graph itself is shared (`Arc`) rather than borrowed: a world keeps one finder per map for as long
+/// as the map is served, and the graph is the same object for every walk. That is the reference's
+/// `srv->map_context` with one difference - it has one context per server because it runs one server per
+/// map, while this hosts several maps in one process.
+pub struct PathContext {
+    data: std::sync::Arc<PathStaticData>,
+    /// Trap id to `(plane id, position in that plane's trapezoids)`. Trap ids are dense and assigned in
+    /// plane order by the importer, so this is the reference's `array_at(&nodes, trap->trap_id)` and its
+    /// `PathTrapezoid *` in one table.
+    index: Vec<(u16, u32)>,
+    nodes: Vec<FindNode>,
+    prioq: Vec<HeapNode>,
+    steps: Vec<BuildStep>,
+}
+
+impl PathContext {
+    /// A finder over one map's graph, with the trap index built once.
+    pub fn new(data: std::sync::Arc<PathStaticData>) -> PathContext {
+        let mut index = vec![(0u16, 0u32); data.traps_count as usize];
+        for plane in &data.planes {
+            for (position, trapezoid) in plane.trapezoids.iter().enumerate() {
+                if let Some(slot) = index.get_mut(trapezoid.trap_id as usize) {
+                    *slot = (plane.plane_id, position as u32);
+                }
+            }
+        }
+        PathContext {
+            data,
+            index,
+            nodes: Vec::new(),
+            prioq: Vec::new(),
+            steps: Vec::new(),
+        }
+    }
+
+    /// The trapezoid a trap id names.
+    fn trap(&self, trap_id: u32) -> Trapezoid {
+        let (plane, position) = self.index[trap_id as usize];
+        self.data.planes[usize::from(plane)].trapezoids[position as usize]
+    }
+
+    /// The plane a trap id lives on.
+    fn plane_of(&self, trap_id: u32) -> u16 {
+        self.index[trap_id as usize].0
+    }
+
+    /// A trapezoid's neighbour field (`Option<usize>`, a position in its own plane) as a trap id.
+    fn neighbour(&self, trap_id: u32, local: Option<usize>) -> Option<u32> {
+        local.map(|position| {
+            let plane = usize::from(self.plane_of(trap_id));
+            self.data.planes[plane].trapezoids[position].trap_id
+        })
+    }
+
+    /// A portal of the plane `plane`.
+    fn portal(&self, plane: u16, portal_id: usize) -> Option<Portal> {
+        self.data
+            .planes
+            .get(usize::from(plane))?
+            .portals
+            .get(portal_id)
+            .copied()
+    }
+
+    /// The trapezoids a portal leads to, as trap ids: the reference walks `portal->pair->traps` and
+    /// dereferences each entry, so an entry the importer left NULL is skipped here rather than crashing.
+    fn portal_pair_traps(&self, portal: &Portal) -> Vec<u32> {
+        let Some(plane) = self.data.planes.get(usize::from(portal.portal_plane_id)) else {
+            return Vec::new();
+        };
+        let mut traps = Vec::with_capacity(portal.traps_count as usize);
+        for offset in 0..portal.traps_count as usize {
+            let entry = plane
+                .portals_traps
+                .get(portal.traps + offset)
+                .copied()
+                .flatten();
+            if let Some(position) = entry {
+                traps.push(plane.trapezoids[position].trap_id);
+            }
+        }
+        traps
+    }
+
+    /// `PathFindTrapezoid`, as a trap id.
+    pub fn find_trapezoid(&self, pos: Pos) -> Option<u32> {
+        let (plane, position) = self.data.trapezoid_at(pos.v2(), pos.plane)?;
+        Some(self.data.planes[usize::from(plane)].trapezoids[position].trap_id)
+    }
+
+    /// Which plane a point lies on, if any does: the first plane whose search places it.
+    ///
+    /// This global lookup does not establish a connected surface for directional movement.
+    pub fn plane_at(&self, point: Vec2f) -> Option<u16> {
+        let count = u16::try_from(self.data.planes.len()).ok()?;
+        (0..count).find(|plane| self.data.trapezoid_at(point, *plane).is_some())
+    }
+}
+
 /// What the finder said about a walk.
 ///
 /// `ASURA/crates/asura-world/src/agent.rs:570`.

@@ -214,6 +214,55 @@ pub struct Bounds {
     pub y1: f32,
 }
 
+impl PathStaticData {
+    /// `PathFindTrapezoid` (`GmPaths.c:11`): walk a plane's splits from the root until a leaf answers.
+    ///
+    /// `plane` is an index into `planes` (the reference's `pos.plane`), and the answer is the trapezoid's
+    /// position in that plane's array, where the reference returns a pointer.
+    pub fn trapezoid_at(&self, pos: Vec2f, plane: u16) -> Option<(u16, usize)> {
+        let plane_state = self.planes.get(usize::from(plane))?;
+        let mut node = plane_state.root_node?;
+        // A dead end in the graph is the reference's NULL node pointer, which ends the walk with no answer.
+        loop {
+            node = match node {
+                NodeRef::X(index) => {
+                    let xnode = plane_state.xnodes.get(index)?;
+                    let offset = pos.sub(xnode.pos);
+                    let side = xnode.dir.cross(offset);
+                    if side < 0.0 {
+                        xnode.left?
+                    } else {
+                        xnode.right?
+                    }
+                }
+                NodeRef::Y(index) => {
+                    let ynode = plane_state.ynodes.get(index)?;
+                    if pos.y < ynode.pos.y {
+                        ynode.bellow?
+                    } else if pos.y > ynode.pos.y {
+                        ynode.above?
+                    } else if pos.x < ynode.pos.x {
+                        ynode.bellow?
+                    } else {
+                        ynode.above?
+                    }
+                }
+                NodeRef::Sink(index) => {
+                    return Some((plane, plane_state.sink_nodes.get(index)?.trap))
+                }
+            };
+        }
+    }
+
+    /// Every trapezoid of the map, as `(plane, position in that plane)`.
+    pub fn trapezoids(&self) -> impl Iterator<Item = (u16, usize)> + '_ {
+        self.planes.iter().flat_map(|plane| {
+            let plane_id = plane.plane_id;
+            (0..plane.trapezoids.len()).map(move |index| (plane_id, index))
+        })
+    }
+}
+
 impl Bounds {
     /// Whether a point is inside the box, edges included.
     pub fn contains(&self, x: f32, y: f32) -> bool {
@@ -278,6 +327,48 @@ mod tests {
         let up = Vec2f { x: 0.0, y: 1.0 };
         assert_eq!(right.cross(up), 1.0, "up is to the left of right in this order");
         assert_eq!(up.cross(right), -1.0, "and the other way round is negative");
+    }
+
+    /// A plane's splits are walked from its root to a leaf, and the leaf names the trapezoid: a point
+    /// right of the split takes `right`, a dead end answers `None` as the reference's NULL pointer does.
+    #[test]
+    fn a_point_is_walked_down_the_splits_to_its_trapezoid() {
+        let data = PathStaticData {
+            traps_count: 2,
+            planes: vec![Plane {
+                plane_id: 0,
+                trapezoids: vec![
+                    Trapezoid {
+                        trap_id: 0,
+                        xtl: 0.0,
+                        xtr: 0.0,
+                        ..Trapezoid::default()
+                    },
+                    Trapezoid {
+                        trap_id: 1,
+                        xtl: 10.0,
+                        xtr: 10.0,
+                        ..Trapezoid::default()
+                    },
+                ],
+                // A split at x = 5 running along -y, so the point x < 5 is on its left: the reference
+                // takes `side < 0` as left, and `cross(dir, offset)` is negative there.
+                xnodes: vec![XNode {
+                    pos: Vec2f { x: 5.0, y: 0.0 },
+                    dir: Vec2f { x: 0.0, y: -1.0 },
+                    left: Some(NodeRef::Sink(0)),
+                    right: Some(NodeRef::Sink(1)),
+                }],
+                sink_nodes: vec![SinkNode { trap: 0 }, SinkNode { trap: 1 }],
+                root_node: Some(NodeRef::X(0)),
+                ..Plane::default()
+            }],
+        };
+        assert_eq!(data.trapezoid_at(Vec2f { x: 1.0, y: 0.0 }, 0), Some((0, 0)), "left of the split");
+        assert_eq!(data.trapezoid_at(Vec2f { x: 9.0, y: 0.0 }, 0), Some((0, 1)), "right of it");
+        assert_eq!(data.trapezoid_at(Vec2f { x: 1.0, y: 0.0 }, 3), None, "no such plane");
+        let rootless = PathStaticData::default();
+        assert_eq!(rootless.trapezoid_at(Vec2f::default(), 0), None, "a plane with no root");
     }
 
     /// The plane's box is the union of its trapezoids' corners, edges included.
