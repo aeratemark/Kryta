@@ -1117,7 +1117,8 @@ impl WorldSession {
         let mut pending: Vec<u8> = Vec::new();
         let mut buffer = vec![0u8; 1024];
         let inventory = self.load_inventory(sheet);
-        let mut tick: u32 = 500;
+        // The instant the last tick went out, so the next one carries how long it really has been.
+        let mut last_tick = std::time::Instant::now();
         let mut loaded = false;
         // Where the character stands, chosen once: the entry-position answer and the agent the load
         // creates have to be the same place.
@@ -1649,8 +1650,16 @@ impl WorldSession {
             match read {
                 Ok(shared::network::socket::ReadOutcome::TimedOut) => {
                     if loaded {
-                        tick = tick.wrapping_add(1);
-                        let frame = misc_packets::world_simulation_tick(tick);
+                        // **How long it has been since the last tick**, not a counter: the client
+                        // advances its simulation - and its sync copy of every agent - by this number
+                        // (`ASURA/crates/asura-world/src/instance.rs:369`, `world_simulation_tick`);
+                        // a counter here makes everything the client draws run at the wrong speed.
+                        let now = std::time::Instant::now();
+                        let elapsed = now.duration_since(last_tick);
+                        last_tick = now;
+                        let frame = misc_packets::world_simulation_tick(
+                            u32::try_from(elapsed.as_millis()).unwrap_or(u32::MAX),
+                        );
                         self.send(io, peer, crypt, &[frame], "a tick").await;
                     }
                 }
@@ -2678,15 +2687,17 @@ Logger.root = 6,Console
             "the load creates the agent it is played as: {headers:04X?}"
         );
 
-        // 8. And the connection stays: the world ticks it, one per interval, with no prompt.
+        // 8. And the connection stays: the world ticks it, one per interval, with no prompt. The
+        // payload is how long it has been since the last tick, not a counter - the client advances its
+        // simulation by it (`ASURA/crates/asura-world/src/instance.rs:369`).
         let mut tick = vec![0u8; 6];
         client.read_exact(&mut tick).unwrap();
         reading.apply(&mut tick);
         assert_eq!(&tick[..2], &[0x1E, 0x00], "a world simulation tick");
-        assert_eq!(
-            &tick[2..],
-            &501u32.to_le_bytes(),
-            "the next tick after the load's first, 500"
+        let elapsed = u32::from_le_bytes([tick[2], tick[3], tick[4], tick[5]]);
+        assert!(
+            elapsed > 0 && elapsed <= 1000,
+            "the tick carries the elapsed milliseconds of one interval, not a counter: {elapsed}"
         );
 
         // 9. The client's own traffic does not end the session: a movement, then a travel request,

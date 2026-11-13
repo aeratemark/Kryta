@@ -106,6 +106,19 @@ impl DatabaseAccounts {
         Ok(!rows.is_empty())
     }
 
+    /// The EULA version the account the portal identified has accepted, or `None` when no row is keyed
+    /// by that identifier.
+    ///
+    /// This is the read the login answer makes: the version goes back in the account info, and the
+    /// client stops asking (`AuthSrv_SendAccountInfo`; `ASURA/crates/asura-auth/src/lib.rs:613`).
+    pub fn eula_for_user(&self, user_id: &str) -> Result<Option<i64>, String> {
+        let rows = self.query(
+            "SELECT \"eula\"::bigint FROM \"account\" WHERE \"user_id\" = $1::text",
+            vec![Param::Text(user_id.to_string())],
+        )?;
+        Ok(rows.first().map(|row| row.get::<usize, i64>(0)))
+    }
+
     /// Remove an account. Its characters are the character database's business and are left alone.
     pub fn delete(&self, username: &str) -> Result<bool, String> {
         let rows = self.query(DELETE_ACCOUNT, vec![Param::Text(username.to_string())])?;

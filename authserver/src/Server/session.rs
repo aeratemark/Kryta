@@ -809,11 +809,27 @@ impl AuthSession {
             );
         }
 
+        // The EULA version this account accepted, which the account info carries back so the client
+        // does not ask again (`AuthSrv_SendAccountInfo`; `ASURA/crates/asura-auth/src/lib.rs:610-629`
+        // reads it from the account row and sends it, and the reference's own hardcoded 24 is why its
+        // clients are asked every login). A read that fails is 0: one extra page rather than a login.
+        let eula_accepted = self
+            .accounts
+            .as_ref()
+            .and_then(|accounts| {
+                accounts
+                    .eula_for_user(&game::characters::uuid_text(&login.user_id))
+                    .ok()
+                    .flatten()
+            })
+            .map(|version| u8::try_from(version.max(0)).unwrap_or(0))
+            .unwrap_or(0);
+
         let frames = crate::server::login_reply::reply_frames(
             login.request,
             login.user_id,
             &characters,
-            0,
+            eula_accepted,
             &self.account_settings,
         );
         self.account = Some(login.user_id);
