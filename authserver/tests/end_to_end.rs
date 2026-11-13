@@ -733,8 +733,8 @@ fn an_end_to_end_login_and_load_against_the_live_programs() {
     let name_size = instance_packets::instance_load_player_name(character_name).len();
     assert_eq!(
         &block[name_at + name_size..],
-        instance_packets::instance_load_info(1, 148, 0, 1, 0, 0).as_slice(),
-        "the travel decided the map: 148, an outpost, district 1"
+        instance_packets::instance_load_info(1, 148, 1, 1, 0, 0).as_slice(),
+        "the travel decided the map: 148, the explorable byte 1 the reference hardcodes, district 1"
     );
     // The hand-off row is consumed by the claim: a second claim finds nothing.
     assert!(
