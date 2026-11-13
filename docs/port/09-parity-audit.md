@@ -549,6 +549,20 @@ defect, not a rule to invent around.
 neutral `+y` until round 18; both the spawn's own direction and the agent's create message now use the
 point's stated angle, or `(1, 0)`.
 
+**A map that arrived with the import loads through the whole protocol.**
+`cargo test -p worldserver --test end_to_end -- --ignored a_second_outpost` takes **163 The Barradin
+Estate** - not the map the schema seeded by hand - through a creation screen, R12's unlock written as a
+scripted travel would, the login's travel row and the connection that presents it: the load is 1,180
+bytes, `0x019A` names 163 with the explorable byte 1, the instance table closes it with 137 pairs in ten
+batches, the ping pair is `0x000C` then `0x000D` carrying 20, and `0x0196` carries 163's own file
+(380713) and a point within `World.SpawnScatter` of one of its own (R13).
+
+**One thing a reader of the table should know.** The `0x01A0` and `0x008A` rows describe their bodies as
+a `NestedStruct`, which the shared walker reads as sixteen-byte units while the frames carry a `u8`
+count and six-byte pairs (or a compressed band). Those rows are ASURA's own and it emits the same
+bytes; the walker is only ever asked to read a *server-emitted* frame in a test, so the tests read those
+two blocks by size instead (`worldserver/tests/end_to_end.rs`).
+
 **What is not ported, and why - all three are stops, not gaps:**
 
 - **NPCs and monsters.** ASURA creates exactly one agent per connection - the player's own
