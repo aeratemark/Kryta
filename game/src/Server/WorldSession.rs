@@ -121,6 +121,10 @@ const CLIENT_CANCEL_MOVEMENT: u16 = 0x8028;
 /// This tree listened for `0x00B1`, which is the *server's* party message, until 2026-11-12.
 const CLIENT_PARTY_TRAVEL: u16 = 0x80B1;
 
+/// `GAME_CMSG_TRAVEL_INIT` (`0x80C1`, ten bytes): the client touched a travel object. Two agent ids;
+/// `ASURA/crates/asura-world/src/dispatch.rs:73` answers it with `travel::handle_travel_init`.
+const CLIENT_TRAVEL_INIT: u16 = 0x80C1;
+
 /// `GAME_CMSG_SEND_CHAT_MESSAGE` (`0x8064`): the client speaks - `{agent u32, text String16}`, whose
 /// first unit is the channel (`ASURA/crates/asura-protocol/src/packets.rs`, and
 /// `ASURA/docs/reference/client-protocol.md:920-926`).
@@ -1044,7 +1048,8 @@ impl WorldSession {
             }
 
             let sheet = self.character_sheet(&version);
-            let is_explorable = u8::from(map.kind == crate::world::map_kind::EXPLORABLE);
+            // 1 for every load: the reference hardcodes it (`ASURA/crates/asura-world/src/map.rs:34-42`).
+            let is_explorable = 1;
             let mut frames = vec![
                 instance_packets::instance_load_head(),
                 instance_packets::instance_player_data_start(),
@@ -1578,7 +1583,7 @@ impl WorldSession {
 
         let agent = self.player_id();
         let player = self.player_id();
-        let is_explorable = u32::from(destination.kind == crate::world::map_kind::EXPLORABLE);
+        let is_explorable = self.settings.travel_explorable.flag(destination.kind);
         let frames = vec![
             agent_packets::agent_update_effects(agent, TRAVEL_EFFECT).1,
             agent_packets::agent_stop_moving(agent).1,
@@ -1611,6 +1616,40 @@ impl WorldSession {
                 host[2],
                 host[3],
                 port
+            ),
+        );
+    }
+
+    /// `GAME_CMSG_TRAVEL_INIT` (`0x80C1`, ten bytes): the client touched a travel object - a portal, a
+    /// door, a signpost.
+    ///
+    /// `ASURA/crates/asura-world/src/travel.rs:132-169` (`handle_travel_init`), ported whole: the two
+    /// agent ids are read - the object the player used, and a second one that has been zero in every
+    /// measurement - and the touch is named in the log. **It names an agent, not a map**, so the
+    /// destination is this server's knowledge and not the client's: the object it names leads somewhere
+    /// only because a row says so. The doorway crossing itself is decided from the player's own step
+    /// (`travel.rs:319-388`, `portal_crossed`), not from this message, so this arm starts no transfer -
+    /// which is exactly what it does in the working implementation.
+    async fn answer_travel_init(&self, peer: &str, message: &[u8], sheet: &CharacterSheet) {
+        let body = &message[2..];
+        if body.len() < 8 {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: a travel touch is {} bytes and needs 10; it cannot be read.",
+                    message.len()
+                ),
+            );
+            return;
+        }
+        let agent = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
+        let other = u32::from_le_bytes([body[4], body[5], body[6], body[7]]);
+        self.say(
+            LogLevel::Info,
+            format!(
+                "Gameplay connection from {peer}: the character '{}' touched a travel object in map {}: TRAVEL_INIT agent 0x{agent:08X}, second 0x{other:08X}; no portal row names that agent, so no travel starts.",
+                sheet.name,
+                self.map_id()
             ),
         );
     }
@@ -2668,6 +2707,12 @@ impl WorldSession {
                         self.answer_party_travel(io, peer, &message, crypt, sheet)
                             .await;
                     }
+                    // The client touched a travel object (`0x80C1`): named in the log and nothing more,
+                    // because a crossing is decided from the player's own step, not from the touch
+                    // (`ASURA/crates/asura-world/src/travel.rs:132-169`).
+                    CLIENT_TRAVEL_INIT => {
+                        self.answer_travel_init(peer, &message, sheet).await;
+                    }
                     // The client speaks: a line on a channel, or one of the reference's commands
                     // (`ASURA/crates/asura-world/src/chat.rs`).
                     CLIENT_CHAT_MESSAGE => {
@@ -3693,7 +3738,9 @@ Logger.root = 6,Console
             instance_packets::instance_load_head(),
             instance_packets::instance_player_data_start(),
             instance_packets::instance_load_player_name("Player"),
-            instance_packets::instance_load_info(1, 148, 0, 1, 0, 0),
+            // The explorable byte is 1 for every load: the reference hardcodes it
+            // (`ASURA/crates/asura-world/src/map.rs:34-42`).
+            instance_packets::instance_load_info(1, 148, 1, 1, 0, 0),
         ];
         expected.extend(grid);
         // And the instance table: one batch, because this world's one map with a value states it.

@@ -52,7 +52,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | the reference client (a test double that speaks the wire) | `client/reference_client.rs` (17 KB) | nothing | **missing**: no test proves a whole conversation against an independent speaker |
 | the trace of every byte | `client/trace.rs` | `shared/src/network` trace + logs | ported thin |
 
-## 3. Client -> server: the 36 messages ASURA handles
+## 3. Client -> server: the 37 messages ASURA handles
 
 ### 3.1 The auth connection (15)
 
@@ -74,7 +74,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x8035` | `AUTH_CMSG_ASK_SERVER_RESPONSE` | `lib.rs` | `session.rs` | ported |
 | `0x8038` | `AUTH_CMSG_PORTAL_ACCOUNT_LOGIN` | `lib.rs:572-680` | `session.rs` `answer_login`: the named character is recorded, or the account's first | ported |
 
-### 3.2 The game connection (21)
+### 3.2 The game connection (22)
 
 | header | message | ASURA handler | this tree | verdict |
 |---|---|---|---|---|
@@ -98,9 +98,10 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x808B` | `GAME_CMSG_CHAR_CREATION_CONFIRM` (58) | `creation.rs:346` | handled | ported |
 | `0x8090` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_PLAYERS` (19) | `player.rs:430` | handled | ported |
 | `0x8091` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_ITEMS` (4) | `item.rs:448` | handled | ported: ASURA sends no `0x015E` either |
-| `0x80B1` | `GAME_CMSG_PARTY_TRAVEL` (9) | `travel.rs`, `handle_party_travel` | `answer_party_travel` and `begin_transfer` | ported |
+| `0x80B1` | `GAME_CMSG_PARTY_TRAVEL` (9) | `travel.rs:279`, `handle_party_travel` | `answer_party_travel` and `begin_transfer` | ported |
+| `0x80C1` | `GAME_CMSG_TRAVEL_INIT` (10) | `travel.rs:147`, `handle_travel_init` (`dispatch.rs:73`) | `answer_travel_init` | ported - **missing until round 17**, and it starts no transfer in either tree |
 
-**Score: 36 ported or ported thin (15 auth + 21 game), 0 ours, 0 missing.**
+**Score: 37 ported or ported thin (15 auth + 22 game), 0 ours, 0 missing.**
 
 ## 4. Server -> client: the 87 messages ASURA emits
 
@@ -239,7 +240,7 @@ setting that selects one.
 | ... this tree emits | **87** (8 auth, 79 game) |
 | ... this tree does not emit | **0** |
 | messages this tree emits that ASURA does not have | 1: the district-count answer on the auth connection |
-| sequences ported whole | **8 of 11**, with 3 ported thin (the spawn ask, the travel, the instance table) and none missing |
+| sequences ported whole | **8 of 11**, with 3 ported thin (the spawn ask, the travel - cycle whole, doorway not yet - and the instance table) and none missing |
 | the packet table | identical, 782 rows (682 game + 100 auth) |
 
 ## 7. The defects, in the order the client feels them
@@ -268,8 +269,30 @@ setting that selects one.
 3. **The instance table is ported thin**: ASURA's batch shape goes on the wire, and its content is the
    maps whose rows state an `instance_value` - one today (map 148). A client can resolve a destination
    only once that map's row carries its value.
-4. **The travel is ported thin**: the eight frames and the three triggers are ASURA's, but there is no
-   seat reservation and no doorway crossing (`portals.rs`), so a portal in the map does nothing.
+4. **The travel is ported with its cycle and without the doorway.** The eight frames, the three
+   triggers (`/tp`, the world map's `0x80B1`, the touch's `0x80C1`), the `is_explorable` switch and the
+   hand-off row are ASURA's. Two parts are not, each named with its reason:
+   - **The seat reservation** (`travel.rs:419-431`, `placement::Placement::reserve`) is ASURA's own
+     deployment accounting - a world registry, leases and a heartbeat, which is the multi-process
+     arrangement this tree's structure does not have (rule 0's scope is the protocol; the arrangement
+     is the reference's). The capacity it enforces has a counterpart here: a district holds
+     `World.DistrictAllotment` players, a full outpost opens the next district and a named full district
+     is refused (`game/Districts/mod.rs`, `enter`, R5/R22/R58).
+   - **The doorway crossing** (`travel.rs:319-388`, `portal_crossed`, and `portals.rs`, 503 lines) is
+     the next subject: it needs the pack's doorway geometry, and this tree's `map_arrival` rows already
+     carry the landing half of it (R21).
+
+**Two client-visible values this reading corrected.**
+
+- `0x019A`'s explorable byte was `0` for an outpost here and is `1` for every load in ASURA: the
+  reference hardcodes 1 with the comment `// what to put here?`
+  (`ASURA/crates/asura-protocol/src/game/mod.rs:530-534`; its only caller passes 1,
+  `ASURA/crates/asura-world/src/map.rs:34-42`). Corrected in round 17.
+- `0x01A6`'s `is_explorable` was the destination's own kind here, which is ASURA's `auto` mode and not
+  its default: ASURA sends **0 for every travel** unless `ASURA_TRAVEL_EXPLORABLE` says otherwise,
+  because at 1 an explorable's load waited 5138 ms against 849 ms at 0 (`travel.rs:21-42`). It is now
+  `World.TravelExplorable` (`0`, `1`, `auto`), defaulting to ASURA's `0`.
+
 
 
 

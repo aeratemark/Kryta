@@ -155,6 +155,11 @@ pub fn instance_load_player_name(name: &str) -> Vec<u8> {
 
 /// `0x019A`: the agent the client controls, the map it is in, whether the client runs an explorable's
 /// load, the district, the language and two bytes.
+///
+/// The explorable byte is **1 for every load**, which is what the reference sends: it hardcodes 1 with
+/// the comment `// what to put here?` (`ASURA/crates/asura-protocol/src/game/mod.rs:530-534`,
+/// `instance_load_info`; its only caller passes 1, `ASURA/crates/asura-world/src/map.rs:34-42`). It is
+/// a parameter here for the same reason it is one there, and every call passes 1.
 pub fn instance_load_info(
     agent: u32,
     map_id: u16,

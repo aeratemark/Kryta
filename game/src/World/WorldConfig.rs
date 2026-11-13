@@ -71,6 +71,15 @@ pub struct WorldConfig {
     /// stops where the server believes it is and nothing goes on the wire, so the client is never
     /// ordered backwards.
     pub max_allowed_correction: f32,
+    /// What the `is_explorable` field of a redirect carries (`0x01A6`), as
+    /// `ASURA/crates/asura-world/src/travel.rs:21-69` decides it.
+    ///
+    /// The working implementation's **default is 0 for every travel**, not the destination's kind: a live
+    /// server sends 1 for an explorable and 0 for an outpost, and when ASURA sent the live value an
+    /// explorable's load against it waited 5138 ms from the redirect to the players block against 849 ms
+    /// at 0 over the same walk (`docs/reference/instance-initialization.md`, "The explorable"). The
+    /// faithful value is one setting away, so the setting is ASURA's own three modes: `0`, `1`, `auto`.
+    pub travel_explorable: TravelExplorable,
     /// The address a travelling client is told to reconnect to, as `host:port`.
     ///
     /// The working implementation publishes one (`--public`, `ASURA/crates/asura-world/src/main.rs:73`);
@@ -100,7 +109,60 @@ impl Default for WorldConfig {
             agent_speed: 288.0,
             appearance: 0x0310_0000,
             max_allowed_correction: 250.0,
+            travel_explorable: TravelExplorable::Zero,
             public_address: "127.0.0.1:6112".to_string(),
+        }
+    }
+}
+
+/// How a redirect's `is_explorable` is decided.
+///
+/// `ASURA/crates/asura-world/src/travel.rs:21-69`: the same three modes, with the same readings and the
+/// same default (`Zero`), because that is the value a load against this server actually completes at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TravelExplorable {
+    /// 0 for every travel, whatever the destination is. The default.
+    Zero,
+    /// 1 for every travel.
+    One,
+    /// The destination's own kind, which is what a live server sends: 1 for a map of type 1, 4 or 6.
+    Auto,
+}
+
+impl TravelExplorable {
+    /// The word a setting states.
+    pub fn parse(text: &str) -> Option<TravelExplorable> {
+        match text.trim() {
+            "0" => Some(TravelExplorable::Zero),
+            "1" => Some(TravelExplorable::One),
+            "auto" => Some(TravelExplorable::Auto),
+            _ => None,
+        }
+    }
+
+    /// The value the redirect carries, given the destination's map type.
+    ///
+    /// `travel.rs:33-42`, `explorable_flag_for`: `auto` answers 1 for map types 1, 4 and 6 and 0 for
+    /// everything else.
+    pub fn flag(self, map_type: u8) -> u32 {
+        match self {
+            TravelExplorable::Zero => 0,
+            TravelExplorable::One => 1,
+            TravelExplorable::Auto => match map_type {
+                1 | 4 | 6 => 1,
+                _ => 0,
+            },
+        }
+    }
+
+    /// The switch's mode in words, for the startup line: a log always says which value travels.
+    ///
+    /// `travel.rs:45-51`, `explorable_flag_mode`.
+    pub fn mode(self) -> &'static str {
+        match self {
+            TravelExplorable::Zero => "0 for every travel (default: an explorable is announced as an outpost)",
+            TravelExplorable::One => "1 for every travel",
+            TravelExplorable::Auto => "auto: the destination's own kind, which is what a live server sends",
         }
     }
 }
@@ -144,6 +206,17 @@ impl WorldConfig {
         settings.appearance = small(config, "Appearance", settings.appearance)?;
         settings.max_allowed_correction =
             number(config, "MaxAllowedCorrection", settings.max_allowed_correction)?;
+        // What a redirect's `is_explorable` carries. `travel.rs:33-69` reads the same three words from
+        // `ASURA_TRAVEL_EXPLORABLE`; here it is the program's file (rule 7), with the same default.
+        let (travel_explorable, _) = config
+            .value_string("World.TravelExplorable", "0")
+            .map_err(|error| error.to_string())?;
+        settings.travel_explorable = TravelExplorable::parse(&travel_explorable)
+            .ok_or_else(|| {
+                format!(
+                    "World.TravelExplorable is not one of 0, 1, auto: '{travel_explorable}'"
+                )
+            })?;
         let (public_address, _) = config
             .value_string("World.PublicAddress", &settings.public_address)
             .map_err(|error| error.to_string())?;
@@ -164,6 +237,10 @@ impl WorldConfig {
         notes.push(format!(
             "World: a travel is redirected to {} (World.PublicAddress).",
             settings.public_address,
+        ));
+        notes.push(format!(
+            "World: a travel's is_explorable: {}.",
+            settings.travel_explorable.mode(),
         ));
         notes.push(format!(
             "World: a player agent is created with {} health, {} energy, {:.1} energy a second and a walking speed of {:.0}; a character with no appearance of its own is drawn as 0x{:08X}.",
@@ -222,7 +299,11 @@ mod tests {
     fn a_file_that_states_nothing_keeps_the_games_numbers() {
         let (settings, notes) = WorldConfig::read(&config("")).expect("reads");
         assert_eq!(settings, WorldConfig::default());
-        assert_eq!(notes.len(), 3, "the read is reported: the rules, the redirect address, then the agent");
+        assert_eq!(
+            notes.len(),
+            4,
+            "the read is reported: the rules, the redirect address, the travel's flag, then the agent"
+        );
     }
 
     #[test]
@@ -242,5 +323,37 @@ mod tests {
     fn a_number_that_is_not_a_number_is_refused_with_its_key() {
         let error = WorldConfig::read(&config("World.SpawnScatter = near\n")).expect_err("refused");
         assert!(error.contains("World.SpawnScatter"), "{error}");
+    }
+
+    /// `ASURA/crates/asura-world/src/travel.rs:33-69`: three modes with three readings, the default
+    /// answering 0 for every destination and `auto` giving 1 to map types 1, 4 and 6 only.
+    #[test]
+    fn the_travels_explorable_flag_is_asuras_three_modes() {
+        let zero = TravelExplorable::parse("0").unwrap();
+        let one = TravelExplorable::parse("1").unwrap();
+        let auto = TravelExplorable::parse("auto").unwrap();
+        assert_eq!(zero.flag(1), 0, "the default announces an explorable as an outpost");
+        assert_eq!(one.flag(0), 1, "one for every travel");
+        assert_eq!(auto.flag(1), 1, "auto: an explorable");
+        assert_eq!(auto.flag(4), 1, "auto: 4 is an explorable type");
+        assert_eq!(auto.flag(6), 1, "auto: 6 is an explorable type");
+        assert_eq!(auto.flag(0), 0, "auto: an outpost");
+        assert_eq!(auto.flag(11), 0, "auto: character creation is not an explorable");
+        assert!(TravelExplorable::parse("2").is_none(), "only the three words");
+        assert!(zero.mode().contains("default"), "the mode names itself for the log");
+    }
+
+    #[test]
+    fn a_file_states_the_travels_explorable_flag_or_is_refused() {
+        let (settings, notes) = WorldConfig::read(&config("World.TravelExplorable = auto\n"))
+            .expect("reads");
+        assert_eq!(settings.travel_explorable, TravelExplorable::Auto);
+        assert!(
+            notes.iter().any(|note| note.contains("is_explorable")),
+            "the read is reported: {notes:?}"
+        );
+        let error = WorldConfig::read(&config("World.TravelExplorable = maybe\n"))
+            .expect_err("refused");
+        assert!(error.contains("World.TravelExplorable"), "{error}");
     }
 }

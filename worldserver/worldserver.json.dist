@@ -113,7 +113,10 @@
       "value": "127.0.0.1:6112",
       "doc": "The address a travelling client is told to reconnect to, as host:port - the redirect (0x01A6) carries it as a Winsock sockaddr_in. The working implementation publishes one (its --public argument, ASURA/crates/asura-world/src/main.rs:73). This stack's client dials the address it was launched against, which is the login port, and the front door copies that connection to the world, so the default is that address."
     },
-    "MaxAllowedCorrection": {
+    "TravelExplorable": {
+      "value": "0",
+      "doc": "What the redirect's is_explorable field (0x01A6) carries: 0 for every travel (the default), 1 for every travel, or auto for the destination's own kind - which is what a live server sends. The default is 0 because that is the value an explorable's load against this server completes at: at 1 it waited 5138 ms from the redirect to the players block against 849 ms at 0 over the same walk (ASURA/crates/asura-world/src/travel.rs:21-42)."
+    },    "MaxAllowedCorrection": {
       "value": 250,
       "doc": "How far, in game units, a client may place itself when it cancels a walk (0x8047) and still be believed. A correction farther than this from where the server thought the agent stood is ignored: the agent stops where the server believes it is and nothing goes on the wire, so the client is never ordered backwards. The reference's MAXIMUM_ALLOWED_CORRECTION (GmAgent.c:547-563); the working implementation runs it at 250 (ASURA/config/Server/movement.json)."
     },
