@@ -324,9 +324,12 @@ road.
 
 **The order the subject therefore takes, largest-and-first:**
 
-1. **The types** `map_data.rs` defines - `Vec2f`, `NodeRef`, `XNode`, `YNode`, `SinkNode`,
-   `Trapezoid`, `Portal`, `Plane`, `PathStaticData`, `Bounds`, with the constants (`PATH_DATA_*`,
-   `STAGE_*`, the node index bases) - ported as they are, same names, same fields, same order.
+1. **(done)** **The types** `map_data.rs` defines - `Vec2f` (with `sub`/`cross`), `NodeRef`, `XNode`,
+   `YNode`, `SinkNode`, `Trapezoid`, `Portal`, `Plane`, `PathStaticData` (with `plane_bounds`),
+   `Bounds` (with `contains`), and the constants `PATH_DATA_SIGNATURE`, `PATH_DATA_VERSION`,
+   `STAGE_SHIFT`, `STAGE_MAP`, the three node index bases and the three `NODE_TYPE_*` bytes - in
+   `game/src/Terrain/MapData.rs`, same names, same fields, same order, proved by
+   `terrain::map_data`'s three tests. The importer that fills them is step 4, below.
 2. **`graph_dump.rs`**, whole: the `ASURAPG1` container, `encode`, `decode`, and its own tests.
 3. **`pathfind.rs`** and **`pathfind/directional.rs`**, whole: the finder, with the reference's own
    quirks kept - `PathReciproc`/`PathSqrt` through the ported tables, `PathFindTrapezoid` by the same

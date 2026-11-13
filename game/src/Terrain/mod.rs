@@ -13,8 +13,12 @@
 #[path = "Pathfind.rs"]
 pub mod pathfind;
 
+#[path = "MapData.rs"]
+pub mod map_data;
+
 #[path = "PathTables.rs"]
 pub mod path_tables;
 
+pub use map_data::{Bounds, NodeRef, PathStaticData, Plane, Portal, SinkNode, Trapezoid, Vec2f, XNode, YNode};
 pub use path_tables::{path_reciproc, path_sqrt};
 pub use pathfind::{Graphs, Pos, Walk, Waypoint};
