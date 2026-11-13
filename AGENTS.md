@@ -39,6 +39,40 @@ Concretely, and binding:
 A session that has not read `docs/port/09-parity-audit.md` is not ready to write code that faces the
 client.
 
+## Rule 0a - how the port is executed, without exception
+
+This rule exists because it was broken. Over eight rounds a session ported everything *adjacent* to
+pathing - the archive reader, the decoder, the arithmetic tables, measurements - and never opened
+`ASURA/crates/asura-world/src/graph_dump.rs`, `map_data.rs` or `pathfind.rs`. Its own report of why, in
+its words: it preferred subjects it could finish and make green inside one round; it read "a port is
+whole" as permission not to *start* anything it could not finish; and it never spent the ten minutes to
+read the file's structure before deciding it was too big.
+
+Those three are forbidden. Binding, from now on:
+
+1. **The subject is chosen by the owner, never by what fits a context window.** When the owner names a
+   subject, the largest file in it goes first. "I could not finish it this round" is not a reason to
+   choose a different subject.
+2. **Read the source before estimating, planning, measuring or choosing.** No claim about a subject -
+   its size, its shape, what it needs, whether a cheaper route exists - is made before the ASURA file
+   has been opened and read. "It looks like 1,300 lines" is not a survey; `graph_dump.rs` turning out
+   to define a dumped format is what a survey finds.
+3. **A round may end mid-file.** State the file, the lines carried and the lines left. A partial round
+   is a valid round. A round that ends green by porting something else is not.
+4. **No substitute rounds.** Measurement-only, documentation-only and test-repair-only rounds are never
+   a way to fill a round. They are allowed only inside a round that also ports part of the named
+   subject.
+5. **"A port is whole" governs what is claimed, never what is started.** Starting a file and not
+   finishing it is expected and honest. Claiming a slice as the port is the forbidden thing.
+6. **Every round opens with one line**: the ASURA file opened, its line count, and the lines carried
+   forward. If that line is not there, the round is not a porting round.
+7. **Before a session ends on a large subject**, its analysis goes into `docs/port/09-parity-audit.md`:
+   what the file does, function by function, with line references, so the next session starts from the
+   analysis and not from a directory listing.
+
+The subject order is the audit's "The order this audit imposes", largest first. A round that has to
+invent its own subject has already broken rule 1.
+
 ## The one sentence
 
 **AzerothCore's server, in Rust, serving Guild Wars.**
