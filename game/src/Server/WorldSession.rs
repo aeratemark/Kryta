@@ -4385,7 +4385,10 @@ Logger.root = 6,Console
         sending.apply(&mut movement);
         client.write_all(&movement).unwrap();
 
-        let mut travel = vec![0xB1, 0x00];
+        // The client's own travel request: `0x80B1`, nine bytes - `B1 80 | 94 00 | 02 | 00 00 | 00 | 01`
+        // when the client asks for map 148 (the measured frame). This test sent it as `0x00B1`, which is
+        // the *server's* party message, and the table carried a row for that mistake until round 20.
+        let mut travel = vec![0xB1, 0x80];
         travel.extend_from_slice(&148u16.to_le_bytes());
         travel.push(0xFE); // territory -2
         travel.extend_from_slice(&0u16.to_le_bytes());

@@ -1,4 +1,4 @@
-//! The game family of this client's protocol: 683 rows, ported from ASURA's table.
+//! The game family of this client's protocol: 682 rows, ported from ASURA's table.
 //!
 //! One row per header: the wire value, the index the reference addresses its format array
 //! with, the declared size, the name and the field layout a decoder walks. The walker itself
@@ -10,10 +10,9 @@
 
 use shared::packets::types::{Conn, Field, FieldKind, Packet, Status};
 
-/// The family's rows: `683`, sorted by client-to-server first, then header.
+/// The family's rows: `682`, sorted by client-to-server first, then header.
 #[rustfmt::skip]
 static ROWS: &[Packet] = &[
-    Packet { conn: Conn::Game, header: 0x00B1, index: 177, size: 9, name: Some("GAME_CMSG_PARTY_TRAVEL"), from_client: true, status: Status::Observed, evidence: &["the client's own in-game travel request, measured on the live client: PARTY_TRAVEL, opcode 0xB1, wire 9 bytes, carrying map, territory, district, language and a flag - seen as {148, -2, 0, 0, 1} and {163, -2, 0, 0, 1}, with district 0 the value a client sends when it picked none (docs/game-rules.md E220; recordings/client/feature/travel/doors-20261031-095754.jsonl; the 9-byte field split is E28: map u16, territory u8, district u16, language u8, flag u8)"], fields: &[Field { kind: FieldKind::MsgHeader, length: 177 }, Field { kind: FieldKind::Word, length: 0 }, Field { kind: FieldKind::Byte, length: 0 }, Field { kind: FieldKind::Word, length: 0 }, Field { kind: FieldKind::Byte, length: 0 }, Field { kind: FieldKind::Byte, length: 0 }] },
     Packet { conn: Conn::Game, header: 0x8000, index:   0, size:     6, name: Some("GAME_CMSG_TRADE_ACKNOWLEDGE"), from_client: true, status: Status::Known, evidence: &[], fields: &[Field { kind: FieldKind::MsgHeader, length: 0 }, Field { kind: FieldKind::Dword, length: 0 }] },
     Packet { conn: Conn::Game, header: 0x8001, index:   1, size:     2, name: Some("GAME_CMSG_TRADE_CANCEL"), from_client: true, status: Status::Known, evidence: &[], fields: &[Field { kind: FieldKind::MsgHeader, length: 1 }] },
     Packet { conn: Conn::Game, header: 0x8002, index:   2, size:     7, name: Some("GAME_CMSG_TRADE_ADD_ITEM"), from_client: true, status: Status::Known, evidence: &[], fields: &[Field { kind: FieldKind::MsgHeader, length: 2 }, Field { kind: FieldKind::Dword, length: 0 }, Field { kind: FieldKind::Byte, length: 0 }] },

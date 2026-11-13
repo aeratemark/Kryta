@@ -242,8 +242,8 @@ mod tests {
 
     /// The world's table holds what the protocol has for a world connection.
     #[test]
-    fn the_world_table_has_its_six_hundred_and_eighty_three_rows() {
-        assert_eq!(tables::rows().count(), 683);
+    fn the_world_table_has_its_six_hundred_and_eighty_two_rows() {
+        assert_eq!(tables::rows().count(), 682, "the same rows ASURA's table has");
     }
 
     /// The creation confirm frames to the client's own size: **sixteen bytes plus twice the name**
