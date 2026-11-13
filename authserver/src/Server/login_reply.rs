@@ -38,6 +38,11 @@ pub const GM_ERROR_AUTH_ERROR: u32 = 11;
 /// connect timeout.
 pub const GM_ERROR_NETWORK_ERROR: u32 = 2;
 
+/// `GM_ERROR_INVALID_CHARNAME`: what the reference answers a character name it does not hold - recorded
+/// by the working implementation at `ASURA/crates/asura-auth/src/lib.rs:426-429`
+/// (`messages::STATUS_INVALID_CHARNAME`).
+pub const GM_ERROR_INVALID_CHARNAME: u32 = 23;
+
 /// The `host` field of `0x0009`, in bytes: room for either address family, which is why the
 /// reference's struct reserves more than an IPv4 address needs.
 pub const GAME_SERVER_HOST_LEN: usize = 24;

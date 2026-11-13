@@ -58,10 +58,10 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 
 | header | message | ASURA handler | this tree | verdict |
 |---|---|---|---|---|
-| `0x8000` | `AUTH_CMSG_HEARTBEAT` | `asura-auth/src/lib.rs`, `handle_heartbeat` | - | **missing** |
-| `0x8001` | `AUTH_CMSG_SEND_COMPUTER_INFO` | `lib.rs`, `decode_computer_info` (`client/messages.rs:251`) | - | **missing** |
-| `0x8002` | `AUTH_CMSG_SEND_COMPUTER_HASH` | `lib.rs` | - | **missing** |
-| `0x8007` | `AUTH_CMSG_DELETE_CHARACTER` | `lib.rs` | - | **missing** |
+| `0x8000` | `AUTH_CMSG_HEARTBEAT` | `lib.rs:307-312` | `HEARTBEAT`: `heartbeat(16)` | ported |
+| `0x8001` | `AUTH_CMSG_SEND_COMPUTER_INFO` | `lib.rs:250-254` | `COMPUTER_INFO`: recorded, answered with nothing | ported |
+| `0x8002` | `AUTH_CMSG_SEND_COMPUTER_HASH` | `lib.rs:256-275` | `COMPUTER_HASH`: the session info, with the salt already on the wire | ported |
+| `0x8007` | `AUTH_CMSG_DELETE_CHARACTER` | `lib.rs:409-474` | `DELETE_CHARACTER`: by name on the account, status 0 / 23 / 2 | ported |
 | `0x8009` | `AUTH_CMSG_UPDATE_CHARACTER_SETTINGS` | `lib.rs:507` | `session.rs` acknowledged | ported thin: not stored |
 | `0x800A` | `AUTH_CMSG_CHANGE_PLAY_CHARACTER` | `lib.rs`, `decode_change_character` | `session.rs`, recorded on the session | ported |
 | `0x800D` | `AUTH_CMSG_DISCONNECT` | `lib.rs` | `session.rs` | ported |
@@ -100,7 +100,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x8091` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_ITEMS` (4) | `item.rs:448` | handled | ported: ASURA sends no `0x015E` either |
 | `0x80B1` | `GAME_CMSG_PARTY_TRAVEL` (9) | `travel.rs`, `handle_party_travel` | `answer_party_travel` and `begin_transfer` | ported |
 
-**Score: 32 ported or ported thin (11 auth + 21 game), 0 ours, 4 missing.**
+**Score: 36 ported or ported thin (15 auth + 21 game), 0 ours, 0 missing.**
 
 ## 4. Server -> client: the 87 messages ASURA emits
 
@@ -231,10 +231,10 @@ setting that selects one.
 | | count |
 |---|---|
 | messages ASURA handles (client -> server) | 36 |
-| ... this tree handles as ASURA does | **31** (11 auth, 20 game) |
+| ... this tree handles as ASURA does | **36** (15 auth, 21 game) |
 | ... this tree handles, but not as ASURA does | **0** |
 | ... of those, answered differently | 0 |
-| ... this tree does not handle | **4** (`0x8000`, `0x8001`, `0x8002`, `0x8007`) |
+| ... this tree does not handle | **0** |
 | messages ASURA emits (server -> client) | 87 |
 | ... this tree emits | **87** (8 auth, 79 game) |
 | ... this tree does not emit | **0** |
@@ -258,8 +258,8 @@ setting that selects one.
 4. **The travel is ported thin**: the eight frames and the three triggers are ASURA's, but there is no
    seat reservation and no doorway crossing (`portals.rs`), so a portal in the map does nothing.
 
-5. **Four auth messages are absent** (`0x8000`, `0x8001`, `0x8002`, `0x8007`), and the two settings
-   uploads are acknowledged rather than stored.
+5. **The settings uploads are acknowledged rather than stored** (`0x8009`, `0x8020`, `0x8021`): the
+   reference decodes them, and nothing in this tree reads what they carry yet.
 
 ## 8. The order this audit imposes
 
@@ -268,5 +268,6 @@ setting that selects one.
    walk is refused with `NoGraph` - the working implementation's own answer for a map with no graph -
    and nothing else about movement is outstanding.
 2. The instance table's content: an `instance_value` on every map row the world hosts.
-3. The four absent auth messages (`0x8000`, `0x8001`, `0x8002`, `0x8007`).
+3. The settings uploads, decoded rather than acknowledged - the last client message family that is
+   answered with a status and no data.
 4. The travel's own remaining half: the seat reservation and the doorway crossing.

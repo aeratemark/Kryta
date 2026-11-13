@@ -414,6 +414,56 @@ fn an_end_to_end_login_and_load_against_the_live_programs() {
         shared::network::socket::hex(&greeting)
     );
 
+    // 3b. The client's own keep-alive (`AUTH_CMSG_HEARTBEAT`, `0x8000`: the header and a dword) is
+    // answered with the server's heartbeat, tick 16 - the reference's constant
+    // (`ASURA/crates/asura-auth/src/lib.rs:307-312`).
+    let mut beat = vec![0u8; 6];
+    beat[0..2].copy_from_slice(&0x8000u16.to_le_bytes());
+    sending.apply(&mut beat);
+    stream.write_all(&beat).expect("the client heartbeat");
+    let mut answered_beat = read_exact(&mut stream, 6);
+    reading.apply(&mut answered_beat);
+    assert_eq!(
+        &answered_beat[..2],
+        &[0x00, 0x00],
+        "the server's heartbeat: {}",
+        shared::network::socket::hex(&answered_beat)
+    );
+    assert_eq!(
+        &answered_beat[2..6],
+        &16u32.to_le_bytes(),
+        "the reference's tick is 16"
+    );
+
+    // 3c. The computer info (`0x8001`: two counted strings) is recorded and answered with nothing.
+    let mut info = vec![0u8; 6];
+    info[0..2].copy_from_slice(&0x8001u16.to_le_bytes());
+    sending.apply(&mut info);
+    stream.write_all(&info).expect("the computer info");
+
+    // 3d. The computer hash the client waits on (`0x8002`: the header, a dword and sixteen bytes) is
+    // answered with the session info again - and with the **same salt** the greeting carried, because
+    // that salt is what the client's cipher is derived from
+    // (`ASURA/crates/asura-auth/src/lib.rs:256-275`).
+    let salt = u32::from_le_bytes([greeting[2], greeting[3], greeting[4], greeting[5]]);
+    let mut hash = vec![0u8; 22];
+    hash[0..2].copy_from_slice(&0x8002u16.to_le_bytes());
+    sending.apply(&mut hash);
+    stream.write_all(&hash).expect("the computer hash");
+    let mut answered_hash = read_exact(&mut stream, 10);
+    reading.apply(&mut answered_hash);
+    assert_eq!(
+        &answered_hash[..2],
+        &[0x01, 0x00],
+        "the session info: {}",
+        shared::network::socket::hex(&answered_hash)
+    );
+    assert_eq!(
+        &answered_hash[2..6],
+        &salt.to_le_bytes(),
+        "the salt already on the wire, not a second one"
+    );
+
     // 4. The portal login: the account's own id, a session id, and the two counted strings. The
     // wire is 54 bytes - the measured login message - not the 150 that the game-side table declares
     // as a maximum: the two counted strings carry what they carry, and the server's walk follows
@@ -700,6 +750,91 @@ fn an_end_to_end_login_and_load_against_the_live_programs() {
         }
     }
     remove_instances(148);
+
+    // 8. A character is deleted by name (`AUTH_CMSG_DELETE_CHARACTER`, `0x8007`: the header, a request
+    // dword and the counted name). The row must be one of this account's, and the answer is a request
+    // response with status 0 - the reference's own answer
+    // (`ASURA/crates/asura-auth/src/lib.rs:409-474`).
+    let units: Vec<u16> = character_name.encode_utf16().collect();
+    let mut delete = vec![0u8; 6 + 2 + units.len() * 2];
+    delete[0..2].copy_from_slice(&0x8007u16.to_le_bytes());
+    delete[2..6].copy_from_slice(&0x42u32.to_le_bytes());
+    delete[6..8].copy_from_slice(&(units.len() as u16).to_le_bytes());
+    for (index, unit) in units.iter().enumerate() {
+        let at = 8 + index * 2;
+        delete[at..at + 2].copy_from_slice(&unit.to_le_bytes());
+    }
+    sending.apply(&mut delete);
+    stream.write_all(&delete).expect("the character delete");
+    let mut answered_delete = read_exact(&mut stream, 10);
+    reading.apply(&mut answered_delete);
+    assert_eq!(&answered_delete[..2], &[0x03, 0x00], "a request response");
+    assert_eq!(
+        &answered_delete[2..6],
+        &0x42u32.to_le_bytes(),
+        "the request it answers"
+    );
+    assert_eq!(
+        u32::from_le_bytes([
+            answered_delete[6],
+            answered_delete[7],
+            answered_delete[8],
+            answered_delete[9]
+        ]),
+        0,
+        "status 0: the character is gone"
+    );
+    {
+        // The row is gone from the database, read back through the same repository the login uses.
+        let log = Log::new();
+        let config = Config::load_json("authserver.json", false, Policy::default())
+            .expect("the auth program's own configuration");
+        let settings =
+            read_settings(&config, DatabaseKind::Character).expect("the character settings");
+        let pool = DatabaseWorkerPool::open(DatabaseKind::Character, &settings, &log)
+            .expect("the character pool opens");
+        let characters = game::characters::DatabaseCharacters::new(
+            std::sync::Arc::new(std::sync::Mutex::new(pool)),
+            log,
+        );
+        let remaining = characters.for_account(&game::characters::uuid_text(&account));
+        assert!(
+            !remaining.iter().any(|row| row.name == character_name),
+            "the row the delete removed is gone from the database: {remaining:?}"
+        );
+    }
+
+    // A name this account does not hold is not deleted: the reference answers 23
+    // (`GM_ERROR_INVALID_CHARNAME`, `ASURA/crates/asura-auth/src/lib.rs:426-429`).
+    let unknown: Vec<u16> = "No Such Character".encode_utf16().collect();
+    let mut refused = vec![0u8; 6 + 2 + unknown.len() * 2];
+    refused[0..2].copy_from_slice(&0x8007u16.to_le_bytes());
+    refused[2..6].copy_from_slice(&0x43u32.to_le_bytes());
+    refused[6..8].copy_from_slice(&(unknown.len() as u16).to_le_bytes());
+    for (index, unit) in unknown.iter().enumerate() {
+        let at = 8 + index * 2;
+        refused[at..at + 2].copy_from_slice(&unit.to_le_bytes());
+    }
+    sending.apply(&mut refused);
+    stream.write_all(&refused).expect("the refused delete");
+    let mut answered_refused = read_exact(&mut stream, 10);
+    reading.apply(&mut answered_refused);
+    assert_eq!(&answered_refused[..2], &[0x03, 0x00], "a request response");
+    assert_eq!(
+        &answered_refused[2..6],
+        &0x43u32.to_le_bytes(),
+        "the request it answers"
+    );
+    assert_eq!(
+        u32::from_le_bytes([
+            answered_refused[6],
+            answered_refused[7],
+            answered_refused[8],
+            answered_refused[9]
+        ]),
+        23,
+        "status 23: no such character on this account"
+    );
 
     let _ = stream.shutdown(std::net::Shutdown::Both);
     let _ = child.kill();

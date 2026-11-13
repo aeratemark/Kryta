@@ -66,6 +66,16 @@ const SETTING_UPDATE_SIZE: u16 = 0x8021;
 /// answers the request with status 0.
 const ADD_ACCESS_KEY: u16 = 0x801C;
 
+/// `AUTH_CMSG_HEARTBEAT` (`0x8000`): the client's own keep-alive, answered with the server's.
+const HEARTBEAT: u16 = 0x8000;
+/// `AUTH_CMSG_SEND_COMPUTER_INFO` (`0x8001`): the machine's name and user, which the reference stores
+/// and answers with nothing.
+const COMPUTER_INFO: u16 = 0x8001;
+/// `AUTH_CMSG_SEND_COMPUTER_HASH` (`0x8002`): the message the client waits on before the login.
+const COMPUTER_HASH: u16 = 0x8002;
+/// `AUTH_CMSG_DELETE_CHARACTER` (`0x8007`): one of this account's characters, by name.
+const DELETE_CHARACTER: u16 = 0x8007;
+
 /// Where a client that asks for a map is sent: a world's address and the id it is known by.
 ///
 /// Reference: what the reference keeps in its realm list and hands to
@@ -105,6 +115,12 @@ pub struct AuthSession {
     /// (`0x8029`) is placed by it: a client naming the creation instance as a place is put where the
     /// character actually stands (`game::maps::placement`).
     character_map: Option<u16>,
+    /// The character this connection chose, by its own id, so a delete knows whether it just took this
+    /// connection's character away (`ASURA/crates/asura-auth/src/lib.rs:436-455`).
+    character_chosen: Option<[u8; 16]>,
+    /// The salt this connection's session info carried, so the computer hash is answered with the salt
+    /// the client's cipher is already derived from.
+    salt: Option<u32>,
     /// The map id that means "the character-creation instance" - a setting (`CreationMap`).
     creation_map: u16,
     /// Where a character with no map anywhere enters - a setting (`FallbackOutpost`).
@@ -134,6 +150,8 @@ impl AuthSession {
             travels: None,
             accounts: None,
             character_map: None,
+            character_chosen: None,
+            salt: None,
             creation_map: 0,
             fallback_outpost: 0,
         }
@@ -420,7 +438,9 @@ impl AuthSession {
                 format!("Connection from {peer}: no entropy for the session salt; using zero."),
             );
         }
-        let mut greeting = crate::server::login_reply::greeting(u32::from_le_bytes(salt));
+        let salt = u32::from_le_bytes(salt);
+        self.salt = Some(salt);
+        let mut greeting = crate::server::login_reply::greeting(salt);
         crypt.encrypt(&mut greeting);
         match io.write_all(&greeting).await {
             Ok(()) => self.say(
@@ -642,6 +662,7 @@ impl AuthSession {
                 // request that follows is placed by it.
                 if let Some(character) = &chosen {
                     self.character_map = Some(character.settings.last_outpost);
+                    self.character_chosen = Some(character.uuid);
                 }
 
                 let status = if found.unwrap_or(false) {
@@ -693,9 +714,128 @@ impl AuthSession {
                 false
             }
 
-            // The preamble and its hash: the client's computer information, which the reference
-            // stores and answers only with the session info it has already been sent.
-            0x8001 | 0x8002 | 0x8000 | 0x8023 => true,
+            // `AUTH_CMSG_HEARTBEAT`: answered with the server's own heartbeat, tick 16 - the
+            // reference's constant (`ASURA/crates/asura-auth/src/lib.rs:307-312`).
+            HEARTBEAT => {
+                let answer = crate::server::login_reply::heartbeat(16);
+                self.send(io, peer, crypt, &[answer], "a client heartbeat").await
+            }
+
+            // `AUTH_CMSG_SEND_COMPUTER_HASH`: the message the client waits on before it logs in, and
+            // the working implementation answers it with the session info
+            // (`ASURA/crates/asura-auth/src/lib.rs:256-275`). This tree sends that pair unasked the
+            // moment the seed is answered, because the reference's own trace shows it there
+            // (`login_reply::greeting`), so the answer repeats the salt **already on the wire**: a
+            // second salt would be one the client's cipher is not derived from.
+            COMPUTER_HASH => match self.salt {
+                Some(salt) => {
+                    self.say(
+                        LogLevel::Info,
+                        format!(
+                            "Connection from {peer}: the computer hash is answered with the session info it was already sent (salt 0x{salt:08X})."
+                        ),
+                    );
+                    let answer = crate::server::login_reply::session_info(salt, 0);
+                    self.send(io, peer, crypt, &[answer], "the session info").await
+                }
+                None => true,
+            },
+
+            // `AUTH_CMSG_SEND_COMPUTER_INFO`: the reported machine and user, which the reference
+            // stores on the connection and answers with nothing
+            // (`ASURA/crates/asura-auth/src/lib.rs:250-254`).
+            COMPUTER_INFO => {
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Connection from {peer}: the computer info ({} bytes) is recorded and answered with nothing, as the reference does.",
+                        body.len() + 2
+                    ),
+                );
+                true
+            }
+
+            // `0x8023` carries nothing this server answers, as before.
+            0x8023 => true,
+
+            // `AUTH_CMSG_DELETE_CHARACTER`: the name must be one of **this account's** characters, then
+            // the row goes and the request is answered with status 0; a name it does not know is 23 and
+            // a delete that fails is 2 (`ASURA/crates/asura-auth/src/lib.rs:409-474`, and the
+            // reference's `AuthSrv_HandleDeleteCharacter`). The character list is **not** re-sent.
+            DELETE_CHARACTER => {
+                let request = request_id(body);
+                let name = counted_name(body.get(4..).unwrap_or_default());
+                let status = match (self.characters.as_ref(), self.account) {
+                    (Some(characters), Some(account)) => {
+                        let account_text = game::characters::uuid_text(&account);
+                        let found = characters
+                            .for_account(&account_text)
+                            .into_iter()
+                            .find(|character| character.name == name);
+                        match found {
+                            None => {
+                                self.say(
+                                    LogLevel::Info,
+                                    format!(
+                                        "Connection from {peer}: no character named '{name}' on this account, so there is nothing to delete."
+                                    ),
+                                );
+                                crate::server::login_reply::GM_ERROR_INVALID_CHARNAME
+                            }
+                            Some(character) => {
+                                let uuid = game::characters::uuid_text(&character.uuid);
+                                match characters.remove(&uuid) {
+                                    Ok(true) => {
+                                        self.say(
+                                            LogLevel::Info,
+                                            format!(
+                                                "Connection from {peer}: the character '{name}' was deleted."
+                                            ),
+                                        );
+                                        // This connection must stop naming it: the next travel
+                                        // carries the choice into the world, and the world refuses a
+                                        // character that is gone. The account's first remaining
+                                        // character takes its place, which is what the login would
+                                        // choose (`asura-auth/src/lib.rs:436-455`).
+                                        if self.character_chosen == Some(character.uuid) {
+                                            let remaining = characters.for_account(&account_text);
+                                            self.character_chosen =
+                                                remaining.first().map(|row| row.uuid);
+                                            self.character_map = remaining
+                                                .first()
+                                                .map(|row| row.settings.last_outpost);
+                                            self.say(
+                                                LogLevel::Info,
+                                                format!(
+                                                    "Connection from {peer}: the deleted character was this connection's, which now names {}.",
+                                                    remaining
+                                                        .first()
+                                                        .map(|row| row.name.clone())
+                                                        .unwrap_or_else(|| "no character".to_string())
+                                                ),
+                                            );
+                                        }
+                                        crate::server::login_reply::GM_ERROR_NONE
+                                    }
+                                    Ok(false) => crate::server::login_reply::GM_ERROR_NETWORK_ERROR,
+                                    Err(error) => {
+                                        self.say(
+                                            LogLevel::Warn,
+                                            format!(
+                                                "Connection from {peer}: the character '{name}' could not be deleted: {error}"
+                                            ),
+                                        );
+                                        crate::server::login_reply::GM_ERROR_NETWORK_ERROR
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => crate::server::login_reply::GM_ERROR_NETWORK_ERROR,
+                };
+                let answer = crate::server::login_reply::request_response(request, status);
+                self.send(io, peer, crypt, &[answer], "the character delete").await
+            }
 
             other => {
                 self.say(
