@@ -1509,6 +1509,62 @@ impl PathGraphs {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// ASURA/crates/asura-world/src/pathfind.rs, lines 1746-1794: the blob a map's path graph lives at.
+// `PathGraphs::load`/`import` (1507-1592) and `import_graph` (1703-1744) wait on the importer in
+// `map_data.rs`, which is the last piece of this subject.
+// ---------------------------------------------------------------------------------------------
+
+/// The blob a map's path graph actually lives at, tolerating the archive's bit-31 replacement rule.
+///
+/// The reference's catalogue names some blobs with bit 31 set (`0x8005EA96` for The Northlands) while a
+/// client archive may bind the plain logical id (`0x5EA96`): the bit is the archive's "replacement
+/// pending" flag, not part of the map's identity. So the candidates are the configured id, then the
+/// plain one, then the flagged one, and the caller logs when a substitution happened.
+///
+/// Returns the id that answered and its bytes. `Ok(None)` means none of the three is in the archive; the
+/// caller decides whether that is a skip or an error. `ASURA/crates/asura-world/src/pathfind.rs:1756`.
+pub fn find_path_blob(
+    archive: &mut crate::pack::GwDat,
+    wanted: u32,
+    map_id: i32,
+) -> std::io::Result<Option<(u32, Vec<u8>)>> {
+    let mut candidates = vec![wanted];
+    let plain = wanted & 0x7FFF_FFFF;
+    if plain != wanted {
+        candidates.push(plain);
+    }
+    let flagged = wanted | 0x8000_0000;
+    if flagged != wanted {
+        candidates.push(flagged);
+    }
+    let mut first_error = None;
+    for candidate in candidates {
+        match archive.file(candidate) {
+            Ok(Some(content)) => {
+                if candidate != wanted {
+                    eprintln!(
+                        "world: map {map_id} path graph found at blob {candidate:#X} \
+                         (the catalogue names {wanted:#X})"
+                    );
+                }
+                return Ok(Some((candidate, content)));
+            }
+            Ok(None) => {}
+            Err(err) => {
+                if first_error.is_none() {
+                    first_error = Some(err);
+                }
+            }
+        }
+    }
+    match first_error {
+        Some(err) => Err(err),
+        None => Ok(None),
+    }
+}
+
+
 /// What the finder said about a walk.
 ///
 /// `ASURA/crates/asura-world/src/agent.rs:570`.
