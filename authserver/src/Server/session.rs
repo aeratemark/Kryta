@@ -1084,14 +1084,28 @@ impl AuthSession {
                 map_id: self.character_map.unwrap_or(self.creation_map),
                 last_outpost: self.character_map.unwrap_or(self.creation_map),
             },
+            // The catalogue's type for the map being asked for, which this program does not hold: its
+            // configuration opens the login and character databases only, and the world's map rows are
+            // the world's. `None` is rule 3's own first branch - the client's own map, for the caller
+            // to refuse - so the rule is whole and the datum is the decision named in
+            // `docs/port/09-parity-audit.md` §7a.
+            None,
             self.creation_map,
             self.fallback_outpost,
+            game::maps::placement::MAP_KINDS,
         );
         match substituted {
             Some(game::maps::placement::Substituted::CreationNamedAsPlace(why)) => self.say(
                 LogLevel::Info,
                 format!(
                     "Connection from {peer}: the client named the creation instance as a place; map {destination} is where it is sent instead, from {why}."
+                ),
+            ),
+            Some(game::maps::placement::Substituted::NotAnOutpost) => self.say(
+                LogLevel::Info,
+                format!(
+                    "Connection from {peer}: map {} is not an outpost this character may enter from the login; it is sent to its last outpost {destination} instead.",
+                    request.map_id
                 ),
             ),
             Some(game::maps::placement::Substituted::NothingToPlace) => self.say(

@@ -242,6 +242,7 @@ setting that selects one.
 | messages this tree emits that ASURA does not have | 1: the district-count answer on the auth connection |
 | sequences ported whole | **9 of 11**, with 2 ported thin (the spawn ask and the instance table) and none missing |
 | the packet table | identical, 782 rows (682 game + 100 auth) |
+| `ASURA/crates/asura-world/src` | 36 files | all 36 have a verdict in 9: 29 ported (code or data), 4 this tree's arrangement, 3 ASURA's own harness |
 
 ## 7. The defects, in the order the client feels them
 
@@ -305,9 +306,13 @@ setting that selects one.
 
 
 
-## 7a. The one stop: a destination's map kind, and where it would come from
+## 7a. The placement rule: ported whole, and the one datum it still wants
 
-`asura-rules`' `placement` has a third rule Kryta does not have:
+`game/Maps/Placement.rs` is now `ASURA/crates/asura-rules/src/lib.rs` (283 lines) whole: `Requested`,
+`Character`, `Substituted` with its three reasons, `name_is_acceptable`, and `place` with all three of
+its rules in their order - a creation visit is its own destination; the creation map named as a place
+falls to the character's row, then its last outpost, then the caller's fallback; and **the outpost
+rule** for every destination that is not a main town (`lib.rs:119-134`).
 
 ```text
 3. The outpost rule, for every destination that is not a main town.
@@ -318,24 +323,25 @@ setting that selects one.
      otherwise                                 -> character.last_outpost, NotAnOutpost
 ```
 
-(`ASURA/crates/asura-rules/src/lib.rs:119-135`.) It decides nothing without **`destination_type`** -
-the catalogue's kind for the map the client asked for - and this tree's login program has no catalogue:
-its configuration opens the login and character databases only (`authserver/authserver.json`), and the
-reference's own auth server reads no world database either. The working implementation passes the type
-in from the world catalogue it happens to hold in the same crate.
+**What is not settled is the datum, not the rule.** `destination_type` is the *catalogue's* type for
+the map being asked for - the world's `map` row, in this tree - and the login program holds no world
+catalogue: its configuration opens the login and character databases only
+(`authserver/authserver.json`), and the reference's own auth server reads no world database either.
+So the caller passes `None`, which is rule 3's own first branch ("the client's own map"), and the
+program says so in its log. Nothing is invented to fill it.
 
-Three ways out, and the owner picks one - this is a decision, not a piece of work:
+Three ways to give it one, and the owner picks - this is a decision, not a piece of work:
 
 1. **The login program reads the world database read-only** for a map's kind. Simple, and it makes the
    login depend on a third database the reference's login does not open.
 2. **The character row carries the kind** of the map it stands in (a column, or the travel's own
-   record), so the rule needs no catalogue at all. More rows, no new connection.
-3. **Leave it as it is** and say so: every destination the client names is its own until something
-   proves otherwise. That is what this tree does today, and the rule it is missing is the one that
-   refuses an **explorable** as an outpost.
+   record), so the login answers from what it already reads.
+3. **The rule is left out of the login** and applied where a catalogue exists - the world - which
+   moves the substitution to the other side of the connection.
 
-Rule 0 says a missing counterpart is a stop, not a guess, so the audit stops here and asks.
-
+While the answer is `None`, a client that asks the login for an explorable is answered with that
+explorable, and the world's load refuses a map it cannot host (R12's gate and `is_hostable`); the
+substitution rule 3 describes is proved by `placement`'s own tests but is not in force.
 ## 7b. The walking subject, surveyed the way Rule 0a requires
 
 The owner named walking. Under Rule 0a the survey comes before any estimate, so the four ASURA files
@@ -476,3 +482,69 @@ keeps its traversal order, its tie-breaking and its quirks; the dump keeps its b
    sends **137** `{instance, value}` pairs in ten `0x01A0` batches. On this machine the world starts
    with `World of 265 map(s), 145 of them hosted`, imports **144** graphs out of `Gw.dat` in 12 s, and
    holds 131 MB.
+
+## 9. The world crate, file by file: what "ported" means here
+
+`ASURA/crates/asura-world/src` is 36 files, 19,000-odd lines. Every one of them has a verdict, because
+a claim that the port is done is only as good as the ledger under it. "Ported as data" means the file's
+content is rows or a settings file here (rule 7's placement test: the world's data is rows, a setting
+is a file); "this tree's arrangement" means the behaviour is here and the file's own shape is not,
+because the reference's structure is this tree's authority for how a thing is arranged.
+
+| ASURA file | lines | this tree | verdict |
+|---|---|---|---|
+| `default_equipment.rs` | 2,960 | `data/equipment.json` | ported as data: 32 sets, 179 `ItemSpec`s, values checked against the file (map 0 / profession 1's first two items match field for field) |
+| `pathfind.rs` | 1,794 | `game/Terrain/Pathfind.rs` | ported, and wired: a walk is answered from the map's own graph |
+| `agent.rs` | 1,516 | `game/Agents/mod.rs`, the four handlers in `WorldSession` | ported: `AgentState`, `Motion`, `Standing`, `densify`, the cadence, the tolerance and every handler |
+| `map_data.rs` | 1,196 | `game/Terrain/MapData.rs` | ported whole, importer included |
+| `lib.rs` | 1,164 | `game/World/`, `game/Agents/`, the tick | this tree's arrangement: `GameError` is an error string here, `mark_redirect`/`stamp_ms` are the redirect's own log line |
+| `pvp_items.rs` | 1,567 | `game/DataStores/PvpItems.rs` | ported as data: the same 387 `(id, params)` rows, streamed in the load |
+| `main.rs` | 727 | `worldserver/src/main.rs` | this tree's arrangement: the same stages in the reference's order, with the reference's stage numbers in the comments |
+| `player.rs` | 540 | the player block in `WorldSession`, `game/Agents/` | ported: `PlayerBlock`, `player_block`'s frame order, `unlock_bitmap`, `handle_request_players` |
+| `connection.rs` | 587 | `game/Server/WorldSession.rs`, `WorldSocketMgr` | this tree's arrangement: one session per connection, the ping interval and value as settings |
+| `travel.rs` | 534 | `answer_party_travel`, `begin_transfer`, `cross_portal`, `answer_teleport_command`, `answer_travel_init` | ported; the seat reservation is named in 7.4 |
+| `item.rs` | 561 | `answer_item_move`, `answer_equip_item`, `CLIENT_DROP_ITEM`, `CLIENT_UNEQUIP_ITEM` | ported |
+| `instance.rs` | 528 | `game/Districts/` (`Districts`, `Peers`, `Instances`) | this tree's arrangement: a copy of a map is a district, and the population is `Peers` |
+| `creation.rs` | 519 | `confirm_creation`, `answer_creation_*` | ported |
+| `portals.rs` | 503 | `game/Maps/Portals.rs` | ported whole; the data is `map_arch` and `map_arrival` |
+| `graph_dump.rs` | 473 | `game/Terrain/GraphDump.rs` | ported whole |
+| `gwdat.rs` | 431 | `game/Pack/Gwdat.rs` | ported whole |
+| `fa_compress.rs` | 402 | `game/Pack/FaCompress.rs` | ported whole |
+| `chat.rs` | 354 | `game/Chat/` | ported: the channel rule, the command table, `alias_key` |
+| `pathfind/directional.rs` | 320 | `game/Terrain/Pathfind/Directional.rs` | ported whole, its PROVISIONAL caveat kept |
+| `replay.rs` | 302 | nothing | ASURA's own capture-replay harness; this tree's equivalent is `recordings/` and the `--ignored` end-to-end tests |
+| `map_spawns.rs` | 264 | rows: `map_spawn` | ported as data (466 points, with the facing each states) |
+| `instance_table.rs` | 223 | `game/Maps/InstanceTable.rs` | ported; the content is every `map` row with an `instance_value` |
+| `cartography.rs` | 219 | `game/Maps/Cartography.rs` | ported: the grid's announcement and its slices |
+| `dispatch.rs` | 218 | the dispatch in `WorldSession` | ported: 22 arms, 37 messages |
+| `spawns.rs` | 197 | `GwDat`/`PathGraphs` settings, `World.SpawnScatter` | ported as configuration |
+| `capture.rs` | 195 | nothing | ASURA's own capture reader (see `replay.rs`) |
+| `character_defaults.rs` | 186 | `World.Appearance` | ported as configuration |
+| `travel_targets.rs` | 166 | `game/Maps/TravelTargets.rs` | ported: the twenty aliases |
+| `catalogue.rs` | 153 | the `map` rows, `MapEntry::is_hostable` | ported as data and one predicate |
+| `agent_defaults.rs` | 133 | `World.Agent*` settings | ported as configuration |
+| `map.rs` | 113 | the four unasked messages of a load | ported |
+| `world.rs` | 93 | `game/World/` | ported |
+| `path_tables.rs` | 77 | `game/Terrain/PathTables.rs` | ported: both 256-entry tables, checked entry for entry |
+| `fa_compress_tables.rs` | 69 | `game/Pack/FaCompressTables.rs` | ported: six static tables, value for value |
+| `harness_off.rs` | 104 | nothing | a switch for ASURA's own harness (see `replay.rs`) |
+
+Two crates beside it carry rules the login and the world both use:
+
+| ASURA file | lines | this tree | verdict |
+|---|---|---|---|
+| `asura-rules/src/lib.rs` | 283 | `game/Maps/Placement.rs` | ported whole; its one datum is 7a's decision |
+| `asura-auth/src/lib.rs` + `travel.rs` | 933 + 339 | `authserver/src/Server/` | ported: the 15 auth messages, the file check, the portal login, the travel record |
+
+**What is not ported, and why - all three are stops, not gaps:**
+
+- **NPCs and monsters.** ASURA creates exactly one agent per connection - the player's own
+  (`agent.rs:1219`, `handle_request_spawn`; `world_create_agent` has one caller). The agent-creation
+  stream for other bodies is not in the reference's capture for this build, so neither implementation
+  sends one (`docs/port/07-manual-test.md`, "What is not expected to work yet").
+- **ASURA's seat reservation** (`travel.rs:419-431`, `placement::Placement::reserve`): its own
+  deployment accounting - a world registry, leases and a heartbeat - which is the multi-process
+  arrangement this tree's structure does not have. Its capacity counterpart here is the district
+  allotment (R5/R22/R58).
+- **ASURA's harness** (`replay.rs`, `capture.rs`, `harness_off.rs`): tools for replaying its own
+  captures, with no counterpart to port - the recordings themselves are in `recordings/`.
