@@ -582,6 +582,21 @@ does not preserve where a character was. Only an outpost updates `last_outpost` 
 Silverwood, a position reported and saved on disconnect, and the second connection standing at exactly
 that point rather than the map's own first spawn.
 
+**An arriving character unlocks the map it reaches; the server does not gate on it.** This was wrong
+until 2026-11-20, and it is what a client saw as `007` when it walked through a portal: the step started
+the crossing, the redirect went out, the client reconnected onto the map it had just walked into - and
+this world **closed the connection** because that map was not in the character's unlocks. A fresh
+character has one unlock, so a doorway always landed somewhere unlisted. The rule is
+`ASURA/crates/asura-world/src/player.rs:442-471` - "The instance the character is standing in is
+reached, so it is unlocked - that is the whole rule: the walk sets the bit, the bit never gates the
+walk" - and it is also R12's own second sentence. The map a load enters is now written into
+`character_unlock` when the players ask is answered, the bitmap the client receives includes it even if
+the read fails (`player.rs:463-471`), and the creation instance sets nothing.
+`a_step_through_ascalon_citys_arch_crosses_to_lakeside_county` proves the whole journey: the step
+across Ascalon City's arch (148) starts the crossing, the redirect carries map 146 and a token, and the
+connection that follows loads **Lakeside County (146)** standing on map 146's own arrival for a
+character from 148 - `(6602.0, 4485.0)` - then unlocks it.
+
 **What is not ported, and why - all three are stops, not gaps:**
 
 - **NPCs and monsters.** ASURA creates exactly one agent per connection - the player's own

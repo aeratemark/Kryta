@@ -1007,74 +1007,15 @@ impl WorldSession {
         // `reference/instance-initialization.md` measured on a live load, and the rows
         // `shared/src/Packets/../Tables.rs` names.
         if !map.is_creation() {
-            // R12: a claimed travel only reaches a map the character has unlocked. A character
-            // with no unlock rows at all predates the ledger (or was never written one), so the
-            // world's first outpost is unlocked for it here - the same starting unlock a confirm
-            // writes - and the rule holds from the first load on.
-            if let Some(pool) = self.characters.as_ref() {
-                let characters = crate::characters::DatabaseCharacters::new(
-                    std::sync::Arc::clone(pool),
-                    self.log.clone(),
-                );
-                let uuid = crate::characters::uuid_text(&version.character);
-                match characters.unlocked_maps(&uuid) {
-                    Ok(unlocked) if unlocked.contains(&map.id) => {}
-                    Ok(unlocked) if unlocked.is_empty() => {
-                        // R12: a character starts with one unlock, and it is the outpost the world
-                        // starts characters in - not the lowest id the catalogue happens to hold.
-                        let first = self.starting_outpost().map(|map| map.id);
-                        match first {
-                            Some(first) => {
-                                if let Err(error) = characters.unlock_map(&uuid, first) {
-                                    self.say(
-                                        LogLevel::Warn,
-                                        format!(
-                                            "Gameplay connection from {peer}: the starting unlock cannot be written: {error}"
-                                        ),
-                                    );
-                                }
-                                self.say(
-                                    LogLevel::Info,
-                                    format!(
-                                        "Gameplay connection from {peer}: the character has no unlock rows yet, so map {first} - the world's first outpost - is unlocked for it (R12)."
-                                    ),
-                                );
-                            }
-                            None => {
-                                self.say(
-                                    LogLevel::Warn,
-                                    format!(
-                                        "Gameplay connection from {peer}: the character has no unlocks and the world hosts no outpost; the connection is closed (R12)."
-                                    ),
-                                );
-                                let _ = io.close().await;
-                                return;
-                            }
-                        }
-                    }
-                    Ok(unlocked) => {
-                        self.say(
-                            LogLevel::Warn,
-                            format!(
-                                "Gameplay connection from {peer} asks for map {} ({}) but the character has not unlocked it (unlocked: {unlocked:?}); the connection is closed, because the refusal's own wire shape is not captured (R12, R58).",
-                                map.id, map.name
-                            ),
-                        );
-                        let _ = io.close().await;
-                        return;
-                    }
-                    Err(error) => {
-                        self.say(
-                            LogLevel::Warn,
-                            format!(
-                                "Gameplay connection from {peer}: the character's unlocks cannot be read: {error}"
-                            ),
-                        );
-                        let _ = io.close().await;
-                        return;
-                    }
-                }
-            }
+            // The unlock is **not** a gate here. `ASURA/crates/asura-world/src/player.rs:442-462`:
+            // "The instance the character is standing in is reached, so it is unlocked - that is the
+            // whole rule: the walk sets the bit, the bit never gates the walk." The bit is written when
+            // the players ask is answered (it needs the map the character actually loaded), and the
+            // client uses the bitmap to decide what to *offer* on the world map.
+            //
+            // This block used to close the connection for a claimed map the character had not
+            // unlocked. That is what a doorway crossing into a new map met: the client reconnected onto
+            // the map it had just walked into, and this world dropped it - the client's `007`.
 
             // The district the connection enters: the travel's own number when it named one (R57),
             // otherwise the first with room (R22) - and a named full district is refused rather than
@@ -2695,6 +2636,13 @@ impl WorldSession {
                                 }
                             }
                         }
+                        // The instance this character is now standing in is **reached**, so it is
+                        // unlocked - the walk sets the bit and the bit never gates the walk
+                        // (`ASURA/crates/asura-world/src/player.rs:442-462`). Written before the bitmap
+                        // is read, so the list the client gets names the map it is in even on the first
+                        // arrival; the creation instance is not a place a character "reaches" and sets
+                        // nothing.
+                        let mut reached_here = false;
                         // The instances the character has reached, as the client addresses them: bit
                         // `n % 32` of word `n / 32`.
                         let mut unlocked = UNLOCKED_MAP_ZEROS.to_vec();
@@ -2703,9 +2651,30 @@ impl WorldSession {
                                 std::sync::Arc::clone(pool),
                                 self.log.clone(),
                             );
-                            match characters
-                                .unlocked_maps(&crate::characters::uuid_text(&sheet.uuid))
-                            {
+                            let uuid = crate::characters::uuid_text(&sheet.uuid);
+                            if !map.is_creation() {
+                                match characters.unlock_map(&uuid, map.id) {
+                                    Ok(true) => {
+                                        reached_here = true;
+                                        self.say(
+                                            LogLevel::Info,
+                                            format!(
+                                                "Gameplay connection from {peer}: map {} '{}' is unlocked - the character arrived in it (R12).",
+                                                map.id, map.name
+                                            ),
+                                        );
+                                    }
+                                    Ok(false) => {}
+                                    Err(error) => self.say(
+                                        LogLevel::Warn,
+                                        format!(
+                                            "Gameplay connection from {peer}: the arrival in map {} cannot be recorded: {error}",
+                                            map.id
+                                        ),
+                                    ),
+                                }
+                            }
+                            match characters.unlocked_maps(&uuid) {
                                 Ok(maps) => {
                                     for map_id in maps {
                                         let word = (map_id / 32) as usize;
@@ -2720,6 +2689,14 @@ impl WorldSession {
                                         "Gameplay connection from {peer}: the character's reached instances cannot be read ({error}); the list is sent with only what this load knows."
                                     ),
                                 ),
+                            }
+                            // "a client told it is nowhere can offer nowhere": the map it is in is on
+                            // the list whether or not the read above worked (`player.rs:463-471`).
+                            if !map.is_creation() || reached_here {
+                                let word = (map.id / 32) as usize;
+                                if let Some(slot) = unlocked.get_mut(word) {
+                                    *slot |= 1 << (map.id % 32);
+                                }
                             }
                         }
                         let mut progress = [0u32; character_packets::FACTIONS_DWORDS];
@@ -4970,12 +4947,14 @@ Logger.root = 6,Console
 
     #[test]
     #[ignore = "needs the login and character databases"]
-    fn a_claimed_map_the_character_has_not_unlocked_is_refused() {
-        // R12: the gate the load applies to a claimed map. The character has unlocked map 148, the
-        // login records a travel to map 147, and the connection is closed before the load block -
-        // nothing enters, the district is not taken and the character's row is not touched. R58's
-        // refusal has the same shape and the same reason: the refusal's own wire is not captured,
-        // so a closed connection is the refusal.
+    fn an_arrival_unlocks_the_map_it_reaches() {
+        // R12 is not a gate the server applies, and this test used to assert the opposite: it closed
+        // the connection for a claimed map the character had not unlocked, which is what a doorway
+        // crossing into a new map met (the client's `007`). `ASURA/crates/asura-world/src/player.rs:442-471`
+        // is the rule: "the instance the character is standing in is reached, so it is unlocked - the
+        // walk sets the bit, the bit never gates the walk". The character here has unlocked 148; the
+        // login records a travel to 147; the load proceeds, and answering the players ask writes 147
+        // into the reached instances.
         use common::configuration::{Config, Policy};
         use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
         use database::updater::{collect_files, UpdateState};
@@ -5122,8 +5101,8 @@ Logger.root = 6,Console
         };
         client.write_all(&version.encode()).unwrap();
 
-        // 2. The seed exchange: the server answers its seed, then closes - the refusal arrives
-        // instead of the load block, because the claimed map is not in the character's unlocks.
+        // 2. The seed exchange, the load block, the ping pair, the entry point and the players ask:
+        // the map is loaded, not refused.
         let mut public = [0u8; handshake::PUBLIC_LEN];
         public[0] = 2;
         let mut seed = CLIENT_SEED_HEADER.to_le_bytes().to_vec();
@@ -5131,26 +5110,61 @@ Logger.root = 6,Console
         client.write_all(&seed).unwrap();
         let mut answer = [0u8; handshake::SERVER_SEED_LEN];
         client.read_exact(&mut answer).unwrap();
-        let mut block = [0u8; 64];
-        let read = client.read(&mut block);
+        let master = {
+            let shared = handshake::shared_secret(&public).expect("the exchange");
+            let mut master = [0u8; MASTER_SECRET_LEN];
+            for index in 0..MASTER_SECRET_LEN {
+                master[index] = answer[2 + index] ^ shared[index];
+            }
+            master
+        };
+        let key = handshake::derive_key(&master);
+        let mut reading = common::cryptography::Arc4::new(&key);
+        let mut sending = common::cryptography::Arc4::new(&key);
+
+        let grid = crate::maps::cartography::init_frames(crate::maps::cartography::grid_for(147));
+        // The instance table closes the block, and this test's world states one value (map 148's).
+        let (table, _) = crate::maps::instance_table::table_for(world.maps());
+        let block_size = instance_packets::instance_load_head().len()
+            + instance_packets::instance_player_data_start().len()
+            + instance_packets::instance_load_player_name("Ununlocked One").len()
+            + instance_packets::instance_load_info(1, 147, 1, 1, 0, 0).len()
+            + grid.iter().map(Vec::len).sum::<usize>()
+            + table.frames().iter().map(Vec::len).sum::<usize>();
+        let mut block = vec![0u8; block_size];
+        client.read_exact(&mut block).unwrap();
+        reading.apply(&mut block);
+        assert_eq!(&block[..2], &[0x7C, 0x01], "the load head arrives");
+
+        let mut ping = vec![0u8; 8];
+        client.read_exact(&mut ping).unwrap();
+        reading.apply(&mut ping);
+        let mut ask = vec![0x88, 0x80];
+        sending.apply(&mut ask);
+        client.write_all(&ask).unwrap();
+        let mut spawn = vec![0u8; 26];
+        client.read_exact(&mut spawn).unwrap();
+        reading.apply(&mut spawn);
+        assert_eq!(&spawn[..2], &[0x96, 0x01], "the entry point arrives");
+        let mut ask = vec![0x90, 0x80];
+        ask.extend_from_slice(&[0u8; 17]);
+        sending.apply(&mut ask);
+        client.write_all(&ask).unwrap();
+        let players = read_load_frames(&mut client, &mut reading);
         assert_eq!(
-            read.unwrap_or(0),
-            0,
-            "the connection is closed before the load block: {}",
-            shared::network::socket::hex(&block)
+            players.last().map(|(header, _)| *header),
+            Some(instance_packets::INSTANCE_LOAD_FINISH),
+            "the load finishes on map 147"
         );
 
-        // 3. Nothing was entered, and nothing was written: the unlock set stands and the character's
-        // last outpost is still the row's own 0.
+        // 3. The arrival is what wrote the bit: the character had 148, and now has 147 as well.
         let unlocked = repository
             .unlocked_maps(&character_text)
             .expect("the character's unlocks");
-        assert_eq!(unlocked, vec![148], "the refused claim wrote no unlock");
-        let listed = repository.for_account(&crate::characters::uuid_text(&account));
-        assert_eq!(listed.len(), 1);
         assert_eq!(
-            listed[0].settings.last_outpost, 0,
-            "the refused claim wrote no last outpost"
+            unlocked,
+            vec![147, 148],
+            "the map the character arrived in is unlocked (R12)"
         );
 
         // The character's own rows go, leaving the databases as they were found.

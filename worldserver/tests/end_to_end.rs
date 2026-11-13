@@ -1580,3 +1580,307 @@ fn a_reconnect_to_an_explorable_resumes_where_the_character_left() {
         std::panic::resume_unwind(panic);
     }
 }
+/// A step through Ascalon City's arch starts the crossing, and the connection that follows stands on
+/// the arrival the receiving map states.
+///
+/// This is the journey the owner plays with the client: walk at the walled arch out of Ascalon City
+/// (pre-Searing) and the server transfers you to Lakeside County (146). The wall is map 148's own row
+/// (`map_arch`, `ASURA/config/World/Vanilla/maps/Prophecies/Ascalon (pre-Searing)/Outposts/148/portals.json`),
+/// the landing is map 146's arrival from 148 (`map_arrival`, R21), and the two client reports are the
+/// ones `ASURA/crates/asura-world/src/portals.rs:422-428` uses for the same wall.
+///
+/// What used to happen: the arriving connection was **refused** because the character had not unlocked
+/// 146, and the client showed `007`. The rule is `ASURA/crates/asura-world/src/player.rs:442-471` - the
+/// walk sets the bit and the bit never gates the walk - so the arrival now unlocks the map it reaches.
+#[test]
+#[ignore = "needs the databases the world program's configuration names"]
+fn a_step_through_ascalon_citys_arch_crosses_to_lakeside_county() {
+    const FROM: u32 = 148;
+    const TO: u32 = 146;
+    /// Map 146's arrival for a character coming from 148: the receiving map owns it, and it is the
+    /// pack's own row (`ASURA/config/World/Vanilla/maps/Prophecies/Ascalon (pre-Searing)/Explorables/146/portals.json`,
+    /// imported by `data/sql/base/db_world/0012-map-content.sql`). Map 148's arrival `(7629.7, 5843.2)`
+    /// is the other direction - where a character arriving *in* 148 from 146 stands.
+    const ARRIVAL: (f32, f32) = (6602.0, 4485.0);
+    let name = "E2E Kryta Five";
+    let (mut child, lines, port) = start_world();
+    println!("the world program is listening on port {port}");
+    let (characters, _world_pool, _login) = open_pools();
+
+    // The name this test uses may be left behind by an earlier run, and a taken name is a refusal:
+    // the row goes first, this test's own character and nobody else's.
+    {
+        let mut pool = characters.lock().unwrap();
+        let rows = pool
+            .query_with(
+                "SELECT \"uuid\" FROM \"characters\" WHERE \"name\" = $1",
+                &[&name],
+            )
+            .expect("the stale row is readable");
+        for row in rows {
+            let uuid: String = row.get(0);
+            for statement in [
+                "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1",
+                "DELETE FROM \"character_unlock\" WHERE \"character_uuid\" = $1",
+                "DELETE FROM \"characters\" WHERE \"uuid\" = $1",
+            ] {
+                let _ = pool.query_with(statement, &[&uuid]);
+            }
+        }
+    }
+    let account = [0x77u8; 16];
+    let (character, _written) = create_character(port, account, name);
+    let uuid_text = game::characters::uuid_text(&character);
+
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // The load of map 148, named by the version message alone: the outpost, its grid and its table.
+        let version = GameVersion {
+            version: 39167,
+            h0008: 1,
+            map_token: 2,
+            map_id: FROM,
+            player_token: 0x6161,
+            account,
+            character,
+            h0038: 0,
+            h003c: 0,
+        };
+        let (mut stream, mut reading, mut sending) = open_connection(port, version);
+
+        let announced = wait_for(&lines, "is loading - ", Duration::from_secs(30));
+        let block_bytes: usize = announced
+            .split(" message(s), ")
+            .nth(1)
+            .and_then(|rest| rest.split(" bytes").next())
+            .and_then(|count| count.trim().parse().ok())
+            .expect("the load's size is in its log line");
+        let mut block = read_exact(&mut stream, block_bytes);
+        reading.apply(&mut block);
+        let mut ping = read_exact(&mut stream, 8);
+        reading.apply(&mut ping);
+
+        // The items, the entry point and the players: the load a client walks before it can move.
+        let mut ask = vec![0x91, 0x80, 0x00, 0x00];
+        sending.apply(&mut ask);
+        stream.write_all(&ask).expect("the items ask");
+        let items = read_frames(&mut stream, &mut reading, 0x0198, 2);
+        assert_eq!(
+            items.last().map(|(header, _)| *header),
+            Some(0x0198),
+            "the manifest ends the items answer"
+        );
+        let mut ask = vec![0x88, 0x80];
+        sending.apply(&mut ask);
+        stream.write_all(&ask).expect("the spawn ask");
+        let mut spawn = read_exact(&mut stream, 26);
+        reading.apply(&mut spawn);
+        assert_eq!(&spawn[..2], &[0x96, 0x01], "the entry point");
+        let entry = (
+            f32::from_le_bytes([spawn[6], spawn[7], spawn[8], spawn[9]]),
+            f32::from_le_bytes([spawn[10], spawn[11], spawn[12], spawn[13]]),
+        );
+        println!("standing at {entry:?} on map {FROM}");
+        let mut ask = vec![0x90, 0x80];
+        ask.extend_from_slice(&[0u8; 17]);
+        sending.apply(&mut ask);
+        stream.write_all(&ask).expect("the players ask");
+        let players = read_frames(&mut stream, &mut reading, 0x018E, 1);
+        assert_eq!(
+            players.last().map(|(header, _)| *header),
+            Some(0x018E),
+            "the load is over"
+        );
+
+        // A position report is 26 bytes: the header, the point, the plane, the offset and the movement
+        // type - and a type outside 1..=8 is dropped, exactly as `ASURA`'s own handler drops it
+        // (`agent.rs:923-929`).
+        let report = |x: f32, y: f32| {
+            let mut frame = vec![0u8; 26];
+            frame[0..2].copy_from_slice(&0x803Du16.to_le_bytes());
+            frame[2..6].copy_from_slice(&x.to_le_bytes());
+            frame[6..10].copy_from_slice(&y.to_le_bytes());
+            frame[10..14].copy_from_slice(&0u32.to_le_bytes()); // plane 0
+            frame[14..18].copy_from_slice(&0f32.to_le_bytes()); // no offset
+            frame[18..22].copy_from_slice(&0f32.to_le_bytes());
+            frame[22..26].copy_from_slice(&1u32.to_le_bytes()); // move type 1
+            frame
+        };
+
+        // The doorway test uses the segment between two finite client reports, so the first report is
+        // the point the character is already standing on: a repeated point is not a step
+        // (`ASURA/crates/asura-world/src/player.rs:60-74`).
+        for (x, y) in [entry, (7277.4, 5417.9), (7184.3, 5307.3)] {
+            let mut frame = report(x, y);
+            sending.apply(&mut frame);
+            stream.write_all(&frame).expect("a position report");
+            std::thread::sleep(Duration::from_millis(120));
+        }
+
+        // The crossing answers with the movement frames and then the travel's own: the effect, the
+        // stop, the redirect, the map update, the party, and the body withdrawn from the map it left
+        // (`ASURA/crates/asura-world/src/travel.rs:479-519`). The redirect's token is what the client
+        // reconnects with, so it is read out of the frame: host[24] then map_token, region, token.
+        // Whatever the program says while the crossing is decided, printed as it arrives.
+        let crossed = {
+            use std::io::Read as _;
+            use std::time::Instant;
+            let deadline = Instant::now() + Duration::from_secs(8);
+            let mut buffer: Vec<u8> = Vec::new();
+            let mut frames: Vec<(u16, Vec<u8>)> = Vec::new();
+            let mut whole: Vec<u8> = Vec::new();
+            let mut chunk = [0u8; 4096];
+            while Instant::now() < deadline {
+                while let Ok(line) = lines.try_recv() {
+                    println!("world> {line}");
+                }
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let mut plain = chunk[..n].to_vec();
+                        reading.apply(&mut plain);
+                        whole.extend_from_slice(&plain);
+                        buffer.extend_from_slice(&plain);
+                        while !buffer.is_empty() {
+                            match game::server::protocol::decode_game_message(&buffer, false) {
+                                Ok((frame, used)) => {
+                                    let bytes = buffer[..used].to_vec();
+                                    let header = frame.header();
+                                    buffer.drain(..used);
+                                    frames.push((header, bytes));
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+            (frames, whole)
+        };
+        let (crossed, plain) = crossed;
+        let headers: Vec<u16> = crossed.iter().map(|(header, _)| *header).collect();
+        println!("the crossing answered: {headers:04X?}");
+        while let Ok(line) = lines.try_recv() {
+            println!("world> {line}");
+        }
+        // The redirect is read by hand, the way GWPS's own build frames it: `0x01A6` is 46 bytes (a
+        // two-byte header, host[24] and five dwords) and the `0x0099` after it is twelve
+        // (`ASURA/crates/asura-world/tests/load.rs:1082-1110`, `read_redirect`). The table's own walker
+        // cannot split them, which is what `0099`'s five-byte login row is about.
+
+        let at = plain
+            .windows(2)
+            .position(|window| window == [0xA6, 0x01])
+            .expect("the redirect is in the crossing's answer");
+        let transfer = &plain[at..at + 46];
+        let update = &plain[at + 46..at + 58];
+        assert_eq!(&update[0..2], &[0x99, 0x00], "the map update follows the redirect");
+        assert_eq!(update.len(), 12, "the redirect form is twelve bytes");
+        // The four frames after the pair are in the stream whether or not the table's walker can split
+        // them: the party size, the party, the player withdrawn and its agent removed
+        // (`ASURA/crates/asura-world/src/travel.rs:498-518`).
+        for header in [0xB0u8, 0xB1, 0x5A, 0x21] {
+            assert!(
+                plain.windows(2).any(|window| window == [header, 0x00]),
+                "0x{header:02X}00 is in the crossing's answer"
+            );
+        }
+        let dword = |at: usize, bytes: &[u8]| {
+            u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+        };
+        let player_token = dword(34, transfer);
+        assert_ne!(player_token, 0, "a token to reconnect with");
+        assert_eq!(dword(38, transfer), 0, "is_explorable: ASURA's default 0");
+        assert_eq!(dword(42, transfer), TO, "the redirect names the map the arch leads to");
+        assert_eq!(dword(4, update), TO, "and the map update agrees");
+        println!("the redirect carries map {TO} and token 0x{player_token:08X}");
+
+        // The connection the client opens next, exactly as the client does it: the same world, the
+        // token the redirect carried.
+        let version = GameVersion {
+            version: 39167,
+            h0008: 1,
+            map_token: 2,
+            map_id: TO,
+            player_token,
+            account,
+            character,
+            h0038: 0,
+            h003c: 0,
+        };
+        let (mut stream, mut reading, mut sending) = open_connection(port, version);
+        let announced = wait_for(&lines, "is loading - ", Duration::from_secs(30));
+        println!("the arrival: {announced}");
+        assert!(
+            announced.contains("Lakeside County (146)"),
+            "the arriving connection loads the map the arch leads to: {announced}"
+        );
+        let block_bytes: usize = announced
+            .split(" message(s), ")
+            .nth(1)
+            .and_then(|rest| rest.split(" bytes").next())
+            .and_then(|count| count.trim().parse().ok())
+            .expect("the load's size is in its log line");
+        let mut block = read_exact(&mut stream, block_bytes);
+        reading.apply(&mut block);
+        let mut ping = read_exact(&mut stream, 8);
+        reading.apply(&mut ping);
+        let mut ask = vec![0x88, 0x80];
+        sending.apply(&mut ask);
+        stream.write_all(&ask).expect("the spawn ask");
+        let mut spawn = read_exact(&mut stream, 26);
+        reading.apply(&mut spawn);
+        assert_eq!(&spawn[..2], &[0x96, 0x01], "the arrival's entry point");
+        let landed = (
+            f32::from_le_bytes([spawn[6], spawn[7], spawn[8], spawn[9]]),
+            f32::from_le_bytes([spawn[10], spawn[11], spawn[12], spawn[13]]),
+        );
+        assert!(
+            (landed.0 - ARRIVAL.0).abs() <= 1.0 && (landed.1 - ARRIVAL.1).abs() <= 1.0,
+            "the character stands on the arrival map 146 states for someone coming from 148: {landed:?} against {ARRIVAL:?}"
+        );
+        println!("landed at {landed:?} on map {TO}");
+
+        // The arrival's own load finishes: the players ask is what writes the reached instance.
+        let mut ask = vec![0x90, 0x80];
+        ask.extend_from_slice(&[0u8; 17]);
+        sending.apply(&mut ask);
+        stream.write_all(&ask).expect("the players ask");
+        let players = read_frames(&mut stream, &mut reading, 0x018E, 1);
+        assert_eq!(
+            players.last().map(|(header, _)| *header),
+            Some(0x018E),
+            "the arrival's load is over"
+        );
+
+        // And the arrival unlocked the map it reached (R12, `player.rs:442-462`).
+        let repository =
+            game::characters::DatabaseCharacters::new(Arc::clone(&characters), Log::new());
+        let unlocked = repository
+            .unlocked_maps(&uuid_text)
+            .expect("the unlocks are readable");
+        assert!(
+            unlocked.contains(&TO),
+            "the map the character walked into is unlocked: {unlocked:?}"
+        );
+    }));
+
+    {
+        let mut pool = characters.lock().unwrap();
+        for statement in [
+            "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1",
+            "DELETE FROM \"character_unlock\" WHERE \"character_uuid\" = $1",
+            "DELETE FROM \"characters\" WHERE \"uuid\" = $1",
+        ] {
+            let _ = pool.query_with(statement, &[&uuid_text]);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    while let Ok(line) = lines.try_recv() {
+        println!("world> {line}");
+    }
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
