@@ -15,6 +15,8 @@ pub const AGENT_PROPERTY_UPDATE_INT: u16 = 0x009F;
 pub const AGENT_UPDATE_ATTRIBUTE_POINTS: u16 = 0x0037;
 /// `GAME_SMSG_AGENT_UPDATE_ATTRIBUTES`: the agent's attribute ranks, one dword each.
 pub const AGENT_UPDATE_ATTRIBUTES: u16 = 0x003A;
+/// `GAME_SMSG_AGENT_UPDATE_EFFECTS` (`0x00F1`): an agent's effect word, updated.
+pub const AGENT_UPDATE_EFFECTS: u16 = 0x00F1;
 /// `GAME_SMSG_WORLD_CREATE_AGENT` (`0x0020`): one agent created, 99 bytes fixed.
 pub const WORLD_CREATE_AGENT: u16 = 0x0020;
 /// `GAME_SMSG_AGENT_PROPERTY_UPDATE_FLOAT` (`0x00A2`): one float property of one agent.
@@ -33,6 +35,9 @@ pub const AGENT_STOP_MOVING: u16 = 0x0028;
 pub const AGENT_MOVE_TO_POINT: u16 = 0x0029;
 /// `GAME_SMSG_AGENT_UPDATE_SPEED` (`0x002B`): the agent's movement type and speed factor.
 pub const AGENT_UPDATE_SPEED: u16 = 0x002B;
+/// `GAME_SMSG_WORLD_REMOVE_AGENT` (`0x0021`): an agent has left the map.
+pub const WORLD_REMOVE_AGENT: u16 = 0x0021;
+/// `GAME_SMSG_WORLD_UPDATE_CONTROLLED_AGENT` (`0x0022`): which agent this client drives.
 /// `GAME_SMSG_AGENT_UPDATE_POSITION` (`0x002C`): where an agent is, sent to everyone else.
 pub const AGENT_UPDATE_POSITION: u16 = 0x002C;
 
@@ -319,6 +324,28 @@ pub fn agent_update_speed_live(agent: u32, speed: f32, mode: u32) -> (u16, Vec<u
     body.extend_from_slice(&speed.to_le_bytes());
     body.extend_from_slice(&mode.to_le_bytes());
     (AGENT_UPDATE_SPEED, frame(AGENT_UPDATE_SPEED, &body))
+}
+
+/// `GAME_SMSG_AGENT_UPDATE_EFFECTS` (`0x00F1`): 10 bytes - the agent and an effect word.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1255`, `agent_update_effects`. A live server sends it
+/// for the travelling player immediately before a redirect, with the word `0x100`
+/// (`ASURA/crates/asura-world/src/travel.rs:19`, `TRAVEL_EFFECT`).
+pub fn agent_update_effects(agent: u32, effects: u32) -> (u16, Vec<u8>) {
+    let mut body = Vec::with_capacity(8);
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&effects.to_le_bytes());
+    (AGENT_UPDATE_EFFECTS, frame(AGENT_UPDATE_EFFECTS, &body))
+}
+
+/// `GAME_SMSG_WORLD_REMOVE_AGENT` (`0x0021`): 8 bytes - a four-byte game header and the agent.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1358`, `world_remove_agent`; `GameSrv_BroadcastAgentRemove`.
+pub fn world_remove_agent(agent: u32) -> (u16, Vec<u8>) {
+    let mut body = Vec::with_capacity(6);
+    body.extend_from_slice(&0u16.to_le_bytes());
+    body.extend_from_slice(&agent.to_le_bytes());
+    (WORLD_REMOVE_AGENT, frame(WORLD_REMOVE_AGENT, &body))
 }
 
 /// `GAME_SMSG_AGENT_UPDATE_POSITION` (`0x002C`): 16 bytes - the agent, where it is, and the plane.

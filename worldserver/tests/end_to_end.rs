@@ -707,21 +707,25 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             assert_eq!(placed[10], worn_slot, "the slot its kind is worn in");
         }
 
-        // 11. A destroy: the row goes, and the client is told the item is gone.
-        let doomed = held
+        // 11. A drop (`GAME_CMSG_DROP_ITEM`, `0x802C`: the item and a count byte): the stack is the
+        // state and **nothing goes on the wire**, which is what the working implementation does and
+        // what its own notes say both candidate messages cost a live client
+        // (`ASURA/crates/asura-world/src/item.rs:187-246`).
+        let dropped = held
             .iter()
-            .find(|row| row.item_id != dragged.item_id && template_of(row.item_id).is_some())
-            .map(|row| row.item_id)
-            .expect("the set holds more than one item");
-        let mut ask = vec![0u8; 6];
-        ask[0..2].copy_from_slice(&0x8069u16.to_le_bytes());
-        ask[2..6].copy_from_slice(&doomed.to_le_bytes());
+            .find(|row| row.item_id != dragged.item_id && row.quantity > 1)
+            .map(|row| (row.item_id, row.quantity))
+            .expect("the set holds a stack of more than one");
+        let mut ask = vec![0u8; 7];
+        ask[0..2].copy_from_slice(&0x802Cu16.to_le_bytes());
+        ask[2..6].copy_from_slice(&dropped.0.to_le_bytes());
+        ask[6] = 1;
         sending.apply(&mut ask);
-        stream.write_all(&ask).expect("the destroy");
-        let mut gone = read_exact(&mut stream, 8);
-        reading.apply(&mut gone);
-        assert_eq!(&gone[..2], &[0x4D, 0x01], "the item's removal");
-        assert_eq!(&gone[4..8], &doomed.to_le_bytes(), "the item");
+        stream.write_all(&ask).expect("the drop");
+        // No answer: the next frame on the connection is the simulation tick, not an item message.
+        let mut next = read_exact(&mut stream, 6);
+        reading.apply(&mut next);
+        assert_eq!(&next[..2], &[0x1E, 0x00], "a drop is answered with nothing");
         {
             let held = game::characters::DatabaseCharacters::new(
                 Arc::clone(&characters),
@@ -729,9 +733,14 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             )
             .items_of(&uuid_text)
             .expect("the character's items are readable");
-            assert!(
-                held.iter().all(|row| row.item_id != doomed),
-                "the destroyed item's row is gone"
+            let after = held
+                .iter()
+                .find(|row| row.item_id == dropped.0)
+                .expect("the stack is still there, one lighter");
+            assert_eq!(
+                after.quantity,
+                dropped.1 - 1,
+                "one was taken off the stack and nothing else changed"
             );
         }
 

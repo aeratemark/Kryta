@@ -26,6 +26,10 @@ pub const PARTY_CREATE: u16 = 0x01D3;
 pub const PARTY_PLAYER_ADD: u16 = 0x01CC;
 /// `GAME_SMSG_PARTY_MEMBER_STREAM_END` (`0x01D4`): 4 bytes - the header and the party's id.
 pub const PARTY_MEMBER_STREAM_END: u16 = 0x01D4;
+/// `GAME_SMSG_PLAYER_UPDATE_PARTY_SIZE` (`0x00B0`): a player's party size.
+pub const PLAYER_UPDATE_PARTY_SIZE: u16 = 0x00B0;
+/// `GAME_SMSG_PLAYER_UPDATE_PARTY` (`0x00B1`): the leader of a player's party.
+pub const PLAYER_UPDATE_PARTY: u16 = 0x00B1;
 
 /// The id a solo connection's party has.
 ///
@@ -54,6 +58,31 @@ pub fn party_player_add(party_id: u16, player_id: u16, is_loaded: u8) -> Vec<u8>
     body.extend_from_slice(&player_id.to_le_bytes());
     body.push(is_loaded);
     frame(PARTY_PLAYER_ADD, &body)
+}
+
+/// `GAME_SMSG_PLAYER_UPDATE_PARTY_SIZE` (`0x00B0`): twelve bytes - a four-byte game header, the player
+/// and the size.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1327`, `player_update_party_size`: the table says five
+/// bytes and a live capture carries twelve every time a map loads, so the two leading zero bytes are
+/// written as body and the wire matches the capture.
+pub fn player_update_party_size(player: u32, party_size: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(10);
+    body.extend_from_slice(&0u16.to_le_bytes());
+    body.extend_from_slice(&player.to_le_bytes());
+    body.extend_from_slice(&party_size.to_le_bytes());
+    frame(PLAYER_UPDATE_PARTY_SIZE, &body)
+}
+
+/// `GAME_SMSG_PLAYER_UPDATE_PARTY` (`0x00B1`): which player leads the party this player is in -
+/// captured as `b1 00 00 00 | 07 00 00 00 | 07 00 00 00`, player 7 leading its own party
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs:1341`).
+pub fn player_update_party(player: u32, party_leader: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(10);
+    body.extend_from_slice(&0u16.to_le_bytes());
+    body.extend_from_slice(&player.to_le_bytes());
+    body.extend_from_slice(&party_leader.to_le_bytes());
+    frame(PLAYER_UPDATE_PARTY, &body)
 }
 
 /// `0x01D4`: the party's members have all been sent.

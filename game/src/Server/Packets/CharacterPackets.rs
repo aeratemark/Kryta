@@ -19,6 +19,8 @@ pub const SKILLBAR_UPDATE: u16 = 0x00DA;
 pub const CHARACTER_UPDATE_FACTIONS: u16 = 0x00E9;
 /// `GAME_SMSG_CHARACTER_UPDATE_INFO` (`0x0030`): a character summary - a counted string and six dwords.
 pub const CHARACTER_UPDATE_INFO: u16 = 0x0030;
+/// `GAME_SMSG_PLAYER_DESTROY` (`0x005A`): a player has left the map.
+pub const PLAYER_DESTROY: u16 = 0x005A;
 /// `GAME_SMSG_CHARACTER_UDPATE_PARTY` (`0x01B3`, the table's own spelling): a word and a byte.
 pub const CHARACTER_UPDATE_PARTY: u16 = 0x01B3;
 /// `GAME_SMSG_CHAR_CREATION_SUCCESS`: the character was written.
@@ -155,6 +157,18 @@ pub fn character_update_factions(progress: &[u32; FACTIONS_DWORDS]) -> Vec<u8> {
         body.extend_from_slice(&value.to_le_bytes());
     }
     frame(CHARACTER_UPDATE_FACTIONS, &body)
+}
+
+/// `GAME_SMSG_PLAYER_DESTROY` (`0x005A`): a player has left the map - eight bytes, a four-byte game
+/// header and the player id.
+///
+/// `GameSrv_BroadcastPlayerDestroy` (`GmPlayer.c:314`); `ASURA/crates/asura-protocol/src/game/mod.rs:1352`,
+/// `player_destroy`. The client's own sniffer calls `0x5A` `AGENT_DESTROY_PLAYER`, and the capture
+/// carries `5a 00 00 00 | 0b 00 00 00`.
+pub fn player_destroy(player: u32) -> (u16, Vec<u8>) {
+    let mut body = vec![0u8; 6];
+    body[2..6].copy_from_slice(&player.to_le_bytes());
+    (PLAYER_DESTROY, frame(PLAYER_DESTROY, &body))
 }
 
 /// One of the four faction caps: the header names the faction, then the cap.

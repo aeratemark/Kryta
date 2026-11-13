@@ -95,6 +95,10 @@
       "value": 288,
       "doc": "How fast a player agent walks, in units a second: the create message carries it and the client walks the model at it."
     },
+    "PublicAddress": {
+      "value": "127.0.0.1:6112",
+      "doc": "The address a travelling client is told to reconnect to, as host:port - the redirect (0x01A6) carries it as a Winsock sockaddr_in. The working implementation publishes one (its --public argument, ASURA/crates/asura-world/src/main.rs:73). This stack's client dials the address it was launched against, which is the login port, and the front door copies that connection to the world, so the default is that address."
+    },
     "MaxAllowedCorrection": {
       "value": 250,
       "doc": "How far, in game units, a client may place itself when it cancels a walk (0x8047) and still be believed. A correction farther than this from where the server thought the agent stood is ignored: the agent stops where the server believes it is and nothing goes on the wire, so the client is never ordered backwards. The reference's MAXIMUM_ALLOWED_CORRECTION (GmAgent.c:547-563); the working implementation runs it at 250 (ASURA/config/Server/movement.json)."

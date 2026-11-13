@@ -419,6 +419,56 @@ impl DatabaseCharacters {
         }
     }
 
+    /// Take `count` off one of a character's stacks, and answer what is left of it.
+    ///
+    /// `None` when the row is not the character's, or when the stack holds fewer than `count`: nothing
+    /// is written in either case. A stack taken to zero is deleted, which is what the reference's own
+    /// drop does (`ASURA/crates/asura-store/src/state/inventory.rs`, `take_from_stack`).
+    pub fn take_from_stack(
+        &self,
+        uuid: &str,
+        item_id: u32,
+        count: u32,
+    ) -> Result<Option<u32>, String> {
+        if count == 0 {
+            return Ok(None);
+        }
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "UPDATE \"item_instance\" SET \"quantity\" = \"quantity\" - $1 \
+                 WHERE \"character_uuid\" = $2 AND \"item_id\" = $3 AND \"quantity\" >= $1 \
+                 RETURNING \"quantity\"::bigint",
+                vec![
+                    Param::Integer(i64::from(count)),
+                    Param::Text(uuid.to_string()),
+                    Param::Integer(i64::from(item_id)),
+                ],
+            ),
+            Err(_) => return Err("the character database pool is poisoned".to_string()),
+        };
+        let remaining = match reply.recv() {
+            Ok(Ok(rows)) => match rows.first() {
+                Some(row) => row.try_get::<usize, i64>(0).unwrap_or(0) as u32,
+                None => return Ok(None),
+            },
+            Ok(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    format!("Cannot take {count} of item {item_id} of {uuid}: {error}"),
+                );
+                return Err(error);
+            }
+            Err(_) => {
+                return Err("the character database answered no query: it is shutting down".to_string());
+            }
+        };
+        if remaining == 0 && self.remove_item(uuid, item_id)? {
+            return Ok(Some(0));
+        }
+        Ok(Some(remaining))
+    }
+
     /// Remove a character and every record that is its own - its items, its unlocks, its row.
     ///
     /// Reference: `CharacterDatabase.DeleteFromDB`, which deletes the character and the records that

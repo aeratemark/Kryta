@@ -17,6 +17,8 @@ pub const WORLD_SIMULATION_TICK: u16 = 0x001E;
 pub const HARD_MODE_UNLOCKED: u16 = 0x0070;
 /// `GAME_SMSG_MAP_UPDATE_CURRENT` (`0x0099`): the map, and one byte.
 pub const MAP_UPDATE_CURRENT: u16 = 0x0099;
+/// `GAME_SMSG_TRANSFER_GAME_SERVER_INFO` (`0x01A6`): where a travelling client reconnects.
+pub const TRANSFER_GAME_SERVER_INFO: u16 = 0x01A6;
 /// `GAME_SMSG_PVP_UPDATE_UNLOCKED_SKILLS`: a counted list of unlocked PvP skills.
 pub const PVP_UPDATE_UNLOCKED_SKILLS: u16 = 0x001D;
 /// `GAME_SMSG_PVP_UPDATE_UNLOCKED_HEROES`: a counted bitmap of unlocked PvP heroes.
@@ -87,6 +89,48 @@ pub fn world_simulation_tick(tick: u32) -> Vec<u8> {
 /// Source: `recordings/gwps/world/load-stream.log` - `SEND 0x0070 3 bytes : 70 00 01`.
 pub fn hard_mode_unlocked(unlocked: u8) -> Vec<u8> {
     frame(HARD_MODE_UNLOCKED, &[unlocked])
+}
+
+/// `GAME_SMSG_TRANSFER_GAME_SERVER_INFO` (`0x01A6`): where the client should reconnect, and with what.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:839`, `transfer_game_server_info`, a faithful port of
+/// the reference's own struct (`GameMsg.h:659`): the host as a Winsock `sockaddr_in` - family `2` little
+/// endian, the port **big** endian, four address bytes and sixteen zero - then the world's id, a region,
+/// the player token, whether the destination is an explorable, and the map id last. Fifty-two bytes
+/// before the header. The working implementation's notes on the two shapes that failed: the captured
+/// order in a 46-byte frame made the client read the map id out of the token slot (`007`), and a
+/// 52-byte frame with a four-byte header made it read `00 00` as the address family (`005`).
+pub fn transfer_game_server_info(
+    host: [u8; 4],
+    port: u16,
+    map_token: u32,
+    region: u32,
+    player_token: u32,
+    is_explorable: u32,
+    map_id: u32,
+) -> (u16, Vec<u8>) {
+    let mut body = Vec::with_capacity(44);
+    body.extend_from_slice(&2u16.to_le_bytes()); // AF_INET, little endian
+    body.extend_from_slice(&port.to_be_bytes());
+    body.extend_from_slice(&host);
+    body.extend_from_slice(&[0u8; 16]); // the rest of the sockaddr_in
+    body.extend_from_slice(&map_token.to_le_bytes());
+    body.extend_from_slice(&region.to_le_bytes());
+    body.extend_from_slice(&player_token.to_le_bytes());
+    body.extend_from_slice(&is_explorable.to_le_bytes());
+    body.extend_from_slice(&map_id.to_le_bytes());
+    (TRANSFER_GAME_SERVER_INFO, frame(TRANSFER_GAME_SERVER_INFO, &body))
+}
+
+/// `GAME_SMSG_MAP_UPDATE_CURRENT` in the form that **follows a redirect**: twelve bytes, where the login
+/// batch's copy is five (`ASURA/crates/asura-protocol/src/game/mod.rs:808`,
+/// `map_update_current_redirect`).
+pub fn map_update_current_redirect(map_id: u32) -> (u16, Vec<u8>) {
+    let mut body = Vec::with_capacity(10);
+    body.extend_from_slice(&0u16.to_le_bytes()); // the upper half of the four-byte game header
+    body.extend_from_slice(&map_id.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes());
+    (MAP_UPDATE_CURRENT, frame(MAP_UPDATE_CURRENT, &body))
 }
 
 /// `0x0099`: the map the character is now in, and one byte (0 in every capture).

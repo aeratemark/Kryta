@@ -78,17 +78,17 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 
 | header | message | ASURA handler | this tree | verdict |
 |---|---|---|---|---|
-| `0x8008` | `GAME_CMSG_DISCONNECT` | `dispatch.rs:86` | - | **missing** |
-| `0x8009` | `GAME_CMSG_PING_REPLY` | `dispatch.rs:119`, discarded | - | **missing** |
-| `0x800C` | `GAME_CMSG_HEARTBEAT` | `dispatch.rs:122`, discarded | - | **missing** |
+| `0x8008` | `GAME_CMSG_DISCONNECT` | `dispatch.rs:86` | ends the connection | ported |
+| `0x8009` | `GAME_CMSG_PING_REPLY` | `dispatch.rs:119`, discarded | discarded | ported |
+| `0x800C` | `GAME_CMSG_HEARTBEAT` | `dispatch.rs:122`, discarded | discarded | ported |
 | `0x800D` | `GAME_CMSG_PING_REQUEST` | `connection::handle_ping_request` | echoed back | **ours**: the answer is not the ping reply's |
 | `0x8028` | `GAME_CMSG_CANCEL_MOVEMENT` | `agent.rs:1062` | `answer_cancel_movement` | ported |
-| `0x802C` | `GAME_CMSG_DROP_ITEM` (7 bytes) | `item::handle_drop_item` | listened for on `0x8069` | **ours**: wrong header |
+| `0x802C` | `GAME_CMSG_DROP_ITEM` (7 bytes) | `item.rs:187`, `handle_drop_item` | `CLIENT_DROP_ITEM`: the stack is taken and nothing is sent | ported |
 | `0x8030` | `GAME_CMSG_EQUIP_ITEM` | `item::handle_equip_item` | handled | ported thin |
 | `0x803D` | `GAME_CMSG_POSITION_UPDATE` (26) | `agent.rs:887` | `answer_position_update` | ported |
 | `0x803E` | `GAME_CMSG_MOVE_TO_COORD` (14) | `agent.rs:710` | `answer_move_to_coord` | ported (the graph it asks is missing) |
 | `0x8047` | `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` | `agent.rs:1117` | `answer_last_position` | ported |
-| `0x804F` | `GAME_CMSG_UNEQUIP_ITEM` (6) | `dispatch.rs:114` | - | **missing** |
+| `0x804F` | `GAME_CMSG_UNEQUIP_ITEM` (6) | `item.rs:555`, `handle_unequip_item` | `CLIENT_UNEQUIP_ITEM`: ASURA's answer, a log line and nothing on the wire | ported |
 | `0x8060` | `GAME_CMSG_CHAR_CREATION_CHANGE_PROF` (4) | `creation.rs:275` | handled | ported |
 | `0x8064` | `GAME_CMSG_SEND_CHAT_MESSAGE` (286) | `chat::handle_chat_message` | - | **missing** |
 | `0x8072` | `GAME_CMSG_ITEM_MOVE` (9) | `item::handle_item_move` | handled | ported thin |
@@ -98,9 +98,9 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x808B` | `GAME_CMSG_CHAR_CREATION_CONFIRM` (58) | `creation.rs:346` | handled | ported |
 | `0x8090` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_PLAYERS` (19) | `player.rs:430` | handled | ported |
 | `0x8091` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_ITEMS` (4) | `item.rs:448` | handled | ported thin |
-| `0x80B1` | `GAME_CMSG_PARTY_TRAVEL` (9) | `travel::handle_party_travel` | listened for on `0x00B1` | **ours**: wrong header, no answer |
+| `0x80B1` | `GAME_CMSG_PARTY_TRAVEL` (9) | `travel.rs`, `handle_party_travel` | `answer_party_travel` and `begin_transfer` | ported |
 
-**Score: 24 ported or ported thin (11 auth + 13 game), 3 ours, 9 missing.**
+**Score: 30 ported or ported thin (11 auth + 19 game), 1 ours, 5 missing.**
 
 ## 4. Server -> client: the 87 messages ASURA emits
 
@@ -131,7 +131,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x001E` | simulation tick | `world_simulation_tick(delta_ms)` | same | ported (ours until 2026-11-12: a counter) |
 | `0x001F` | load time | `world_update_load_time` | same | ported |
 | `0x0020` | create agent (99) | `world_create_agent`, `CreateAgent` | same | ported |
-| `0x0021` | remove agent | `world_remove_agent` | - | **missing** |
+| `0x0021` | remove agent | `world_remove_agent` | `agent_packets::world_remove_agent` | ported |
 | `0x0022` | controlled agent | `world_update_controlled_agent` | same | ported |
 | `0x0025` | agent update direction (15) | `agent_update_direction` / `_live` | `agent_packets::agent_update_direction`, both forms | ported |
 | `0x0028` | agent stop moving | `agent_stop_moving` | `agent_packets::agent_stop_moving` | ported |
@@ -144,7 +144,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x003C` | player flags | `player_update_flags` | same | ported |
 | `0x0048` | display cape | `agent_display_cape` | same | ported |
 | `0x0059` | player create (91) | `player_create` | same | ported |
-| `0x005A` | player destroy | `player_destroy` | - | **missing** |
+| `0x005A` | player destroy | `player_destroy` | `character_packets::player_destroy` | ported |
 | `0x005D` | chat: the body | `chat_message_core` | - | **missing** |
 | `0x005E` | chat: the server speaking | `chat_message_server` | - | **missing** |
 | `0x0061` | chat: which player spoke | `chat_message_local` | - | **missing** |
@@ -153,12 +153,12 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x008A` | cartography data (262) | `cartography_data` | - | **missing** |
 | `0x008B` | map init start (14) | `map_init_start` | - | **missing** |
 | `0x0094` | unlocked lists (662) | `map_update_unlocked_list` | same | ported |
-| `0x0099` | map update current | `map_update_current` | same | ported |
+| `0x0099` | map update current | `map_update_current` and its redirect form | both forms | ported |
 | `0x009C` | morale | `agent_update_morale` | same | ported |
 | `0x009F` | agent property, int | `agent_property_update_int` | same | ported |
 | `0x00A2` | agent property, float | `agent_property_update_float` | same | ported |
-| `0x00B0` | a player's party size | `player_update_party_size` | - | **missing** |
-| `0x00B1` | a player's party | `player_update_party` | - | **missing** |
+| `0x00B0` | a player's party size | `player_update_party_size` | `party_packets::player_update_party_size` | ported |
+| `0x00B1` | a player's party | `player_update_party` | `party_packets::player_update_party` | ported |
 | `0x00B6` | unlocked professions | `player_update_unlocked_professions` | same | ported |
 | `0x00B7` | profession | `player_update_profession` | same | ported |
 | `0x00DA` | skillbar (79) | `skillbar_update` | eight empty slots only | ported thin |
@@ -191,14 +191,14 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x0199` | manifest phase | `instance_manifest_phase` | same | ported |
 | `0x019A` | instance load info | `instance_load_info` | same | ported |
 | `0x01A0` | the instance table (102) | `instance_table` | - | **missing** |
-| `0x01A6` | transfer game server info (46) | `transfer_game_server_info` | - | **missing** |
+| `0x01A6` | transfer game server info (46) | `transfer_game_server_info` | `misc_packets::transfer_game_server_info` | ported |
 | `0x01AC` | ready for a spawn | `ready_for_map_spawn` | same | ported |
 | `0x01B3` | which party the character is in | `character_update_party` | same | ported |
 | `0x01CC` | party player add | `party_player_add` | same | ported |
 | `0x01D3` | party create | `party_create` | same | ported |
 | `0x01D4` | party member stream end | `party_member_stream_end` | same | ported |
 
-**Score: 67 ported or ported thin, 12 missing, 0 ours among the emitted set.**
+**Score: 72 ported or ported thin, 7 missing, 0 ours among the emitted set.**
 
 ### 4.3 Builders ASURA has that no message above covers
 
@@ -220,7 +220,7 @@ setting that selects one.
 | the items ask | the stream, the bags and items, four weapon sets, the gold, four faction caps, the hard-mode flag, the character summary, the map, ready-for-spawn, the manifest (`item.rs:70`) | same, plus the reference's own `0x0196`-before-manifest order | ported thin: no `0x015E` |
 | the spawn ask | the entry point and the tick | the entry point and the tick | ported thin |
 | the players ask | 34 frames, in one order (`player.rs:382-388` for the party) | the same 34, the same order | ported |
-| the travel | the redirect `0x01A6`, `0x0099`, `0x00B0`, `0x00B1`, `0x005A`, `0x0021` (`travel.rs`) | none: the travel request is read and logged | **ours** |
+| the travel | the redirect `0x01A6`, `0x0099` in its twelve-byte form, `0x00B0`, `0x00B1`, `0x005A`, `0x0021` (`travel.rs:480-518`) | the same eight, in the same order, out of `begin_transfer` | ported thin: no seat reservation and no doorway crossing |
 | a player joining a map others are in | `introduction` (`0x0059`, `0x00B0`, `0x00B1`, `0x0020`) and `farewell` (`0x005A`, `0x0021`) | nothing | **missing** |
 | chat | `0x005D` bodies, one of `0x005E`/`0x0061` committing | nothing | **missing** |
 | the exploration grid | `0x008B` then `0x008A`, 0.58-0.73 s into the load, once per instance (`cartography.rs`) | nothing | **missing** |
@@ -230,14 +230,13 @@ setting that selects one.
 | | count |
 |---|---|
 | messages ASURA handles (client -> server) | 36 |
-| ... this tree handles as ASURA does | **24** (11 auth, 13 game) |
-| ... this tree handles, but not as ASURA does | **3** |
-| ... of those, on the wrong header | 2 (`0x80B1` listened for as `0x00B1`; `0x802C` as `0x8069`) |
+| ... this tree handles as ASURA does | **30** (11 auth, 19 game) |
+| ... this tree handles, but not as ASURA does | **1** |
 | ... of those, answered differently | 1 (`0x800D`: echoed instead of answered with the ping reply) |
-| ... this tree does not handle | **9** |
+| ... this tree does not handle | **5** |
 | messages ASURA emits (server -> client) | 87 |
-| ... this tree emits | **75** (8 auth, 67 game) |
-| ... this tree does not emit | **12** |
+| ... this tree emits | **80** (8 auth, 72 game) |
+| ... this tree does not emit | **7** |
 | messages this tree emits that ASURA does not have | 1: the district-count answer on the auth connection |
 | sequences ported whole | 6 of 9 |
 | the packet table | identical, 782 rows (682 game + 100 auth) |
@@ -250,11 +249,13 @@ setting that selects one.
    path graph (`gwdat.rs`, `fa_compress.rs`, `map_data.rs`, `path_tables.rs`, `pathfind.rs`), so every
    walk is answered exactly as the working implementation answers a map it holds no graph for:
    `NoGraph`, and nothing on the wire.
-2. **The party travel is on the wrong header** (`0x00B1` instead of `0x80B1`), so the message the
-   client sends when it uses the world map is not recognised at all, and nothing is answered.
-3. **The drop item is on the wrong header** (`0x8069` instead of `0x802C`).
-4. **Chat is absent**: three emitted frames and one handled message.
-5. **The cartography pair is absent**, so the map view asserts.
+2. **Chat is absent**: three emitted frames and one handled message (`0x005D`, `0x005E`, `0x0061`,
+   `0x8064`).
+3. **The exploration grid is absent** (`0x008B`, `0x008A`), so the map view asserts.
+4. **`0x015F` (the unnamed item) and `0x01A0` (the instance table) are absent.**
+5. **The thin rows**: `0x0030` with no name, `0x00DA` and `0x00DB` always empty, `0x017C`'s two
+   unlock bytes as a constant, `0x0198`'s words carried rather than derived, and the items block
+   without `0x015E`.
 6. **The travel sequence is absent**: `0x01A6`, `0x00B0`/`0x00B1`, `0x005A`, `0x0021`, `0x01A0`.
 7. **`0x015F` (unnamed item) and `0x804F` (unequip) are absent.**
 8. **Six auth messages are absent** (`0x8000`, `0x8001`, `0x8002`, `0x8007`, and the two settings

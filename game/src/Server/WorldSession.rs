@@ -70,6 +70,22 @@ const PLAYER_TEAM_TOKEN: u32 = 0xBAAD_F00D;
 /// Full morale, which a fresh agent has (`ASURA/crates/asura-world/src/player.rs`, `MORALE_FULL`).
 const MORALE_FULL: u32 = 100;
 
+/// The effect word a travel puts on the travelling agent before the redirect
+/// (`ASURA/crates/asura-world/src/travel.rs:19`, `TRAVEL_EFFECT`; the live capture's own `0x00F1` frame
+/// carries it).
+const TRAVEL_EFFECT: u32 = 0x100;
+
+/// An IPv4 `host:port` as the four address bytes and the port, which is what a redirect carries.
+fn parse_address(text: &str) -> Option<([u8; 4], u16)> {
+    let (host, port) = text.rsplit_once(':')?;
+    let octets: Vec<u8> = host
+        .split('.')
+        .map(|part| part.trim().parse::<u8>().ok())
+        .collect::<Option<Vec<u8>>>()?;
+    let octets: [u8; 4] = octets.as_slice().try_into().ok()?;
+    Some((octets, port.trim().parse::<u16>().ok()?))
+}
+
 /// The client's asks on a gameplay connection, as the reference's dispatch reads them.
 ///
 /// Sizes from `docs/evidence/client-protocol.md`'s table: the request-player and
@@ -85,7 +101,11 @@ const GAME_PING: u16 = 0x800D;
 /// `GAME_CMSG_ITEM_MOVE` (`0x8072`): a drag in the inventory - the item, the bag and the slot.
 const CLIENT_ITEM_MOVE: u16 = 0x8072;
 /// `GAME_CMSG_ITEM_DESTROY` (`0x8069`): the item to destroy.
-const CLIENT_ITEM_DESTROY: u16 = 0x8069;
+const CLIENT_DROP_ITEM: u16 = 0x802C;
+const CLIENT_UNEQUIP_ITEM: u16 = 0x804F;
+const CLIENT_PING_REPLY: u16 = 0x8009;
+const CLIENT_HEARTBEAT: u16 = 0x800C;
+const CLIENT_DISCONNECT: u16 = 0x8008;
 /// `GAME_CMSG_EQUIP_ITEM` (`0x8030`): the item to wear.
 const CLIENT_EQUIP_ITEM: u16 = 0x8030;
 
@@ -96,8 +116,10 @@ const CLIENT_MOVE_TO_COORD: u16 = 0x803E;
 const CLIENT_LAST_POS_BEFORE_MOVE_CANCELED: u16 = 0x8047;
 const CLIENT_CANCEL_MOVEMENT: u16 = 0x8028;
 
-/// The client's in-game travel request - `PARTY_TRAVEL`, `0x00B1`, nine bytes (E220, E28).
-const CLIENT_PARTY_TRAVEL: u16 = 0x00B1;
+/// The client's in-game travel request - `GAME_CMSG_PARTY_TRAVEL`, `0x80B1`, nine bytes
+/// (`ASURA/crates/asura-protocol/src/packets.rs`; the client's own frame is `B1 80 | <instance> | ...`).
+/// This tree listened for `0x00B1`, which is the *server's* party message, until 2026-11-12.
+const CLIENT_PARTY_TRAVEL: u16 = 0x80B1;
 
 // The simulation's tick period is a setting (R33): `World.SimulationTickMs` (default 105 - the
 // reference sent one `0x001E` every 90-110 ms, average 105 ms over 1780 ticks,
@@ -165,6 +187,12 @@ pub struct WorldSession {
     spawns: Vec<crate::maps::MapSpawn>,
     /// The numbers this world runs by: the spawn scatter and the rest.
     settings: crate::world::world_config::WorldConfig,
+    /// The account the version message named, kept for the travel hand-off a redirect writes: the
+    /// login database's travel row is keyed by account and player token.
+    account: std::sync::Mutex<[u8; 16]>,
+    /// Whether a travel is already in flight: the client is about to reconnect, so a second crossing
+    /// must not start another one (`ASURA/crates/asura-world/src/travel.rs:600`, `player.moved`).
+    moved: std::sync::Mutex<bool>,
     /// The map's walkable graph, which a walk request is answered from. Empty until the archive reader
     /// lands, and every lookup then answers \Walk::NoGraph\ (\ASURA/crates/asura-world/src/pathfind.rs\).
     graphs: crate::terrain::Graphs,
@@ -202,6 +230,8 @@ impl WorldSession {
             maps: world.maps().to_vec(),
             spawns: world.spawns().to_vec(),
             settings: world.settings().clone(),
+            account: std::sync::Mutex::new([0u8; 16]),
+            moved: std::sync::Mutex::new(false),
             graphs: world.graphs().clone(),
             characters: None,
             login: None,
@@ -447,6 +477,10 @@ impl WorldSession {
                 version.version, version.map_token, version.map_id, version.player_token
             ),
         );
+
+        if let Ok(mut account) = self.account.lock() {
+            *account = version.account;
+        }
 
         // The world's own id is the check the reference makes through its transfer record: a
         // connection that names another world is not this one's.
@@ -1018,6 +1052,10 @@ impl WorldSession {
                     .await;
                 Some(true)
             }
+            // The client is going away (GAME_CMSG_DISCONNECT, 0x8008, two bytes): the working
+            // implementation's dispatch ends the connection on it
+            // (ASURA/crates/asura-world/src/dispatch.rs:86).
+            CLIENT_DISCONNECT => Some(false),
             // A ping on the gameplay connection: two bytes, answered with the same two bytes.
             GAME_PING => {
                 let mut answer = message.to_vec();
@@ -1090,6 +1128,183 @@ impl WorldSession {
                 unlocked_professions: row.get::<usize, i64>(6) as u32,
             })
             .unwrap_or(fallback)
+    }
+
+    /// `GAME_CMSG_PARTY_TRAVEL` (`0x80B1`, nine bytes): the client asks for an instance from the
+    /// world map.
+    ///
+    /// `ASURA/crates/asura-world/src/travel.rs`, `handle_party_travel`: the first two bytes are the
+    /// instance it wants; a map this world does not host is refused by saying so, and a map it hosts goes
+    /// to `begin_transfer`. The nine bytes are the client's own frame - `B1 80 | 94 00 | 02 | 00 00 | 0...`
+    /// in the working implementation's log - of which only the instance is read here, exactly as there.
+    async fn answer_party_travel(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        message: &[u8],
+        crypt: &mut AuthCrypt,
+        sheet: &CharacterSheet,
+    ) {
+        let body = &message[2..];
+        if body.len() < 2 {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: a travel request is {} bytes and names no instance; it cannot be read.",
+                    message.len()
+                ),
+            );
+            return;
+        }
+        let map_id = u32::from(u16::from_le_bytes([body[0], body[1]]));
+        let Some(destination) = self.maps.iter().find(|map| map.id == map_id).cloned() else {
+            self.say(
+                LogLevel::Info,
+                format!(
+                    "Gameplay connection from {peer}: instance {map_id} cannot be served by this world; the travel is refused."
+                ),
+            );
+            return;
+        };
+        self.begin_transfer(io, peer, crypt, sheet, &destination).await;
+    }
+
+    /// The frames a travel puts on the wire, in the working implementation's own order
+    /// (`ASURA/crates/asura-world/src/travel.rs:480-518`): the player's agent takes the travel effect,
+    /// its walk stops, the redirect names where to reconnect and with what token, the map update follows
+    /// in its twelve-byte form, and the travelling body is withdrawn from the map it is leaving - the party
+    /// size, the party, the player and the agent.
+    async fn begin_transfer(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        crypt: &mut AuthCrypt,
+        sheet: &CharacterSheet,
+        destination: &crate::world::MapEntry,
+    ) {
+        // A travel already in flight owns this connection: the client is about to reconnect, and a
+        // second redirect would send it two.
+        match self.moved.lock() {
+            Ok(mut moved) if !*moved => *moved = true,
+            _ => return,
+        }
+
+        // The address the client will dial. The working implementation publishes one
+        // (`--public`, `ASURA/crates/asura-world/src/main.rs:73`); this world states it in its own file,
+        // and this stack's client dials the address it was launched against (`docs/port/02-wire.md`).
+        let Some((host, port)) = parse_address(&self.settings.public_address) else {
+            self.say(
+                LogLevel::Error,
+                format!(
+                    "Gameplay connection from {peer}: World.PublicAddress is '{}', which is not an IPv4 address and port; the travel is refused.",
+                    self.settings.public_address
+                ),
+            );
+            return;
+        };
+
+        // A number drawn per travel, so the world can tell one client's connection from another's: the
+        // arriving connection presents it, and the hand-off row is what names the map it is for.
+        let mut token_bytes = [0u8; 4];
+        if getrandom::getrandom(&mut token_bytes).is_err() {
+            self.say(
+                LogLevel::Warn,
+                format!("Gameplay connection from {peer}: no entropy for the player token; using zero."),
+            );
+        }
+        let player_token = u32::from_le_bytes(token_bytes);
+        let account = match self.account.lock() {
+            Ok(account) => *account,
+            Err(_) => [0u8; 16],
+        };
+        let language = 0;
+        let district = 0;
+
+        // The hand-off, written before the redirect: the connection the client is about to open reads it
+        // to learn the map and the district. It is the login database's row, because that is where this
+        // stack's login writes the one a client asks for (`docs/port/06-world-plan.md`, "The three seams").
+        let mut recorded = false;
+        if let Some(login) = self.login.as_ref() {
+            let travels = crate::maps::DatabaseTravels::new(
+                std::sync::Arc::clone(login),
+                self.log.clone(),
+            );
+            let travel = crate::maps::Travel {
+                account,
+                world: self.realm,
+                map_id: destination.id,
+                district,
+                language,
+                player_token,
+            };
+            match travels.record(&travel) {
+                Ok(()) => {
+                    recorded = true;
+                    self.say(
+                        LogLevel::Info,
+                        format!(
+                            "Gameplay connection from {peer}: the travel to map {} is recorded for world {}; the world claims it when the connection presents token 0x{player_token:08X}.",
+                            destination.id, self.realm
+                        ),
+                    );
+                }
+                Err(error) => self.say(
+                    LogLevel::Error,
+                    format!(
+                        "Gameplay connection from {peer}: the travel to map {} was not recorded ({error}); the client would reconnect with no hand-off, so the redirect is not sent.",
+                        destination.id
+                    ),
+                ),
+            }
+        }
+        if !recorded {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: a travel to map {} cannot be handed off without the login database; the connection stays where it is.",
+                    destination.id
+                ),
+            );
+            return;
+        }
+
+        let agent = CREATION_AGENT;
+        let player = CREATION_AGENT;
+        let is_explorable = u32::from(destination.kind == crate::world::map_kind::EXPLORABLE);
+        let frames = vec![
+            agent_packets::agent_update_effects(agent, TRAVEL_EFFECT).1,
+            agent_packets::agent_stop_moving(agent).1,
+            misc_packets::transfer_game_server_info(
+                host,
+                port,
+                self.realm,
+                0, // region: the reference sends its district's region, and this world has no regions
+                player_token,
+                is_explorable,
+                destination.id,
+            )
+            .1,
+            misc_packets::map_update_current_redirect(destination.id).1,
+            party_packets::player_update_party_size(player, 1),
+            party_packets::player_update_party(player, 0),
+            character_packets::player_destroy(player).1,
+            agent_packets::world_remove_agent(agent).1,
+        ];
+        self.send(io, peer, crypt, &frames, "the redirect").await;
+        self.say(
+            LogLevel::Info,
+            format!(
+                "Gameplay connection from {peer}: the character '{}' travels to map {} ('{}'); the client is told to dial {}.{}.{}.{}:{} with token 0x{player_token:08X}.",
+                sheet.name,
+                destination.id,
+                destination.name,
+                host[0],
+                host[1],
+                host[2],
+                host[3],
+                port
+            ),
+        );
     }
 
     /// `GAME_CMSG_MOVE_TO_COORD` (`0x803E`): the agent is asked to walk to a point.
@@ -1750,6 +1965,10 @@ impl WorldSession {
                             ),
                         }
                     }
+                    // `GAME_CMSG_PING_REPLY` (`0x8009`, 10 bytes) and `GAME_CMSG_HEARTBEAT` (`0x800C`,
+                    // 2 bytes): the working implementation names both and discards both
+                    // (`ASURA/crates/asura-world/src/dispatch.rs:116-122`), because the reference does.
+                    CLIENT_PING_REPLY | CLIENT_HEARTBEAT => {}
                     // The client's own ping on a live connection: the reference logs it and
                     // answers nothing, so this does the same.
                     GAME_PING => {
@@ -1780,74 +1999,83 @@ impl WorldSession {
                     // The client's own in-game travel request. The redirect that answers it is not
                     // captured on this build, so the connection stays where it is and the request is
                     // named in the log rather than acted on (`docs/port/06-world-plan.md`, step 3).
-                    CLIENT_PARTY_TRAVEL => match client_travel(&message) {
-                        Some((map_id, territory, district, language, flag)) => self.say(
-                            LogLevel::Info,
-                            format!(
-                                "Gameplay connection from {peer}: the client asks to travel to map {map_id} (territory {territory}, district {district}, language {language}, flag {flag}); the redirect's own wire is not captured yet, so the connection stays where it is."
-                            ),
-                        ),
-                        None => self.say(
-                            LogLevel::Warn,
-                            format!(
-                                "Gameplay connection from {peer}: a travel request of {} bytes cannot be read.",
-                                message.len()
-                            ),
-                        ),
-                    },
+                    CLIENT_PARTY_TRAVEL => {
+                        self.answer_party_travel(io, peer, &message, crypt, sheet)
+                            .await;
+                    }
                     // The client destroys one of its items: the row goes, and the item is told gone
                     // with `0x014D`.
-                    CLIENT_ITEM_DESTROY => {
-                        match message
+                    // The client drops `count` of an item (`GAME_CMSG_DROP_ITEM`, `0x802C`: the item as a
+                    // dword and the count as a byte). The working implementation's `drop_item`
+                    // (`ASURA/crates/asura-world/src/item.rs:187`) takes them off the stack and puts
+                    // **nothing on the wire**: both messages a drop could send crashed a live client -
+                    // `ITEM_REMOVE` with the stack re-created cloned the item, and the ground agent
+                    // (`0x0020`, `AgentType_Item`) crashed with that message as the log's last line -
+                    // and neither appears in any capture (`item.rs:236-246`). So the stack is the state
+                    // and silence is the answer.
+                    CLIENT_DROP_ITEM => {
+                        let item_id = message
                             .get(2..6)
-                            .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-                        {
-                            Some(item_id) => {
-                                let removed = self.characters.as_ref().map(|pool| {
-                                    crate::characters::DatabaseCharacters::new(
-                                        std::sync::Arc::clone(pool),
-                                        self.log.clone(),
-                                    )
-                                    .remove_item(&crate::characters::uuid_text(&sheet.uuid), item_id)
-                                });
-                                match removed {
-                                    Some(Ok(true)) => {
-                                        let frame = item_packets::item_remove(
-                                            item_packets::ITEM_STREAM,
-                                            item_id,
-                                        );
-                                        self.send(io, peer, crypt, &[frame], "the item's removal")
-                                            .await;
-                                    }
-                                    Some(Ok(false)) => self.say(
-                                        LogLevel::Info,
-                                        format!(
-                                            "Gameplay connection from {peer}: item {item_id} is not the character's, so it is not destroyed."
-                                        ),
-                                    ),
-                                    Some(Err(error)) => self.say(
-                                        LogLevel::Warn,
-                                        format!(
-                                            "Gameplay connection from {peer}: the item could not be destroyed: {error}"
-                                        ),
-                                    ),
-                                    None => self.say(
-                                        LogLevel::Warn,
-                                        format!(
-                                            "Gameplay connection from {peer}: a destroy was asked for, and this world has no character database."
-                                        ),
-                                    ),
-                                }
-                            }
-                            None => self.say(
+                            .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]));
+                        let count = message.get(6).copied();
+                        let (Some(item_id), Some(count)) = (item_id, count) else {
+                            self.say(
                                 LogLevel::Warn,
                                 format!(
-                                    "Gameplay connection from {peer}: a destroy of {} bytes cannot be read.",
+                                    "Gameplay connection from {peer}: a drop of {} bytes cannot be read.",
                                     message.len()
+                                ),
+                            );
+                            return;
+                        };
+                        if item_id == 0 || count == 0 {
+                            self.say(
+                                LogLevel::Info,
+                                format!(
+                                    "Gameplay connection from {peer}: a drop of {count} of item {item_id} names something that is not an item; ignored."
+                                ),
+                            );
+                            return;
+                        }
+                        let Some(pool) = self.characters.as_ref() else {
+                            return;
+                        };
+                        let characters = crate::characters::DatabaseCharacters::new(
+                            std::sync::Arc::clone(pool),
+                            self.log.clone(),
+                        );
+                        let uuid = crate::characters::uuid_text(&sheet.uuid);
+                        match characters.take_from_stack(&uuid, item_id, u32::from(count)) {
+                            Ok(Some(remaining)) => self.say(
+                                LogLevel::Info,
+                                format!(
+                                    "Gameplay connection from {peer}: {count} of item {item_id} dropped; {remaining} left in the bag, and nothing is sent."
+                                ),
+                            ),
+                            Ok(None) => self.say(
+                                LogLevel::Info,
+                                format!(
+                                    "Gameplay connection from {peer}: a drop names item {item_id}, which the character does not carry in that quantity; ignored."
+                                ),
+                            ),
+                            Err(error) => self.say(
+                                LogLevel::Warn,
+                                format!(
+                                    "Gameplay connection from {peer}: the drop could not be written: {error}"
                                 ),
                             ),
                         }
                     }
+                    // `GAME_CMSG_UNEQUIP_ITEM` (`0x804F`): the working implementation answers it by
+                    // saying what it cannot do - the message carries no item id and no capture shows
+                    // what it means, and dragging the item out of the equipped bag works instead
+                    // (`ASURA/crates/asura-world/src/item.rs:555`).
+                    CLIENT_UNEQUIP_ITEM => self.say(
+                        LogLevel::Info,
+                        format!(
+                            "Gameplay connection from {peer}: an unequip (0x804F) is not ported: it carries no item id and no capture shows what it means; dragging the item out of the equipped bag is the path that works."
+                        ),
+                    ),
                     // The client wears one of its items: where it goes is the slot its kind is worn
                     // in, in the bag the setting says is equipped, and the client is told the place.
                     CLIENT_EQUIP_ITEM => {
@@ -2341,23 +2569,6 @@ fn item_move(message: &[u8]) -> Option<(u32, u16, u8)> {
 }
 
 /// The x and y a movement message carries: a `Vect2` right after the header.
-/// What a client's `0x00B1` travel asks for: the map, the territory, the district, the language and
-/// the flag - the nine-byte frame `docs/game-rules.md` E220 measured and E28 splits.
-fn client_travel(message: &[u8]) -> Option<(u16, u8, u16, u8, u8)> {
-    let map = message.get(2..4)?;
-    let territory = *message.get(4)?;
-    let district = message.get(5..7)?;
-    let language = *message.get(7)?;
-    let flag = *message.get(8)?;
-    Some((
-        u16::from_le_bytes([map[0], map[1]]),
-        territory,
-        u16::from_le_bytes([district[0], district[1]]),
-        language,
-        flag,
-    ))
-}
-
 impl Session for WorldSession {
     fn run(self: Box<Self>, mut io: SessionIo) -> SessionFuture {
         Box::pin(async move {
@@ -2457,17 +2668,24 @@ mod tests {
     }
 
     #[test]
-    fn a_travel_request_is_the_nine_bytes_the_ledger_measured() {
-        // E220's own example, as the client sends it: map 148, territory -2, no district, no
-        // language, and the flag that was 1 in every captured request.
-        let mut message = vec![0xB1, 0x00];
+    fn a_travel_request_names_the_instance_in_its_first_two_bytes() {
+        // The client's own frame, as the working implementation's log records it: `B1 80 | 94 00 | 02 |
+        // 00 00 | 0...` - the header `0x80B1`, then the instance. This tree read it as `0x00B1` (the
+        // server's own party message) and parsed five fields the working implementation does not read.
+        let mut message = vec![0xB1, 0x80];
         message.extend_from_slice(&148u16.to_le_bytes());
-        message.push(0xFE);
-        message.extend_from_slice(&0u16.to_le_bytes());
-        message.push(0);
-        message.push(1);
-        assert_eq!(client_travel(&message), Some((148, 0xFE, 0, 0, 1)));
-        assert_eq!(client_travel(&message[..8]), None, "short messages are not read");
+        message.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00]);
+        assert_eq!(message.len(), 9, "the frame is nine bytes");
+        assert_eq!(
+            u16::from_le_bytes([message[0], message[1]]),
+            CLIENT_PARTY_TRAVEL,
+            "the header is the party travel's"
+        );
+        assert_eq!(
+            u16::from_le_bytes([message[2], message[3]]),
+            148,
+            "and the instance is at its head"
+        );
     }
 
     /// The templates a test's world runs with, built from the creation content's own definitions: what
@@ -3269,35 +3487,50 @@ Logger.root = 6,Console
         assert_eq!(&placed[8..10], &equipped_bag.id.to_le_bytes(), "the equipped bag");
         assert_eq!(placed[10], worn_slot, "the slot its kind is worn in");
 
-        // 4e. A destroy: the row goes, and the client is told the item is gone.
-        let doomed = starting
+        // 4e. A drop (`0x802C`, the item and a count byte): the stack is the state and **nothing goes
+        // back**, which is what the working implementation does and what its notes on the two
+        // candidates say each cost a live client (`ASURA/crates/asura-world/src/item.rs:187-246`).
+        let dropped = starting
             .items
             .iter()
-            .find(|item| item.id != worn.id && item.id != 1)
-            .expect("the set carries more than two items")
+            .find(|item| item.id != worn.id && item.id != 1 && item.quantity > 1)
+            .expect("the set carries a stack of more than one")
             .id;
-        let mut ask = vec![0x69, 0x80];
-        ask.extend_from_slice(&doomed.to_le_bytes());
+        let before = crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
+            .items_of(&character_text)
+            .expect("the item rows are readable")
+            .iter()
+            .find(|row| row.item_id == dropped)
+            .map(|row| row.quantity)
+            .expect("the stack is one of the character's");
+        let mut ask = vec![0x2C, 0x80];
+        ask.extend_from_slice(&dropped.to_le_bytes());
+        ask.push(1);
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
-        let mut gone = vec![0u8; 8];
-        client.read_exact(&mut gone).unwrap();
-        reading.apply(&mut gone);
+        // **No answer**: the next thing the connection says is the answer to what is asked next -
+        // here the entry position, which is `0x0196` and the first tick. A drop puts nothing on the
+        // wire at all (`ASURA/crates/asura-world/src/item.rs:236-246`).
+        let mut ask = vec![0x88, 0x80];
+        sending.apply(&mut ask);
+        client.write_all(&ask).unwrap();
+        let mut next = vec![0u8; 32];
+        client.read_exact(&mut next).unwrap();
+        reading.apply(&mut next);
         assert_eq!(
-            &gone[..2],
-            &[0x4D, 0x01],
-            "the item's removal; got {}",
-            shared::network::socket::hex(&gone)
+            &next[..2],
+            &[0x96, 0x01],
+            "the drop is answered with nothing, so the entry position is next; got {}",
+            shared::network::socket::hex(&next)
         );
-        assert_eq!(&gone[2..4], &item_packets::ITEM_STREAM.to_le_bytes(), "the stream");
-        assert_eq!(&gone[4..8], &doomed.to_le_bytes(), "the item");
-        let held = crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
+        let after = crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
             .items_of(&character_text)
-            .expect("the item rows are readable");
-        assert!(
-            held.iter().all(|row| row.item_id != doomed),
-            "the destroyed item's row is gone"
-        );
+            .expect("the item rows are readable")
+            .iter()
+            .find(|row| row.item_id == dropped)
+            .map(|row| row.quantity)
+            .expect("the stack is still there");
+        assert_eq!(after, before - 1, "one was taken off the stack");
 
         // 5. The record is claimed once: a second claim finds nothing.
         let claimed = crate::maps::DatabaseTravels::new(Arc::clone(&login), log.clone())

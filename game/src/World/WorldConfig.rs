@@ -64,6 +64,13 @@ pub struct WorldConfig {
     /// stops where the server believes it is and nothing goes on the wire, so the client is never
     /// ordered backwards.
     pub max_allowed_correction: f32,
+    /// The address a travelling client is told to reconnect to, as `host:port`.
+    ///
+    /// The working implementation publishes one (`--public`, `ASURA/crates/asura-world/src/main.rs:73`);
+    /// this stack's client dials the address it was launched against, which is the login's port, and the
+    /// front door copies that connection to the world (`docs/port/02-wire.md`), so the default is that
+    /// address.
+    pub public_address: String,
 }
 
 impl Default for WorldConfig {
@@ -85,6 +92,7 @@ impl Default for WorldConfig {
             agent_speed: 288.0,
             appearance: 0x0310_0000,
             max_allowed_correction: 250.0,
+            public_address: "127.0.0.1:6112".to_string(),
         }
     }
 }
@@ -127,6 +135,10 @@ impl WorldConfig {
         settings.appearance = small(config, "Appearance", settings.appearance)?;
         settings.max_allowed_correction =
             number(config, "MaxAllowedCorrection", settings.max_allowed_correction)?;
+        let (public_address, _) = config
+            .value_string("World.PublicAddress", &settings.public_address)
+            .map_err(|error| error.to_string())?;
+        settings.public_address = public_address.trim().to_string();
 
         notes.push(format!(
             "World: a district holds {} player(s) (R5), a party is capped at {} (R15), a character lands within {:.0} units of its spawn point (R13), an explorable is held {} s for a network disconnect (R37), the compass range is {:.0} (R34), ticking is {} every {} ms, the instance table is swept every {} ms, the mission button is {} (R56).",
@@ -139,6 +151,10 @@ impl WorldConfig {
             settings.simulation_tick_ms,
             settings.sweep_interval_ms,
             if settings.mission_button { "shown" } else { "hidden" },
+        ));
+        notes.push(format!(
+            "World: a travel is redirected to {} (World.PublicAddress).",
+            settings.public_address,
         ));
         notes.push(format!(
             "World: a player agent is created with {} health, {} energy, {:.1} energy a second and a walking speed of {:.0}; a character with no appearance of its own is drawn as 0x{:08X}.",
@@ -197,7 +213,7 @@ mod tests {
     fn a_file_that_states_nothing_keeps_the_games_numbers() {
         let (settings, notes) = WorldConfig::read(&config("")).expect("reads");
         assert_eq!(settings, WorldConfig::default());
-        assert_eq!(notes.len(), 2, "the read is reported: the rules, then the agent");
+        assert_eq!(notes.len(), 3, "the read is reported: the rules, the redirect address, then the agent");
     }
 
     #[test]
