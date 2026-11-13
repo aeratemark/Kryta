@@ -7,10 +7,19 @@
 //!
 //! What it is for: a map's geometry - the path graph a walk is answered from - is a chunk inside one of
 //! the archive's entries, and a map's file id (the number `0x0196` carries) is the way in. `Gwdat.rs` is
-//! the index that turns a file id into an entry; the decoder that turns an entry into bytes is the next
-//! piece of this noun.
+//! the index that turns a file id into an entry, and `FaCompress.rs` is the decoder that turns a
+//! compressed entry into bytes (`FaCompress.c`'s `FaDecompress`, with its six static tables in
+//! `FaCompressTables.rs`). Together they are the archive reader the reference's `FaArchive.c` is; what is
+//! built on top of them - the map blob, its path tables and the finder - is the next piece.
+
+#[path = "FaCompress.rs"]
+pub mod fa_compress;
+
+#[path = "FaCompressTables.rs"]
+pub mod fa_compress_tables;
 
 #[path = "Gwdat.rs"]
 pub mod gwdat;
 
+pub use fa_compress::{DecompressError, decompress};
 pub use gwdat::{Entry, GwDat, Header, MAGIC};

@@ -264,6 +264,42 @@ impl GwDat {
         Ok(Some(bytes))
     }
 
+    /// The **decompressed** bytes of an entry: what `FaGetFile` returns.
+    ///
+    /// A stored entry is its own content. A compressed one is decoded by [`crate::pack::fa_compress`]
+    /// against the size in its last four bytes, which is the pair `FaGetFile` performs.
+    pub fn file(&mut self, file_id: u32) -> io::Result<Option<Vec<u8>>> {
+        let Some(entry) = self.entry(file_id) else {
+            return Ok(None);
+        };
+        let Some(stored) = self.stored(file_id)? else {
+            return Ok(None);
+        };
+        if entry.compressed == 0 {
+            return Ok(Some(stored));
+        }
+        if stored.len() < 4 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("entry {file_id:#X} is compressed but too short to carry its size"),
+            ));
+        }
+        let announced = u32::from_le_bytes([
+            stored[stored.len() - 4],
+            stored[stored.len() - 3],
+            stored[stored.len() - 2],
+            stored[stored.len() - 1],
+        ]);
+        let content = crate::pack::fa_compress::decompress(&stored[..stored.len() - 4], announced as usize)
+            .map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("entry {file_id:#X} did not decompress: {error}"),
+                )
+            })?;
+        Ok(Some(content))
+    }
+
     /// The decompressed size an entry announces: the low `u32` of its last four bytes. `None` for a stored
     /// entry, which needs no size.
     pub fn announced_size(&mut self, file_id: u32) -> io::Result<Option<u32>> {
@@ -381,6 +417,52 @@ mod tests {
             ids.windows(2).all(|pair| pair[0] < pair[1]),
             "the census is sorted and has no repeats"
         );
+    }
+
+    /// The decoder, against the real archive: a map blob comes out as the RIFF container the reference's
+    /// importer parses - `ffna` at byte 0, a chunk type at 4 - and exactly the length the entry announced.
+    /// A decoder off by a bit gives the right length and the wrong bytes, so the signature is the check.
+    #[test]
+    fn a_map_blob_decompresses_to_the_containers_own_signature() {
+        let Some(path) = gw_dat_path() else {
+            eprintln!("skipped: no local Gw.dat (set KRYTA_GW_DAT or put one beside the workspace)");
+            return;
+        };
+        let mut archive = GwDat::open(&path).expect("open Gw.dat");
+
+        for (label, file_id) in [
+            ("Kamadan", 0x345CC_u32),
+            ("Lakeside County / Ascalon City", 0x1B97D),
+            ("The Catacombs", 0x5CEE6),
+        ] {
+            let entry = archive.entry(file_id).expect("the entry is there");
+            if entry.compressed == 0 {
+                continue; // a stored entry is not this test's subject
+            }
+            let content = archive
+                .file(file_id)
+                .unwrap_or_else(|error| panic!("{label}: {error}"))
+                .expect("the entry is there");
+            let announced = archive
+                .announced_size(file_id)
+                .expect("read the tail")
+                .expect("a compressed entry announces a size");
+            assert_eq!(
+                content.len(),
+                announced as usize,
+                "{label}: the decoded length is the size the entry announced"
+            );
+            assert_eq!(
+                &content[0..4],
+                b"ffna",
+                "{label}: the first four bytes are the reference's own RIFF signature"
+            );
+            assert!(
+                content[4] < 16,
+                "{label}: the fifth byte is a chunk type ({})",
+                content[4]
+            );
+        }
     }
 
     /// A file that is not an archive is refused by its magic rather than read as one.
