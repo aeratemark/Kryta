@@ -330,7 +330,10 @@ road.
    `STAGE_SHIFT`, `STAGE_MAP`, the three node index bases and the three `NODE_TYPE_*` bytes - in
    `game/src/Terrain/MapData.rs`, same names, same fields, same order, proved by
    `terrain::map_data`'s three tests. The importer that fills them is step 4, below.
-2. **`graph_dump.rs`**, whole: the `ASURAPG1` container, `encode`, `decode`, and its own tests.
+2. **(done)** **`graph_dump.rs`**, whole: the `ASURAPG1` container, `DumpedGraph`, `encode`, `decode`,
+   `Cursor`, the three index/tag helpers, and its tests - in `game/src/Terrain/GraphDump.rs`, three
+   tests green (a round trip of every field, a foreign or truncated or future-version file refused, an
+   empty dump).
 3. **`pathfind.rs`** and **`pathfind/directional.rs`**, whole: the finder, with the reference's own
    quirks kept - `PathReciproc`/`PathSqrt` through the ported tables, `PathFindTrapezoid` by the same
    walk, no FPU substitutions, no tidying.
