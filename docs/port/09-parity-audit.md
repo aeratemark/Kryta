@@ -70,7 +70,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x8020` | `AUTH_CMSG_SETTING_UPDATE_CONTENT` (522) | `lib.rs:369-382` | `session.rs`: acknowledged with status 0 | ported |
 | `0x8021` | `AUTH_CMSG_SETTING_UPDATE_SIZE` | `lib.rs:369-382` | `session.rs`: acknowledged with status 0 | ported |
 | `0x8026` | `AUTH_CMSG_ACCEPT_EULA` | `lib.rs:487`, `decode_eula` | `session.rs`, recorded | ported |
-| `0x8029` | `AUTH_CMSG_REQUEST_GAME_INSTANCE` | `lib.rs:507`, `travel::answer` | `session.rs` `answer_game_instance` | ported thin: no lease, no capacity, no world probe, 1 of 3 placement rules |
+| `0x8029` | `AUTH_CMSG_REQUEST_GAME_INSTANCE` | `lib.rs:507`, `travel::answer` | `session.rs` `answer_game_instance` | ported thin: no lease, no capacity, no world probe, and 2 of `asura-rules`' 3 placement rules - see the stop below |
 | `0x8035` | `AUTH_CMSG_ASK_SERVER_RESPONSE` | `lib.rs` | `session.rs` | ported |
 | `0x8038` | `AUTH_CMSG_PORTAL_ACCOUNT_LOGIN` | `lib.rs:572-680` | `session.rs` `answer_login`: the named character is recorded, or the account's first | ported |
 
@@ -264,6 +264,37 @@ setting that selects one.
    seat reservation and no doorway crossing (`portals.rs`), so a portal in the map does nothing.
 
 
+
+## 7a. The one stop: a destination's map kind, and where it would come from
+
+`asura-rules`' `placement` has a third rule Kryta does not have:
+
+```text
+3. The outpost rule, for every destination that is not a main town.
+     destination_type is None                  -> the client's own map
+     destination_type == main_town             -> the client's own map
+     character.last_outpost == creation_map    -> the fallback outpost, NothingToPlace
+     character.last_outpost == request.map_id  -> the client's own map
+     otherwise                                 -> character.last_outpost, NotAnOutpost
+```
+
+(`ASURA/crates/asura-rules/src/lib.rs:119-135`.) It decides nothing without **`destination_type`** -
+the catalogue's kind for the map the client asked for - and this tree's login program has no catalogue:
+its configuration opens the login and character databases only (`authserver/authserver.json`), and the
+reference's own auth server reads no world database either. The working implementation passes the type
+in from the world catalogue it happens to hold in the same crate.
+
+Three ways out, and the owner picks one - this is a decision, not a piece of work:
+
+1. **The login program reads the world database read-only** for a map's kind. Simple, and it makes the
+   login depend on a third database the reference's login does not open.
+2. **The character row carries the kind** of the map it stands in (a column, or the travel's own
+   record), so the rule needs no catalogue at all. More rows, no new connection.
+3. **Leave it as it is** and say so: every destination the client names is its own until something
+   proves otherwise. That is what this tree does today, and the rule it is missing is the one that
+   refuses an **explorable** as an outpost.
+
+Rule 0 says a missing counterpart is a stop, not a guess, so the audit stops here and asks.
 
 ## 8. The order this audit imposes
 
