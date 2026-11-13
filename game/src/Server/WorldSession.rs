@@ -239,6 +239,9 @@ pub struct WorldSession {
     /// The arrival points the world read with its maps (R21), so a crossing knows where the receiving
     /// map puts the character.
     arrivals: Vec<crate::maps::Arrival>,
+    /// The character this connection is playing, as the version message named it: what the saved
+    /// position and the last outpost are written for.
+    character: std::sync::Mutex<Option<[u8; 16]>>,
     /// Where a claimed travel says the receiving map puts this character, when it was a doorway
     /// crossing: the load stands it there and faces it along the arrival, rather than scattering it
     /// around a spawn point (R13/R21).
@@ -302,6 +305,7 @@ impl WorldSession {
             graphs: std::sync::Arc::clone(world.graphs()),
             portals: std::sync::Arc::clone(world.portals()),
             arrivals: world.arrivals().to_vec(),
+            character: std::sync::Mutex::new(None),
             landing: std::sync::Mutex::new(None),
             portal: std::sync::Mutex::new(PortalStep::default()),
             characters: None,
@@ -1102,8 +1106,12 @@ impl WorldSession {
             }
 
             // R14: the outpost the character is now in is its last outpost, so a later load - or the
-            // login's list - places it there. The row is updated through the noun's own repository.
-            if let Some(pool) = self.characters.as_ref() {
+            // login's list - places it there. **Only an outpost**: an explorable must not overwrite it
+            // (`ASURA/crates/asura-world/src/player.rs:447`), or a party that walks into one and logs out
+            // would be sent back into it instead of the town it came from.
+            if map.kind == Some(crate::world::map_kind::OUTPOST)
+                && let Some(pool) = self.characters.as_ref()
+            {
                 let characters = crate::characters::DatabaseCharacters::new(
                     std::sync::Arc::clone(pool),
                     self.log.clone(),
@@ -1122,6 +1130,9 @@ impl WorldSession {
             }
 
             let sheet = self.character_sheet(&version);
+            if let Ok(mut character) = self.character.lock() {
+                *character = Some(sheet.uuid);
+            }
             // 1 for every load: the reference hardcodes it (`ASURA/crates/asura-world/src/map.rs:34-42`).
             let is_explorable = 1;
             let mut frames = vec![
@@ -1781,6 +1792,12 @@ impl WorldSession {
             );
             return;
         }
+
+        // The arriving position is the destination's to decide, and it is written before the redirect so
+        // the connection the client is about to open reads it (`ASURA/crates/asura-world/src/travel.rs:446-468`).
+        // A crossing hands over its landing; every other travel states none, which **clears** the saved
+        // position - a travel does not preserve where a character was, only a disconnect does.
+        self.place_for_travel(destination, landing, sheet);
 
         let agent = self.player_id();
         let player = self.player_id();
@@ -2525,8 +2542,11 @@ impl WorldSession {
         let mut last_tick = std::time::Instant::now();
         let mut loaded = false;
         // Where the character stands, chosen once: the entry-position answer and the agent the load
-        // creates have to be the same place.
-        let entry = self.entry_point(map);
+        // creates have to be the same place. The saved position is read here, once, because it is what
+        // a reconnect to the map the character left resumes at (R14,
+        // `ASURA/crates/asura-world/src/agent.rs:531-545`).
+        let saved = self.saved_position(sheet);
+        let entry = self.entry_point(map, saved);
         let load_started = std::time::Instant::now();
 
         loop {
@@ -3120,6 +3140,78 @@ impl WorldSession {
 
 
 
+    /// Write where the destination puts the character before the redirect, or clear the saved position
+    /// when the trigger states none.
+    ///
+    /// `ASURA/crates/asura-world/src/travel.rs:446-468`: best-effort - a failed write must not refuse a
+    /// travel the player asked for, and a spawn point is the worst case if it does.
+    fn place_for_travel(
+        &self,
+        destination: &crate::world::MapEntry,
+        landing: Option<(f32, f32)>,
+        sheet: &CharacterSheet,
+    ) {
+        let Some(pool) = self.characters.as_ref() else {
+            return;
+        };
+        let repository =
+            crate::characters::DatabaseCharacters::new(std::sync::Arc::clone(pool), self.log.clone());
+        let uuid = crate::characters::uuid_text(&sheet.uuid);
+        match landing {
+            Some((x, y)) => {
+                let position = crate::characters::Position {
+                    map_id: destination.id,
+                    x,
+                    y,
+                    plane: 0,
+                };
+                if let Err(error) = repository.record_position(&uuid, &position) {
+                    self.say(
+                        LogLevel::Warn,
+                        format!(
+                            "The landing point for map {} was not written ({error}); the destination's spawn list answers instead.",
+                            destination.id
+                        ),
+                    );
+                }
+            }
+            None => {
+                if let Err(error) = repository.forget_position(&uuid) {
+                    self.say(
+                        LogLevel::Warn,
+                        format!(
+                            "The saved position was not cleared for the travel to map {} ({error}); the destination may resume where the character stood.",
+                            destination.id
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    /// The position this character was saved at, or `None` when it has never been saved.
+    ///
+    /// `ASURA/crates/asura-world/src/connection.rs:257-261`: read once, at the load, and handed to the
+    /// entry rule. `pos_plane IS NULL` is what "never saved" means
+    /// (`ASURA/crates/asura-store/src/state/character.rs:226-246`).
+    fn saved_position(&self, sheet: &CharacterSheet) -> Option<crate::characters::Position> {
+        let pool = self.characters.as_ref()?;
+        let repository =
+            crate::characters::DatabaseCharacters::new(std::sync::Arc::clone(pool), self.log.clone());
+        match repository.position(&crate::characters::uuid_text(&sheet.uuid)) {
+            Ok(position) => position,
+            Err(error) => {
+                self.say(
+                    LogLevel::Warn,
+                    format!(
+                        "The character's saved position cannot be read ({error}); the entry rule places it without one."
+                    ),
+                );
+                None
+            }
+        }
+    }
+
     /// One point of a map's own spawn list, scattered by the world's setting (R13) - or, when the
     /// travel this connection claimed was a doorway crossing, the landing that doorway states (R21).
     ///
@@ -3127,7 +3219,11 @@ impl WorldSession {
     /// `spawn_scatter` units around it, and faces the point's angle. The scatter is a setting, never a
     /// constant. A crossing states its own point and its own facing, which the receiving map owns
     /// (`ASURA/crates/asura-world/src/travel.rs:319-338`, `portals::arrival`).
-    fn entry_point(&self, map: &crate::world::MapEntry) -> Option<(f32, f32, u16, (f32, f32))> {
+    fn entry_point(
+        &self,
+        map: &crate::world::MapEntry,
+        saved: Option<crate::characters::Position>,
+    ) -> Option<(f32, f32, u16, (f32, f32))> {
         if let Ok(claimed) = self.landing.lock()
             && let Some(claimed) = *claimed
             && claimed.map_id == map.id
@@ -3147,6 +3243,30 @@ impl WorldSession {
             .collect();
         if points.is_empty() {
             return None;
+        }
+        // An **outpost** is entered at a random point of its own list, scattered (R13); every other map
+        // resumes where the character left it when it left from this map, and stands on the map's own
+        // first point otherwise (`Standing::arrival`/`resume`, `ASURA/crates/asura-world/src/agent.rs:478-545`).
+        if map.kind != Some(crate::world::map_kind::OUTPOST) {
+            if let Some(saved) = saved
+                && saved.map_id == map.id
+            {
+                return Some((
+                    saved.x,
+                    saved.y,
+                    saved.plane.max(0) as u16,
+                    // A resumed position keeps the default direction: the facing of a saved position is
+                    // not stored (`agent.rs:536-545`).
+                    (1.0, 0.0),
+                ));
+            }
+            let first = points[0];
+            return Some((
+                first.x,
+                first.y,
+                first.plane.max(0) as u16,
+                first.direction(),
+            ));
         }
         let mut pick = [0u8; 8];
         let choice = if getrandom::getrandom(&mut pick).is_ok() {
@@ -3527,6 +3647,9 @@ impl WorldSession {
     /// disposes exactly as the lifecycle says - so this only keeps the count honest; the lifecycle
     /// that acts on an empty copy arrives with the instance table.
     fn leave_district(&self) {
+        // The position the character leaves at is written before the place is given back: after the
+        // take below this connection no longer knows which map it was in.
+        self.save_position();
         let entered = self
             .entered
             .lock()
@@ -3545,6 +3668,58 @@ impl WorldSession {
             let frames = crate::districts::farewell(peer.player_id, peer.agent_id);
             peers.broadcast(peer.player_id, peer.map_id, peer.district, &frames);
         }
+    }
+
+    /// Save where the character stood, so a later load resumes there (R14).
+    ///
+    /// `ASURA/crates/asura-world/src/connection.rs:405-423`: written when the player leaves, and **not**
+    /// when the connection was moved by a travel (the seat and the position belong to the connection
+    /// the client is about to open), and never from the creation instance - that map is a conversation
+    /// rather than a place, and saving it would strand the character there on the next login.
+    fn save_position(&self) {
+        let moved = self.moved.lock().map(|moved| *moved).unwrap_or(true);
+        if moved {
+            return;
+        }
+        let Some(map) = self.map() else {
+            return;
+        };
+        if map.is_creation() {
+            return;
+        }
+        let Some(uuid) = self.character.lock().ok().and_then(|character| *character) else {
+            return;
+        };
+        let Some(((x, y), plane)) = self.with_agent(|agent| (agent.position, agent.plane)) else {
+            return;
+        };
+        let Some(pool) = self.characters.as_ref() else {
+            return;
+        };
+        let repository =
+            crate::characters::DatabaseCharacters::new(std::sync::Arc::clone(pool), self.log.clone());
+        let position = crate::characters::Position {
+            map_id: map.id,
+            x,
+            y,
+            plane: plane as i16,
+        };
+        if let Err(error) = repository.record_position(&crate::characters::uuid_text(&uuid), &position)
+        {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "The character's position at ({x:.1}, {y:.1}) plane {plane} on map {} was not saved: {error}",
+                    map.id
+                ),
+            );
+        }
+    }
+
+    /// The map this connection loaded, when it loaded one.
+    fn map(&self) -> Option<crate::world::MapEntry> {
+        let map_id = self.map_id();
+        self.maps.iter().find(|map| map.id == map_id).cloned()
     }
 }
 

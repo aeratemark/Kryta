@@ -1369,3 +1369,214 @@ fn a_second_outpost_loads_with_its_own_file_id_and_a_point_of_its_own_list() {
         std::panic::resume_unwind(panic);
     }
 }
+/// A reconnect to the map the character left resumes where it left (R14).
+///
+/// `ASURA/crates/asura-world/src/agent.rs:531-545` (`Standing::resume`) and
+/// `ASURA/crates/asura-store/src/state/character.rs:226-294`: an **explorable** stands where the
+/// character was saved when it left from that map - only an outpost rolls a spawn point (R13) - and the
+/// position is written when the connection ends. This test takes **43 Silverwood** (file id 40812, two
+/// spawn points of its own), reports a position, drops the connection, and comes back: the entry point
+/// is the point it reported, not the map's own first spawn.
+#[test]
+#[ignore = "needs the databases the world program's configuration names"]
+fn a_reconnect_to_an_explorable_resumes_where_the_character_left() {
+    const MAP: u32 = 43;
+    let name = "E2E Kryta Three";
+    let (mut child, lines, port) = start_world();
+    println!("the world program is listening on port {port}");
+    let (characters, world_pool, login) = open_pools();
+
+    let account = [0x55u8; 16];
+    let (character, _written) = create_character(port, account, name);
+    let uuid_text = game::characters::uuid_text(&character);
+    let repository = game::characters::DatabaseCharacters::new(Arc::clone(&characters), Log::new());
+
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // R12: the destination has to be unlocked, as a scripted travel would.
+        assert!(repository.unlock_map(&uuid_text, MAP).expect("the unlock writes"));
+
+        // The map's own first spawn point: what the entry rule answers with no saved position.
+        let own_point: (f64, f64) = {
+            let mut pool = world_pool.lock().unwrap();
+            let row = pool
+                .query_with(
+                    "SELECT \"x\"::text::float8, \"y\"::text::float8 FROM \"map_spawn\" \
+                     WHERE \"map_id\" = $1::bigint::int ORDER BY \"idx\" LIMIT 1",
+                    &[&(MAP as i64)],
+                )
+                .expect("the spawn rows read")
+                .into_iter()
+                .next()
+                .expect("map 43 states a spawn point");
+            (row.get::<usize, f64>(0), row.get::<usize, f64>(1))
+        };
+
+        // The first connection: the travel record, then the load, then the entry point.
+        game::maps::DatabaseTravels::new(Arc::clone(&login), Log::new())
+            .record(&game::maps::Travel {
+                account,
+                world: 2,
+                map_id: MAP,
+                district: 1,
+                language: 0,
+                player_token: 0x5151,
+                landing: None,
+            })
+            .expect("the first travel is recorded");
+        let (mut stream, mut reading, mut sending) = open_connection(
+            port,
+            GameVersion {
+                version: 39167,
+                h0008: 1,
+                map_token: 2,
+                map_id: MAP,
+                player_token: 0x5151,
+                account,
+                character,
+                h0038: 0,
+                h003c: 0,
+            },
+        );
+        let announced = wait_for(&lines, "is loading - ", Duration::from_secs(30));
+        let block_bytes: usize = announced
+            .split(" message(s), ")
+            .nth(1)
+            .and_then(|rest| rest.split(" bytes").next())
+            .and_then(|count| count.trim().parse().ok())
+            .expect("the load's size is in its log line");
+        // Every byte the cipher reads must be decrypted, or the stream loses its place - the block is
+        // discarded, but it still advances the stream.
+        let mut block = read_exact(&mut stream, block_bytes);
+        reading.apply(&mut block);
+        let mut ping = read_exact(&mut stream, 8);
+        reading.apply(&mut ping);
+        let mut ask = vec![0x88, 0x80];
+        sending.apply(&mut ask);
+        stream.write_all(&ask).expect("the spawn ask");
+        let mut spawn = read_exact(&mut stream, 26);
+        reading.apply(&mut spawn);
+        let entry = (
+            f32::from_le_bytes([spawn[6], spawn[7], spawn[8], spawn[9]]) as f64,
+            f32::from_le_bytes([spawn[10], spawn[11], spawn[12], spawn[13]]) as f64,
+        );
+        assert!(
+            (entry.0 - own_point.0).abs() <= 0.5 && (entry.1 - own_point.1).abs() <= 0.5,
+            "an explorable with no saved position stands on its own first point: {entry:?} against {own_point:?}"
+        );
+
+        // Where the client says it is: a correction the server takes, 120 units away and on the same
+        // plane (`GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED`, `0x8047`, ported from `agent.rs:1117`).
+        let reported = (entry.0 as f32 + 120.0, entry.1 as f32 + 120.0);
+        let mut position = vec![0u8; 14];
+        position[0..2].copy_from_slice(&0x8047u16.to_le_bytes());
+        position[2..6].copy_from_slice(&reported.0.to_le_bytes());
+        position[6..10].copy_from_slice(&reported.1.to_le_bytes());
+        sending.apply(&mut position);
+        stream.write_all(&position).expect("the position report");
+        let answered = read_frames(&mut stream, &mut reading, 0x0029, 1);
+        assert_eq!(
+            answered.last().map(|(header, _)| *header),
+            Some(0x0029),
+            "a taken correction is answered with a destination at that point"
+        );
+
+        // The connection ends: the world saves where the character stood (R14).
+        drop(stream);
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let mut saved = None;
+        while std::time::Instant::now() < deadline {
+            match repository.position(&uuid_text).expect("the position reads") {
+                Some(position) => {
+                    saved = Some(position);
+                    break;
+                }
+                None => std::thread::sleep(Duration::from_millis(200)),
+            }
+        }
+        let saved = saved.unwrap_or_else(|| panic!("the leaving connection saved a position"));
+        println!("saved: {saved:?}");
+        assert_eq!(saved.map_id, MAP, "the position belongs to the map it was taken in");
+        assert!(
+            (f64::from(saved.x) - f64::from(reported.0)).abs() <= 1.0
+                && (f64::from(saved.y) - f64::from(reported.1)).abs() <= 1.0,
+            "the saved point is the one the client reported: {saved:?} against {reported:?}"
+        );
+
+        // The second connection: the same map, a new travel record, and the entry point is the saved
+        // position rather than the map's own list.
+        game::maps::DatabaseTravels::new(Arc::clone(&login), Log::new())
+            .record(&game::maps::Travel {
+                account,
+                world: 2,
+                map_id: MAP,
+                district: 1,
+                language: 0,
+                player_token: 0x5252,
+                landing: None,
+            })
+            .expect("the second travel is recorded");
+        let (mut stream, mut reading, mut sending) = open_connection(
+            port,
+            GameVersion {
+                version: 39167,
+                h0008: 1,
+                map_token: 2,
+                map_id: MAP,
+                player_token: 0x5252,
+                account,
+                character,
+                h0038: 0,
+                h003c: 0,
+            },
+        );
+        let announced = wait_for(&lines, "is loading - ", Duration::from_secs(30));
+        let block_bytes: usize = announced
+            .split(" message(s), ")
+            .nth(1)
+            .and_then(|rest| rest.split(" bytes").next())
+            .and_then(|count| count.trim().parse().ok())
+            .expect("the load's size is in its log line");
+        let mut block = read_exact(&mut stream, block_bytes);
+        reading.apply(&mut block);
+        let mut ping = read_exact(&mut stream, 8);
+        reading.apply(&mut ping);
+        let mut ask = vec![0x88, 0x80];
+        sending.apply(&mut ask);
+        stream.write_all(&ask).expect("the spawn ask");
+        let mut spawn = read_exact(&mut stream, 26);
+        reading.apply(&mut spawn);
+        let resumed = (
+            f32::from_le_bytes([spawn[6], spawn[7], spawn[8], spawn[9]]) as f64,
+            f32::from_le_bytes([spawn[10], spawn[11], spawn[12], spawn[13]]) as f64,
+        );
+        assert!(
+            (resumed.0 - f64::from(reported.0)).abs() <= 1.0
+                && (resumed.1 - f64::from(reported.1)).abs() <= 1.0,
+            "the reconnect resumed where the character left: {resumed:?} against {reported:?}"
+        );
+        assert!(
+            (resumed.0 - own_point.0).abs() > 1.0 || (resumed.1 - own_point.1).abs() > 1.0,
+            "and not on the map's own first spawn point: {own_point:?}"
+        );
+        println!("resumed at ({}, {}), the point the client reported", resumed.0, resumed.1);
+    }));
+
+    {
+        let mut pool = characters.lock().unwrap();
+        for statement in [
+            "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1",
+            "DELETE FROM \"character_unlock\" WHERE \"character_uuid\" = $1",
+            "DELETE FROM \"characters\" WHERE \"uuid\" = $1",
+        ] {
+            let _ = pool.query_with(statement, &[&uuid_text]);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    while let Ok(line) = lines.try_recv() {
+        println!("world> {line}");
+    }
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}

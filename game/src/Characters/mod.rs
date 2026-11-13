@@ -20,6 +20,22 @@ pub use repository::{
 
 use std::fmt;
 
+/// Where a character last stood, and the map the position belongs to.
+///
+/// `ASURA/crates/asura-store/src/state/character.rs:213-224`, `Position`: a position is only usable on
+/// the map it was taken in, and `None` from the repository means the character has never been saved.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Position {
+    /// The map the position belongs to.
+    pub map_id: u32,
+    /// The coordinate the client reports.
+    pub x: f32,
+    /// The coordinate that goes with it.
+    pub y: f32,
+    /// The plane inside the map blob, the client's third coordinate.
+    pub plane: i16,
+}
+
 /// The version byte pair `CharacterSettings` starts with.
 ///
 /// Evidence: `ASURA`'s `character_settings`, which records the reference's own constant 6 in the first

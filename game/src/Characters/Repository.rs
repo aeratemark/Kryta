@@ -222,6 +222,112 @@ impl DatabaseCharacters {
         }
     }
 
+    /// Where a character last stood, or `None` when it has never been saved.
+    ///
+    /// `ASURA/crates/asura-store/src/state/character.rs:226-246`, `position`: `pos_plane IS NULL` is
+    /// what "never saved" means, and the whole row is then ignored - a character that has never been
+    /// played has `pos_x`/`pos_y` at their default of 0, which is a legal coordinate and must not be
+    /// read as a position.
+    pub fn position(&self, uuid: &str) -> Result<Option<crate::characters::Position>, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "SELECT \"map_id\"::bigint, \"pos_x\", \"pos_y\", \"pos_plane\"::bigint \
+                 FROM \"characters\" WHERE \"uuid\" = $1",
+                vec![Param::Text(uuid.to_string())],
+            ),
+            Err(_) => {
+                return Err(
+                    "the character database pool is poisoned; no position can be read".to_string(),
+                );
+            }
+        };
+        let rows = match reply.recv() {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(error)) => return Err(format!("the position cannot be read: {error}")),
+            Err(_) => {
+                return Err(
+                    "the character database answered no query: it is shutting down".to_string(),
+                );
+            }
+        };
+        let Some(row) = rows.first() else {
+            return Ok(None);
+        };
+        let plane: Option<i64> = row.get("pos_plane");
+        let Some(plane) = plane else {
+            return Ok(None);
+        };
+        Ok(Some(crate::characters::Position {
+            map_id: row
+                .get::<&str, Option<i64>>("map_id")
+                .unwrap_or(0)
+                .max(0) as u32,
+            x: row.get::<&str, Option<f32>>("pos_x").unwrap_or(0.0),
+            y: row.get::<&str, Option<f32>>("pos_y").unwrap_or(0.0),
+            plane: plane as i16,
+        }))
+    }
+
+    /// Save where a character stands, and which map it stands in.
+    ///
+    /// `ASURA/crates/asura-store/src/state/character.rs:248-274`, `record_position`: written when the
+    /// player leaves, and by a doorway crossing, which knows where the receiving map puts it.
+    pub fn record_position(
+        &self,
+        uuid: &str,
+        position: &crate::characters::Position,
+    ) -> Result<bool, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "UPDATE \"characters\" SET \"map_id\" = $1::bigint, \"pos_x\" = $2::text::real, \
+                 \"pos_y\" = $3::text::real, \"pos_plane\" = $4::bigint WHERE \"uuid\" = $5 \
+                 RETURNING 1",
+                vec![
+                    Param::Integer(i64::from(position.map_id)),
+                    Param::Text(position.x.to_string()),
+                    Param::Text(position.y.to_string()),
+                    Param::Integer(i64::from(position.plane)),
+                    Param::Text(uuid.to_string()),
+                ],
+            ),
+            Err(_) => {
+                return Err(
+                    "the character database pool is poisoned; the position was not recorded"
+                        .to_string(),
+                );
+            }
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(!rows.is_empty()),
+            Ok(Err(error)) => Err(format!("the position was not recorded: {error}")),
+            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+        }
+    }
+
+    /// Forget where a character stood, so the next arrival cannot resume it.
+    ///
+    /// `ASURA/crates/asura-store/src/state/character.rs:276-294`, `forget_position`: `pos_plane` is
+    /// cleared, which reads back as a character that has never been played. `map_id` is left alone - it
+    /// is the map the character is in, which the arrival itself records.
+    pub fn forget_position(&self, uuid: &str) -> Result<bool, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "UPDATE \"characters\" SET \"pos_plane\" = NULL WHERE \"uuid\" = $1 RETURNING 1",
+                vec![Param::Text(uuid.to_string())],
+            ),
+            Err(_) => {
+                return Err(
+                    "the character database pool is poisoned; the position was not cleared".to_string(),
+                );
+            }
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(!rows.is_empty()),
+            Ok(Err(error)) => Err(format!("the position was not cleared: {error}")),
+            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+        }
+    }
+
     /// One query, and the characters it answered.
     fn read(&self, sql: &str, params: Vec<Param>) -> Vec<Character> {
         let reply = match self.pool.lock() {
