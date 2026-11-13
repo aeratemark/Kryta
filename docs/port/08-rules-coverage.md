@@ -32,7 +32,7 @@ The states are:
 | R20/R12 world-map travel reaches unlocked outposts; unlocks gate travel | data | `character_unlock` rows with the starting unlock written at the confirm; the world now only enters an unlocked map - a character with no rows has the world's first outpost unlocked at load, and a claimed map it has not unlocked closes the connection (`a_travel_record_decides_the_map_and_the_district` asserts the written row; `a_claimed_map_the_character_has_not_unlocked_is_refused` proves the refusal writes nothing). The seam is proven at the program level too: `authserver/tests/end_to_end.rs` records the travel from the login, spawns the world, and the world claims that travel and answers a load block for the travel's map. R20's own travel list still needs the answer's wire |
 | R21 a portal crossing lands on the destination's arrival point | data | `map_arrival` read into the world; the crossing itself is blocked |
 | R13 entry takes a random spawn point, scattered | in | `WorldSession::entry_point` and the load's `0x0196`; `An outpost connection is loaded with its entry point` |
-| R14 a load places the character at its last outpost | in | the load writes `last_outpost` on the character's row; the login's list reports it |
+| R14 a load places the character at its last outpost | in | an **outpost** writes `last_outpost` (an explorable must not overwrite it, ASURA `player.rs:447`) and the login's list reports it; a map that is not an outpost resumes the saved position instead, written when the connection ends and cleared by a travel that is not a doorway crossing (`ASURA` `character.rs:213-294`, `agent.rs:531-545`) - proved by `a_reconnect_to_an_explorable_resumes_where_the_character_left` |
 
 ## The travel unit: party, heroes, henchmen
 

@@ -563,6 +563,20 @@ count and six-byte pairs (or a compressed band). Those rows are ASURA's own and 
 bytes; the walker is only ever asked to read a *server-emitted* frame in a test, so the tests read those
 two blocks by size instead (`worldserver/tests/end_to_end.rs`).
 
+**A reconnect resumes where the character left (R14).** `Position`, `position`, `record_position` and
+`forget_position` are `ASURA/crates/asura-store/src/state/character.rs:213-294` ported onto the
+character row (`data/sql/base/db_characters/0006-character-position.sql`: `map_id`, `pos_x`, `pos_y`,
+`pos_plane`, where a NULL plane is "never saved"), and the entry rule is `agent.rs:478-545`: a doorway
+landing first, an **outpost** rolls one of its own spawn points (R13), and every other map resumes the
+saved position when it belongs to that map and stands on the map's own first point otherwise. The
+position is written when the connection ends - not when a travel moved it, and never from the creation
+instance, which would strand a character there (`connection.rs:405-423`) - and a doorway crossing writes
+its landing while every other travel **clears** the position (`travel.rs:446-468`), because a travel
+does not preserve where a character was. Only an outpost updates `last_outpost` (`player.rs:447`).
+`a_reconnect_to_an_explorable_resumes_where_the_character_left` proves it end to end: map 43
+Silverwood, a position reported and saved on disconnect, and the second connection standing at exactly
+that point rather than the map's own first spawn.
+
 **What is not ported, and why - all three are stops, not gaps:**
 
 - **NPCs and monsters.** ASURA creates exactly one agent per connection - the player's own
