@@ -849,3 +849,371 @@ fn vector_at(plane: &Plane, index: u32, what: &'static str) -> Result<Vec2f, Imp
         .copied()
         .ok_or(ImportError::Index { what })
 }
+impl PathStaticData {
+    /// `PathImport_ReadYNodes`: a position and the halves above and below it.
+    fn read_ynodes(&mut self, index: usize, reader: &mut Reader<'_>) -> Result<(), ImportError> {
+        let length = reader.tagged(5)?;
+        let count = self.planes[index].ynodes.len();
+        if length != count * 12 {
+            return Err(ImportError::Shape(
+                "the y-node section is not twelve bytes per node",
+            ));
+        }
+        let rows = reader.take(length, "the plane's y nodes")?;
+
+        for (idx, row) in rows.as_chunks::<12>().0.iter().enumerate() {
+            let plane = &self.planes[index];
+            let pos = vector_at(plane, u32_at(row, 0), "a y node's position")?;
+            let above = node_ref(u32_at(row, 4), plane);
+            let bellow = node_ref(u32_at(row, 8), plane);
+            self.planes[index].ynodes[idx] = YNode { pos, above, bellow };
+        }
+        Ok(())
+    }
+
+    /// `PathImport_ReadSinkNodes`: which trapezoid each leaf is.
+    fn read_sink_nodes(
+        &mut self,
+        index: usize,
+        reader: &mut Reader<'_>,
+    ) -> Result<(), ImportError> {
+        let length = reader.tagged(6)?;
+        let count = self.planes[index].sink_nodes.len();
+        if length != count * 4 {
+            return Err(ImportError::Shape(
+                "the sink-node section is not four bytes per node",
+            ));
+        }
+        let rows = reader.take(length, "the plane's sink nodes")?;
+
+        let traps = self.planes[index].trapezoids.len();
+        for (slot, row) in self.planes[index]
+            .sink_nodes
+            .iter_mut()
+            .zip(rows.as_chunks::<4>().0)
+        {
+            let trap = u32_at(row, 0) as usize;
+            if trap >= traps {
+                return Err(ImportError::Index {
+                    what: "a sink node names a trapezoid the plane does not have",
+                });
+            }
+            *slot = SinkNode { trap };
+        }
+        Ok(())
+    }
+
+    /// `PathImport_ReadPortalTraps`: the trapezoids a portal leads to. An index past the plane's
+    /// trapezoids leaves the reference's NULL, which is `None` here.
+    fn read_portal_traps(
+        &mut self,
+        index: usize,
+        reader: &mut Reader<'_>,
+    ) -> Result<(), ImportError> {
+        let length = reader.tagged(10)?;
+        let count = self.planes[index].portals_traps.len();
+        if length != count * 4 {
+            return Err(ImportError::Shape(
+                "the portal-trapezoid section is not four bytes per entry",
+            ));
+        }
+        let rows = reader.take(length, "the plane's portal trapezoids")?;
+
+        let traps = self.planes[index].trapezoids.len();
+        for (slot, row) in self.planes[index]
+            .portals_traps
+            .iter_mut()
+            .zip(rows.as_chunks::<4>().0)
+        {
+            let trap = u32_at(row, 0) as usize;
+            *slot = (trap < traps).then_some(trap);
+        }
+        Ok(())
+    }
+
+    /// `PathImport_ReadPortals`: the ways between planes, paired with their counterpart.
+    ///
+    /// The pairing key is `(plane << 16) | shared_id`, which is why a portal records the shared id it was
+    /// registered under: the counterpart is looked up as `(neighbor_plane << 16) | shared_id`.
+    fn read_portals(
+        &mut self,
+        index: usize,
+        reader: &mut Reader<'_>,
+        pairs: &mut std::collections::HashMap<u32, (u16, usize)>,
+    ) -> Result<(), ImportError> {
+        let length = reader.tagged(9)?;
+        let count = self.planes[index].portals.len();
+        if length != count * 9 {
+            return Err(ImportError::Shape(
+                "the portal section is not nine bytes per portal",
+            ));
+        }
+        let rows = reader.take(length, "the plane's portals")?;
+
+        for (idx, row) in rows.as_chunks::<9>().0.iter().enumerate() {
+            let traps_count = u32::from(u16_at(row, 0));
+            let traps = u16_at(row, 2) as usize;
+            let neighbor_plane_id = u16_at(row, 4);
+            let shared_id = u32::from(u16_at(row, 6));
+            let flags = row[8];
+
+            let plane_id = self.planes[index].plane_id;
+            self.planes[index].portals[idx] = Portal {
+                portal_plane_id: plane_id,
+                neighbor_plane_id,
+                flags,
+                pair: None,
+                traps_count,
+                traps,
+            };
+
+            let key = (u32::from(plane_id) << 16) | shared_id;
+            pairs.insert(key, (plane_id, idx));
+
+            let neighbor_key = (u32::from(neighbor_plane_id) << 16) | shared_id;
+            if let Some(&(other_plane, other_idx)) = pairs.get(&neighbor_key) {
+                self.planes[usize::from(plane_id)].portals[idx].pair =
+                    Some((other_plane, other_idx));
+                self.planes[usize::from(other_plane)].portals[other_idx].pair =
+                    Some((plane_id, idx));
+            }
+        }
+        Ok(())
+    }
+}
+/// `ChunkId` (`GmMapDataImport.h:3`): what a record in the container holds. Only the path chunk is read
+/// by this importer; the rest are named because the stage arithmetic needs the table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ChunkId {
+    /// The map's own header record.
+    Header = 0,
+    /// The old editor's record.
+    EditorOld = 1,
+    /// The terrain.
+    Terrain = 2,
+    /// The zones.
+    Zones = 3,
+    /// The props.
+    Props = 4,
+    /// An obsolete record.
+    Obsolete1 = 5,
+    /// The water.
+    Water = 6,
+    /// The mission data.
+    Mission = 7,
+    /// The path graph: the one this importer reads.
+    Path = 8,
+    /// The environment.
+    Environment = 9,
+    /// The locations.
+    Locations = 10,
+    /// Another obsolete record.
+    Obsolete2 = 11,
+    /// The map parameters.
+    MapParameters = 12,
+    /// The editor's record.
+    Editor = 13,
+    /// The collision data.
+    Collision = 14,
+    /// The light data.
+    Light = 15,
+    /// The shore data.
+    Shore = 16,
+}
+
+/// The id of the stage-2 path chunk, which is what `GmImportMap` looks for.
+pub const PATH_CHUNK_ID: u32 = (STAGE_MAP << STAGE_SHIFT) | ChunkId::Path as u32;
+
+/// `RIFF_MAP1` / `RIFF_MAP2` (`GmMapDataImport.h:24`): the two container types `GmImportMap` accepts.
+pub const RIFF_MAP1: u8 = 1;
+
+/// The second container type a map blob may carry.
+pub const RIFF_MAP2: u8 = 3;
+
+impl PathStaticData {
+    /// `GmImportMap`: a whole map blob in, the graph out.
+    ///
+    /// The reference does the same three things: refuse a container that is not a map, split it into
+    /// records, and import the stage-2 path chunk. Its `MapParameters` import is commented out in the
+    /// source, so there is nothing there to be in parity with.
+    pub fn import(map: &[u8]) -> Result<PathStaticData, ImportError> {
+        let found = riff_type(map).ok_or(ImportError::Header)?;
+        if found != RIFF_MAP1 && found != RIFF_MAP2 {
+            return Err(ImportError::NotAMap { found });
+        }
+
+        let chunks = Chunks::parse(map)?;
+        let chunk = chunks.get(PATH_CHUNK_ID).ok_or(ImportError::NoPathChunk)?;
+
+        let mut data = PathStaticData::default();
+        let mut reader = Reader::new(chunk.data);
+        data.read(&mut reader)?;
+        Ok(data)
+    }
+
+    /// `PathDataImport`: the section header, the section the reference calls `Step2`, then the planes.
+    fn read(&mut self, reader: &mut Reader<'_>) -> Result<(), ImportError> {
+        // PathImport_CheckHeader.
+        let header = reader.take(12, "the path section's header")?;
+        let signature = u32_at(header, 0);
+        let version = u32_at(header, 4);
+        let sequence = u32_at(header, 8);
+        // `assert(sequence != PATH_SEQUENCE_FAST_SAVE)`, where that constant is -1. The field is not read
+        // for anything else, so a fast save is refused by assertion in the reference and here alike.
+        debug_assert_ne!(sequence, u32::MAX, "the reference refuses a fast save");
+        if signature != PATH_DATA_SIGNATURE || version != PATH_DATA_VERSION {
+            return Err(ImportError::Shape(
+                "the path section's signature or version is not the one the reference reads",
+            ));
+        }
+
+        // PathImport_Step2. The length is read from byte 1 of five, so the u32 overlaps the tag byte that
+        // follows it; that is the reference's arithmetic and the file's layout, not a typo made twice.
+        if reader.len() <= 5 {
+            return Err(ImportError::Truncated("the section after the path header"));
+        }
+        let step2_length = u32_at(reader.bytes, 1) as usize;
+        reader.take(5, "the section after the path header")?;
+        reader.take(step2_length, "the section after the path header")?;
+
+        // PathImport_ReadPlanes.
+        self.read_planes(reader)
+    }
+
+    /// `PathImport_ReadPlanes`: how many planes, then each plane in turn.
+    fn read_planes(&mut self, reader: &mut Reader<'_>) -> Result<(), ImportError> {
+        reader.tagged(8)?; // the section's length; the plane count is the first four bytes of it
+        let count_bytes = reader.take(4, "the plane count")?;
+        let count = u32_at(count_bytes, 0) as usize;
+
+        // The reference keeps this hash for the whole import: a portal pairs with one on a plane that may
+        // be finished (`PathImport_ReadPortals`).
+        let mut pairs: std::collections::HashMap<u32, (u16, usize)> = std::collections::HashMap::new();
+        self.planes.reserve(count);
+        for _ in 0..count {
+            self.read_plane(reader, &mut pairs)?;
+        }
+        Ok(())
+    }
+
+    /// `PathImport_ReadPlane`: a plane is its id plus ten sections, in a fixed order.
+    fn read_plane(
+        &mut self,
+        reader: &mut Reader<'_>,
+        pairs: &mut std::collections::HashMap<u32, (u16, usize)>,
+    ) -> Result<(), ImportError> {
+        let plane_id = u16::try_from(self.planes.len())
+            .map_err(|_| ImportError::Shape("more planes than a plane id can name"))?;
+        self.planes.push(Plane {
+            plane_id,
+            ..Plane::default()
+        });
+        let index = self.planes.len() - 1;
+
+        self.read_counts(index, reader)?;
+        self.skip_tag11(index, reader)?;
+        self.read_vectors(index, reader)?;
+        self.read_trapezoids(index, reader)?;
+        self.read_root_node(index, reader)?;
+        self.read_xnodes(index, reader)?;
+        self.read_ynodes(index, reader)?;
+        self.read_sink_nodes(index, reader)?;
+        self.read_portal_traps(index, reader)?;
+        self.read_portals(index, reader, pairs)?;
+        Ok(())
+    }
+}
+#[cfg(test)]
+mod importer_tests {
+    use super::*;
+
+    /// `RiffCheckHeader` in three pieces: the signature, the length, and the type table - ASURA's own
+    /// test (`map_data.rs:946`), which the container must pass before anything else.
+    #[test]
+    fn a_blob_that_is_not_a_container_is_refused_by_its_first_five_bytes() {
+        assert!(riff_type(b"ffna\x01").is_some());
+        assert!(riff_type(b"ffna\x09").is_none(), "type 9 is past RIFF_TYPES");
+        assert!(riff_type(b"ffna").is_none(), "five bytes are needed");
+        assert!(riff_type(b"nope\x01").is_none());
+
+        assert_eq!(
+            Chunks::parse(b"nope\x01whatever").unwrap_err(),
+            ImportError::Header
+        );
+        assert_eq!(
+            PathStaticData::import(b"ffna\x07").unwrap_err(),
+            ImportError::NotAMap { found: 7 }
+        );
+        assert_eq!(
+            PathStaticData::import(b"ffna\x01").unwrap_err(),
+            ImportError::NoPathChunk
+        );
+    }
+
+    /// A record that runs past the blob is refused, and a tail too short for a record header is ignored -
+    /// ASURA's own test (`map_data.rs:971`).
+    #[test]
+    fn a_record_that_runs_past_the_blob_is_refused_and_a_tail_that_is_not_one_is_ignored() {
+        let mut blob = Vec::from(*b"ffna\x01");
+        blob.extend_from_slice(&3u32.to_le_bytes());
+        blob.extend_from_slice(&4u32.to_le_bytes());
+        blob.extend_from_slice(b"abcd");
+        blob.extend_from_slice(b"zzz");
+        let chunks = Chunks::parse(&blob).expect("a container");
+        assert_eq!(chunks.len(), 1);
+        let chunk = chunks.get(3).expect("the record is there");
+        assert_eq!(chunk.data, b"abcd");
+        assert!(chunks.get(4).is_none(), "an id nobody wrote is not there");
+
+        let mut broken = Vec::from(*b"ffna\x01");
+        broken.extend_from_slice(&3u32.to_le_bytes());
+        broken.extend_from_slice(&99u32.to_le_bytes());
+        broken.extend_from_slice(b"abcd");
+        assert_eq!(
+            Chunks::parse(&broken).unwrap_err(),
+            ImportError::ChunkPastTheEnd
+        );
+    }
+
+    /// The node-id ranges, ASURA's own test (`map_data.rs:994`): an id names the array its range belongs
+    /// to, and one node too many is a dead end.
+    #[test]
+    fn a_node_id_names_the_array_its_range_belongs_to() {
+        let plane = Plane {
+            xnodes: vec![XNode::default(); 2],
+            ynodes: vec![YNode::default(); 3],
+            sink_nodes: vec![SinkNode::default(); 1],
+            ..Plane::default()
+        };
+        assert_eq!(node_ref(FIRST_X_NODE_INDEX, &plane), Some(NodeRef::X(0)));
+        assert_eq!(node_ref(1, &plane), Some(NodeRef::X(1)));
+        assert_eq!(node_ref(2, &plane), None, "one x node too many is a dead end");
+        assert_eq!(node_ref(FIRST_Y_NODE_INDEX, &plane), Some(NodeRef::Y(0)));
+        assert_eq!(node_ref(FIRST_Y_NODE_INDEX + 2, &plane), Some(NodeRef::Y(2)));
+        assert_eq!(node_ref(FIRST_SINK_NODE_INDEX, &plane), Some(NodeRef::Sink(0)));
+        assert_eq!(node_ref(FIRST_SINK_NODE_INDEX + 1, &plane), None);
+    }
+
+    /// The real archive: map 148's own blob imports, the graph has planes and trapezoids, and the entry
+    /// point the map's config names lands in one of them - the check ASURA uses to know its import worked.
+    #[test]
+    fn the_real_archive_imports_map_148_and_its_spawn_lands_in_a_trapezoid() {
+        let Some(path) = std::env::var("KRYTA_GW_DAT").ok().or_else(|| {
+            let candidate = std::path::PathBuf::from("Gw.dat");
+            candidate.exists().then(|| candidate.to_string_lossy().into_owned())
+        }) else {
+            eprintln!("skipped: no local Gw.dat");
+            return;
+        };
+        let mut archive = crate::pack::GwDat::open(&path).expect("open the archive");
+        let blob = archive.file(0x1B97D).expect("read").expect("the blob is there");
+        let data = PathStaticData::import(&blob).expect("the blob imports");
+        assert!(!data.planes.is_empty(), "the map has planes");
+        assert!(data.traps_count > 0, "and trapezoids");
+        let spawn = (9541.87f32, 4796.46f32);
+        let plane = (0..u16::try_from(data.planes.len()).unwrap())
+            .find(|plane| data.trapezoid_at(Vec2f { x: spawn.0, y: spawn.1 }, *plane).is_some());
+        assert!(plane.is_some(), "map 148s own spawn point lands in a trapezoid");
+    }
+}

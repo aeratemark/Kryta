@@ -389,9 +389,17 @@ road.
      measurement in the comment), `read_vectors` (618), `read_trapezoids` (639 - the `trap_id` counter
      and the four neighbour `trap_ref`s), `read_root_node` (681), `read_xnodes` (705), and the
      `vector_at` they all read through (911), with `Trapezoid::SIZE` = 44.
-   - **Left**: `read_ynodes` (732), `read_sink_nodes` (753), `read_portal_traps` (786), `read_portals`
-     (816) - the four that finish a plane - then `PathStaticData::import` (490), `read` (506),
-     `read_planes` (535) and `read_plane` (551), which wire the readers into the section walk.
+   - **(done)** `read_ynodes` (732), `read_sink_nodes` (753), `read_portal_traps` (786), `read_portals`
+     (816 - the `(plane << 16) | shared_id` pairing), plus `ChunkId`/`PATH_CHUNK_ID`,
+     `RIFF_MAP1`/`RIFF_MAP2`, `PathStaticData::import` (490), `read` (506 - the signature/version check
+     and `PathImport_Step2`'s length read from byte 1 of five), `read_planes` (535) and `read_plane`
+     (551). **The importer is ported.** Four tests: ASURA's container refusal (946), its record-past-the
+     -blob case (971), its node-id ranges (994), and against this machine's real archive - map 148's
+     blob imports, the graph has planes and trapezoids, and the map's own spawn point lands in a
+     trapezoid, which is the check ASURA uses to know its import worked.
+   - **Left**: nothing of the importer. The three callers remain: `import_graph` (pathfind.rs
+     1703-1744) and `PathGraphs::load` / `PathGraphs::import` (1507-1592); then the world's start-up
+     reads a `Gw.dat` (or a dump) and walking answers from this machine's own archive.
    - `PathStaticData::import` (490) and `read` (506): the `PATH_DATA_SIGNATURE`/`PATH_DATA_VERSION`
      check, then `read_planes` (535) -> `read_plane` (551) -> per plane `read_counts` (578),
      `skip_tag11` (606), `read_vectors` (618), `read_trapezoids` (639), `read_root_node` (681),
