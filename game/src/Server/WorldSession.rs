@@ -2631,14 +2631,19 @@ impl WorldSession {
                                 )]
                             }
                             None => {
+                                // A map with no entry spawn and no doorway arrival cannot be entered, and
+                                // the working implementation says so by refusing the load rather than
+                                // leaving the client on a loading screen
+                                // (`ASURA/crates/asura-world/src/agent.rs:513-527`). The connection ends
+                                // with the reason, exactly as there.
                                 self.say(
-                                    LogLevel::Warn,
+                                    LogLevel::Error,
                                     format!(
-                                        "Gameplay connection from {peer}: map {} has no spawn point, so the client is told nothing.",
-                                        map.id
+                                        "Gameplay connection from {peer}: map {} '{}' has no configured entry spawn or doorway arrival; the load is refused.",
+                                        map.id, map.name
                                     ),
                                 );
-                                Vec::new()
+                                return;
                             }
                         };
                         // The answer is the entry point and nothing else: `spawn_block` in the working
