@@ -108,11 +108,9 @@ pub struct World {
     /// The item templates the world database holds, read once at start-up: what a load resolves a
     /// character's held items against.
     templates: Vec<crate::data_stores::ItemDefinition>,
-    /// The map's walkable graph, which a walk request is answered from
-    /// (ASURA/crates/asura-world/src/pathfind.rs). Empty until the archive reader lands, and every
-    /// lookup then answers Walk::NoGraph, which is the working implementation's own answer for a map
-    /// it holds no graph for.
-    graphs: crate::terrain::Graphs,
+    /// The path graphs this world serves, one finder per map: a walk is answered from these, and a map
+    /// with none answers `NoGraph` (`ASURA/crates/asura-world/src/pathfind.rs:1484`, `PathGraphs`).
+    graphs: std::sync::Arc<crate::terrain::pathfind::PathGraphs>,
     /// The players loaded in this world's running copies, shared by every session: a copy of a map is a
     /// place other players can be in, and a connection is told about them (`game/Districts/Peers.rs`,
     /// `ASURA/crates/asura-world/src/instance.rs:406-473`).
@@ -131,7 +129,7 @@ impl World {
             settings: world_config::WorldConfig::default(),
             districts: Arc::new(Mutex::new(crate::districts::Districts::new())),
             templates: Vec::new(),
-            graphs: crate::terrain::Graphs::new(),
+            graphs: std::sync::Arc::new(crate::terrain::pathfind::PathGraphs::empty()),
             peers: Arc::new(Mutex::new(crate::districts::Peers::new())),
         }
     }
@@ -155,12 +153,20 @@ impl World {
 
     /// The map's walkable graph, as a walk request is answered from.
     ///
-    /// `ASURA/crates/asura-world/src/pathfind.rs`, `World::graphs`: one finder per map, held for the
-    /// life of the program. This world holds none until the archive reader lands, so every lookup
-    /// answers `Walk::NoGraph` - the working implementation's own answer for a map it holds no graph
-    /// for.
-    pub fn graphs(&self) -> &crate::terrain::Graphs {
+    /// `ASURA/crates/asura-world/src/pathfind.rs:1484`, `PathGraphs`: one finder per map, held for the
+    /// life of the program. A map whose graph was never bound answers `Walk::NoGraph` - the working
+    /// implementation's own answer for a map it holds no graph for.
+    pub fn graphs(&self) -> &std::sync::Arc<crate::terrain::pathfind::PathGraphs> {
         &self.graphs
+    }
+
+    /// Install the graphs this world serves, once, before the listener opens.
+    ///
+    /// `ASURA/crates/asura-worldserver/src/main.rs:366-391`: the graphs are built before the world
+    /// accepts anyone, from a dump when one is named and from the client archive otherwise, and every
+    /// walk afterwards is answered from them.
+    pub fn set_graphs(&mut self, graphs: crate::terrain::pathfind::PathGraphs) {
+        self.graphs = std::sync::Arc::new(graphs);
     }
 
     /// The players loaded in this world's running copies.
@@ -368,5 +374,74 @@ mod tests {
         let world = World::new(2);
         assert!(world.maps().is_empty());
         assert!(world.spawns_of(148).is_empty());
+    }
+
+    /// What the world program does at start-up: the graphs are imported for the maps it hosts, and a
+    /// walk asked through the world is answered from them - map 148 from its own spawn point to a point
+    /// beside it, and a map the archive holds no graph for with `NoGraph`.
+    ///
+    /// `ASURA/crates/asura-worldserver/src/main.rs:366-391`: the graphs are installed before the
+    /// listener opens, and every walk after that is answered from them.
+    #[test]
+    fn a_world_installed_with_the_archives_graphs_answers_a_walk() {
+        let Some(path) = std::env::var("KRYTA_GW_DAT").ok().or_else(|| {
+            let candidate = std::path::PathBuf::from("Gw.dat");
+            candidate
+                .exists()
+                .then(|| candidate.to_string_lossy().into_owned())
+        }) else {
+            eprintln!("skipped: no local Gw.dat");
+            return;
+        };
+        let mut world = world();
+        world.set_maps(
+            vec![
+                MapEntry {
+                    id: 0,
+                    kind: map_kind::CREATION,
+                    file_id: 0,
+                    name: "Character creation".to_string(),
+                    instance_value: None,
+                },
+                MapEntry {
+                    id: 148,
+                    kind: map_kind::OUTPOST,
+                    file_id: 0x1B97D,
+                    name: "Ascalon City (pre-Searing)".to_string(),
+                    instance_value: Some(0xBB14_F539),
+                },
+                MapEntry {
+                    id: 146,
+                    kind: map_kind::OUTPOST,
+                    file_id: 0x1,
+                    name: "a map with no graph".to_string(),
+                    instance_value: None,
+                },
+            ],
+            world.spawns().to_vec(),
+        );
+        world.set_graphs(
+            crate::terrain::pathfind::PathGraphs::load(&path, world.maps())
+                .expect("the archive opens"),
+        );
+        assert_eq!(world.graphs().maps(), vec![148], "only the map with a blob is bound");
+        let from = crate::terrain::Pos {
+            x: 9541.87,
+            y: 4796.46,
+            plane: 0,
+        };
+        let to = crate::terrain::Pos {
+            x: 9600.0,
+            y: 4850.0,
+            plane: 0,
+        };
+        assert!(
+            matches!(world.graphs().walk(148, from, to), crate::terrain::Walk::Found(_)),
+            "a bound map answers with a path"
+        );
+        assert!(
+            matches!(world.graphs().walk(146, from, to), crate::terrain::Walk::NoGraph),
+            "a map the archive holds no graph for answers NoGraph"
+        );
     }
 }

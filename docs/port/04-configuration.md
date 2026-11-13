@@ -123,6 +123,7 @@ added, and a field the file does not state keeps the table's value.
 | how far a client may place itself when it cancels a walk and still be believed (`MaxAllowedCorrection`, 250 units - the reference's `MAXIMUM_ALLOWED_CORRECTION`, through ASURA's `config/Server/movement.json`) | `worldserver.json`, the `World` section |
 | the creation screen's content: the bags and items a client is given, and what a new character wears per campaign and profession | `worldserver.json`, `InventoryFile` and `EquipmentFile`, naming `data/inventory.json` and `data/equipment.json` |
 | the client's own archive, where a map's geometry lives | `worldserver.json`, `GwDat`, naming this machine's `Gw.dat`; a world without one says so and every walk answers `NoGraph` |
+| a path-graph dump to answer walks from instead of importing them out of the archive | `worldserver.json`, `PathGraphs`; empty means the archive is the source, which is the working implementation's own fallback (`ASURA/crates/asura-worldserver/src/main.rs:372-391`). That program also probes `data/path-graphs.bin`, `ASURA_PATH_GRAPHS` and `--path-graphs`; here the file is a setting, because a setting lives in the program's JSON file (rule 7) |
 | loot tables: what a source drops and how often - a setting, not a row | a JSON file under `data/loot/`, arriving with the drop stage |
 | logging: directory, appenders, logger levels | `authserver.json`, `worldserver.json` |
 | the PID file, the effective-config dump | `authserver.json`, `worldserver.json` |

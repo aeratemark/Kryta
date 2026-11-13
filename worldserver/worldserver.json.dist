@@ -41,6 +41,11 @@
     "value": "Gw.dat",
     "doc": "Path to the client's Gw.dat archive, where a map's geometry - the path graph a walk is answered from - lives. A world without it says so, and every walk answers NoGraph, which is what the working implementation answers for a map it holds no graph for."
   },
+
+  "PathGraphs": {
+    "value": "",
+    "doc": "A path-graph dump to answer walks from instead of importing them out of Gw.dat at start-up. Empty means import from the archive, which is what the working implementation does when no dump is named (ASURA/crates/asura-worldserver/src/main.rs:372-391). This tree has no dumper yet, so only a dump brought from there loads."
+  },
   "EquipmentFile": {
     "value": "data/equipment.json",
     "doc": "What a new character wears per campaign and profession - a record list of sets, read at start-up."

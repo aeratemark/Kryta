@@ -200,7 +200,7 @@ pub struct WorldSession {
     moved: std::sync::Mutex<bool>,
     /// The map's walkable graph, which a walk request is answered from. Empty until the archive reader
     /// lands, and every lookup then answers \Walk::NoGraph\ (\ASURA/crates/asura-world/src/pathfind.rs\).
-    graphs: crate::terrain::Graphs,
+    graphs: std::sync::Arc<crate::terrain::pathfind::PathGraphs>,
     /// The character database, when the program opened one: a creation screen's confirm writes a row
     /// there. A session without it can draw the screen but cannot finish it.
     characters: Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
@@ -252,7 +252,7 @@ impl WorldSession {
             settings: world.settings().clone(),
             account: std::sync::Mutex::new([0u8; 16]),
             moved: std::sync::Mutex::new(false),
-            graphs: world.graphs().clone(),
+            graphs: std::sync::Arc::clone(world.graphs()),
             characters: None,
             login: None,
             districts: world.districts(),
@@ -1898,7 +1898,7 @@ impl WorldSession {
         }) else {
             return;
         };
-        let walked = self.graphs.walk(self.map_id(), from, to);
+        let walked = self.graphs.walk(self.map_id() as i32, from, to);
         match walked {
             crate::terrain::Walk::Found(waypoints) => {
                 let waypoints = crate::agents::densify(waypoints, from, crate::agents::LIVE_CADENCE_STEP);
@@ -1921,6 +1921,13 @@ impl WorldSession {
                 if let Some((walk, speed)) = begun.flatten() {
                     let mut reply: Vec<Vec<u8>> = speed.into_iter().map(|(_, f)| f).collect();
                     reply.push(walk.1);
+                    // Everyone else is told where this agent is walking: the reference broadcasts the
+                    // same message (`ASURA/crates/asura-world/src/agent.rs:849-855`,
+                    // `GameSrv_BroadcastAgentMoveToPoint`), and a client that is not told keeps drawing
+                    // the walker where it last stood.
+                    if let Ok(peers) = self.peers.lock() {
+                        peers.broadcast(self.player_id(), self.map_id(), self.district(), &reply);
+                    }
                     self.send(io, peer, crypt, &reply, "the walk").await;
                 }
             }
@@ -1985,7 +1992,12 @@ impl WorldSession {
             let adopted = agent.adopt_report(position, plane, now);
             let reply = if adopted != crate::agents::Adopted::Refused {
                 let from = agent.here();
-                let walked = self.graphs.walk_direction(self.map_id(), from, offset);
+                let walked = self.graphs.walk_direction(
+                    self.map_id() as i32,
+                    from,
+                    offset,
+                    crate::terrain::pathfind::directional::DirectionalSettings::default(),
+                );
                 let waypoints = match walked {
                     crate::terrain::Walk::Found(waypoints) => waypoints,
                     crate::terrain::Walk::NoPath | crate::terrain::Walk::NoGraph => Vec::new(),
@@ -2015,6 +2027,11 @@ impl WorldSession {
             ),
         );
         if !reply.is_empty() {
+            // Everyone else is told what this report made the agent do, before the walker itself is
+            // (`ASURA/crates/asura-world/src/agent.rs:1041-1042`: `instance.broadcast`, then `send`).
+            if let Ok(peers) = self.peers.lock() {
+                peers.broadcast(self.player_id(), self.map_id(), self.district(), &reply);
+            }
             self.send(io, peer, crypt, &reply, "the walk the report asked for")
                 .await;
         }
@@ -2050,6 +2067,16 @@ impl WorldSession {
                 }
             ),
         );
+        // Every client is told it stopped, before the walker itself is
+        // (`ASURA/crates/asura-world/src/agent.rs:1103-1104`).
+        if let Ok(peers) = self.peers.lock() {
+            peers.broadcast(
+                self.player_id(),
+                self.map_id(),
+                self.district(),
+                std::slice::from_ref(&stop.1),
+            );
+        }
         self.send(io, peer, crypt, &[stop.1], "the stop").await;
     }
 
@@ -2112,6 +2139,11 @@ impl WorldSession {
         );
         if !reply.is_empty() {
             let reply: Vec<Vec<u8>> = reply.into_iter().map(|(_, frame)| frame).collect();
+            // Every client is told where the stop put this agent, before the walker itself is
+            // (`ASURA/crates/asura-world/src/agent.rs:1171-1174`).
+            if let Ok(peers) = self.peers.lock() {
+                peers.broadcast(self.player_id(), self.map_id(), self.district(), &reply);
+            }
             self.send(io, peer, crypt, &reply, "the stopping point").await;
         }
     }

@@ -1683,56 +1683,16 @@ pub enum Walk {
     Found(Vec<Waypoint>),
     /// The finder ran and refused: the destination is not reachable from where the agent stands.
     NoPath,
-    /// This world has no graph for the map, so nothing can be said about reachability - which is every
-    /// map here until the archive reader exists.
+    /// This world has no graph for the map, so nothing can be said about reachability. That happens when
+    /// the map's blob could not be imported from `Gw.dat` -- a server whose archive is missing or older
+    /// than the catalogue refuses walks rather than inventing them.
     NoGraph,
-}
-
-/// The graphs this world holds, one per map.
-#[derive(Debug, Clone, Default)]
-pub struct Graphs;
-
-impl Graphs {
-    /// The graphs a world with no archive reader has: none.
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// Ask for a walk from `from` to `to` on `map_id`.
-    ///
-    /// `ASURA/crates/asura-world/src/pathfind.rs`, `World::graphs().walk(...)`. Every map here answers
-    /// `NoGraph`; a caller must handle it exactly as the working implementation does.
-    pub fn walk(&self, _map_id: u32, _from: Pos, _to: Pos) -> Walk {
-        Walk::NoGraph
-    }
-
-    /// Follow manual input through adjacent walkable cells, rather than finding a route.
-    ///
-    /// `ASURA/crates/asura-world/src/pathfind.rs`, `walk_direction`. Manual movement uses this one, not
-    /// `walk`: choosing a destination plane globally can send a player off a bridge to reach the point.
-    pub fn walk_direction(&self, _map_id: u32, _from: Pos, _offset: (f32, f32)) -> Walk {
-        Walk::NoGraph
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_world_without_an_archive_reader_has_no_graph_and_says_so() {
-        let graphs = Graphs::new();
-        let here = Pos {
-            x: 0.0,
-            y: 0.0,
-            plane: 0,
-        };
-        assert!(matches!(graphs.walk(148, here, here), Walk::NoGraph));
-        assert!(matches!(
-            graphs.walk_direction(148, here, (1.0, 0.0)),
-            Walk::NoGraph
-        ));
-    }
     /// Two stacked trapezoids, one plane: the lower from y 0 to 5, the upper from 5 to 10, x 0 to 10,
     /// each naming the other as its top/bottom neighbour, and a y-node at y = 5 whose two halves are
     /// their leaves. That is the smallest graph the reference's own structures can describe.

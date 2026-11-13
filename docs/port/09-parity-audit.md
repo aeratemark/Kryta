@@ -86,7 +86,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x802C` | `GAME_CMSG_DROP_ITEM` (7 bytes) | `item.rs:187`, `handle_drop_item` | `CLIENT_DROP_ITEM`: the stack is taken and nothing is sent | ported |
 | `0x8030` | `GAME_CMSG_EQUIP_ITEM` | `item.rs:314`, `equip_item` | `answer_equip_item` | ported |
 | `0x803D` | `GAME_CMSG_POSITION_UPDATE` (26) | `agent.rs:887` | `answer_position_update` | ported |
-| `0x803E` | `GAME_CMSG_MOVE_TO_COORD` (14) | `agent.rs:710` | `answer_move_to_coord` | ported (the graph it asks is missing) |
+| `0x803E` | `GAME_CMSG_MOVE_TO_COORD` (14) | `agent.rs:710` | `answer_move_to_coord` | ported |
 | `0x8047` | `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` | `agent.rs:1117` | `answer_last_position` | ported |
 | `0x804F` | `GAME_CMSG_UNEQUIP_ITEM` (6) | `item.rs:555`, `handle_unequip_item` | `CLIENT_UNEQUIP_ITEM`: ASURA's answer, a log line and nothing on the wire | ported |
 | `0x8060` | `GAME_CMSG_CHAR_CREATION_CHANGE_PROF` (4) | `creation.rs:275` | handled | ported |
@@ -244,25 +244,25 @@ setting that selects one.
 
 ## 7. The defects, in the order the client feels them
 
-1. **The movement family is ported and the graph it walks on is not.** The five frames and their
+1. **The movement family walks on ASURA's own graphs, imported at start-up.** The five frames and their
    `_live` forms, `AgentState`, `densify`, the cadence, the tolerance and the four handlers are
    `ASURA`'s; the tick carries elapsed time. The **archive is ported** (`game/Pack/`): the index
-   (`Gwdat.rs`) turns a file id into an entry - this machine's `Gw.dat` holds 156,315 of them - the
+   (`Gwdat.rs`) turns a file id into an entry - this machine's `Gw.dat` holds 156,315 of them - and the
    decoder (`FaCompress.rs`) turns a compressed entry into bytes, proved against three real map blobs
-   that decode to exactly the size they announce and start with the RIFF signature `ffna`, and the
-   reference's table-driven arithmetic (`Terrain/PathTables.rs`: `PathReciproc` and `PathSqrt`, 256
-   entries each, checked entry for entry) is in, because the search's costs come out of it. What is
-   still missing is the map blob's parse (`map_data.rs`) and the finder (`pathfind.rs`), so every walk
-   is answered exactly as the working implementation answers a map it holds no graph for: `NoGraph`, and
-   nothing on the wire.
-   Map 148's own blob is measured, for the parse to be written against: entry `0x0001B97D`, 1,300,044
-   stored bytes, announced 2,925,267, decoded to 2,925,267 that begin `ffna` and a type byte of 3, then
-   **24 records** of `(id u32, size u32, bytes)` that walk to exactly the blob's length. The path chunk
-   is `0x20000008` - stage 2, `ChunkId::Path` - at offset 1,956,355, **849,201 bytes**, the largest
-   record in the container after the terrain's, and its own header is the reference's: the first four
-   bytes read **`0xEEFE704C`** (`PATH_DATA_SIGNATURE`) and the next four **12** (`PATH_DATA_VERSION`),
-   followed by `15 00 00 00`. So the parse has a verified entry point and a verified identity check
-   before a single trapezoid is read.
+   that decode to exactly the size they announce and start with the RIFF signature `ffna`. The blob's
+   parse (`Terrain/MapData.rs`, `map_data.rs`), the dumped form (`Terrain/GraphDump.rs`,
+   `graph_dump.rs`), the table-driven arithmetic (`Terrain/PathTables.rs`: `PathReciproc` and
+   `PathSqrt`) and the finder (`Terrain/Pathfind.rs` plus `Pathfind/Directional.rs`) are all in, and
+   the world installs them before its listener opens (`worldserver/src/main.rs`, port of
+   `ASURA/crates/asura-worldserver/src/main.rs:366-391`): `PathGraphs` from the `PathGraphs` dump when
+   one is named, from `Gw.dat` otherwise, and a map with no graph still answers `NoGraph` and nothing
+   on the wire, exactly as the working implementation does. Proved on this machine's archive: the
+   world logs `Path graphs from F:/GW/GW1/Gw.dat: 1 of 2 map(s) (148)`, and map 148 - entry
+   `0x0001B97D`, whose path chunk is `0x20000008` (`0xEEFE704C` signature, version 12) - walks from its
+   own spawn point `(9541.87, 4796.46)` to `(9600, 4850)` with `Found`.
+   The three move handlers broadcast their answer to the other players in the copy before the walker
+   itself (`agent.rs:849-855`, `1041-1042`, `1103-1104`, `1171-1174`), which is `Peers::broadcast` here.
+
 2. **The items block goes without `0x015E`** (the low-detail item), and so does ASURA's: the message is
    observed in a capture and emitted by neither implementation, so it is not this tree's to invent.
 3. **The instance table is ported thin**: ASURA's batch shape goes on the wire, and its content is the
@@ -334,7 +334,7 @@ road.
    `Cursor`, the three index/tag helpers, and its tests - in `game/src/Terrain/GraphDump.rs`, three
    tests green (a round trip of every field, a foreign or truncated or future-version file refused, an
    empty dump).
-3. **(in progress)** **`pathfind.rs`** and **`pathfind/directional.rs`**, whole: the finder, with the
+3. **(done)** **`pathfind.rs`** and **`pathfind/directional.rs`**, whole: the finder, with the
    reference's own quirks kept - `PathReciproc`/`PathSqrt` through the ported tables,
    `PathFindTrapezoid` by the same walk, no FPU substitutions, no tidying.
    Carried so far, in `game/src/Terrain/Pathfind.rs`: ASURA lines **33-454** - the vector helpers
@@ -370,13 +370,13 @@ road.
    two numbers are ASURA's `directional_movement.json`: `edge_tolerance` 0.01, `distance_slack` 0.5),
    the edge/coverage/neighbour helpers, and `walk` itself, with ASURA's own **PROVISIONAL / NOT
    ACCEPTED** caveat carried in the module header rather than tidied away - plus
-   `PathGraphs::walk_direction` (line 1639) wired onto it. A test walks an upward offset across two
+   `PathGraphs::walk_direction` (1639) wired onto it. A test walks an upward offset across two
    stacked trapezoids and checks the map with no graph still answers `NoGraph`; and lines **1746-1794**
    - `find_path_blob`, the archive's bit-31 replacement rule (the configured id, then the plain one,
    then the flagged one), reporting a substitution with the working implementation's own line.
-   **Left**: `PathGraphs::load` and `PathGraphs::import` (1507-1592) and `import_graph` (1703-1744) -
-   all three wait on `PathStaticData::import` in `map_data.rs`, which is step 4 below and the last
-   piece of this subject.
+   **Left**: nothing. `PathGraphs::load`/`import` (1507-1592) and `import_graph` (1703-1744) wait
+   on `PathStaticData::import` in `map_data.rs` (step 4), and are ported with it; the world's
+   start-up and the session's two walk answers use them.
 4. **The importer** in `map_data.rs` - the last piece, and its own session's work. Surveyed function by
    function (ASURA's line numbers), so the port starts from this map rather than from the file:
    - **(done)** `Reader` and its `new`/`len`/`take`/`tagged` (336-383), the `u16_at`/`u32_at`/`f32_at`
@@ -402,9 +402,11 @@ road.
      unimportable blob and an absent one), `PathGraphs::load` (1507) and `PathGraphs::import` (1562).
      A test loads map 148 from this machine's real `Gw.dat` through `PathGraphs::load`, binds it, and
      **the map walks from its own spawn point** - while map 146, unbound, still answers `NoGraph`.
-     **The walking subject is ported end to end from the archive.** What remains outside it: the
-     world's start-up does not yet call `load`/`from_dump` and the session still answers through the
-     `Graphs` shim, so no client sees a waypoint until that wiring lands.
+     **The walking subject is ported end to end and wired in**: the world program installs the graphs
+     before its listener opens (`worldserver/src/main.rs`, port of
+     `ASURA/crates/asura-worldserver/src/main.rs:366-391` - a `PathGraphs` dump when one is named,
+     `Gw.dat` otherwise), `World` holds them, and `WorldSession` answers `0x803E` and `0x803D` from
+     them. On this machine the world logs `Path graphs from F:/GW/GW1/Gw.dat: 1 of 2 map(s) (148)`.
    - `PathStaticData::import` (490) and `read` (506): the `PATH_DATA_SIGNATURE`/`PATH_DATA_VERSION`
      check, then `read_planes` (535) -> `read_plane` (551) -> per plane `read_counts` (578),
      `skip_tag11` (606), `read_vectors` (618), `read_trapezoids` (639), `read_root_node` (681),
@@ -428,11 +430,11 @@ keeps its traversal order, its tie-breaking and its quirks; the dump keeps its b
 
 ## 8. The order this audit imposes
 
-1. The map's path graph, which is what the ported movement family asks: `map_data.rs` (the blob's own
-   parse) and then `pathfind.rs`, on top of the archive and the arithmetic that are now ported. Until
-   they land a walk is refused with `NoGraph` - the working implementation's own answer for a map with
-   no graph - and nothing else about movement is outstanding.
-2. The instance table's content: an `instance_value` on every map row the world hosts.
+1. **(done)** The map's path graph: `map_data.rs` (the blob's own parse), `graph_dump.rs`,
+   `path_tables.rs`, `pathfind.rs` and `pathfind/directional.rs`, on top of the archive - wired into the
+   world and into the two handlers that ask for a walk. A walk is answered from the map's own graph, and
+   a map with no graph is refused with `NoGraph`, the working implementation's own answer.
+2. The travel's own remaining half: the seat reservation and the doorway crossing (`portals.rs`), so a
+   portal in a map does something.
 3. The instance table's content: an `instance_value` on every map row the world hosts, and the map rows
    themselves for the places a character can travel to.
-4. The travel's own remaining half: the seat reservation and the doorway crossing.

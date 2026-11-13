@@ -70,7 +70,7 @@ being served.
 | 5 | create a character (the creation screen) | `the character '...' was created as ...`, `the character's N starting item row(s) are written`, `map 148 ('Ascalon City (pre-Searing)') is unlocked for the new character (R12)` |
 | 6 | the outpost loads | `Ascalon City (pre-Searing) (148) is loading - 7 message(s), 337 bytes`, then on the client's asks: `the ping pair`, `the inventory and the map's record`, `the character stands at X, Y (plane 0) on map 148`, `the player and the load's last message`, `map 148 is loaded - the character '...' is in it`; a character that predates the unlock rows gets `the character has no unlock rows yet, so map 148 - the world's first outpost - is unlocked for it (R12)`, and a travel to a map it has not unlocked closes the connection with the refusal's log line (R12) |
 | 7 | stand still in the outpost | a `0x001E` tick every `World.SimulationTickMs` milliseconds (105 by default; visible with `Network.Trace` off as nothing, on as trace lines; the status line's `up` time climbing) |
-| 8 | walk | the world keeps ticking; each movement is read (trace: `a movement: X, Y` at debug) and the session stays up |
+| 8 | click a point across the outpost, then hold a movement key | the click is answered from map 148's own graph - the finder's first waypoint in `0x0029`, so the character walks a path rather than through a wall - and the key's offset is followed through adjacent cells (`0x803D` -> `0x0029`); the world keeps ticking and the status line's `up` climbs |
 | 9 | drag an item in the inventory | `the item's new place answered with 1 message(s), 11 bytes`; the item stays where you put it |
 | 10 | equip an item | the same placement answer, into the equipped bag's slot for that kind of item |
 | 11 | destroy an item | `the item's removal answered with 1 message(s), 8 bytes`; the item is gone |
@@ -88,9 +88,6 @@ These are the plan's known gaps, each waiting on a capture rather than on work:
 
 - **Other players, NPCs and monsters in the outpost**: the map is drawn with no agents in it. The
   agent-creation stream is not captured on this build; the load sends its own body and nothing else.
-- **Walking on real terrain**: movement is read and kept on the player's agent, but the world has no
-  terrain data - the `Gw.dat` archive format has not been measured in this tree, so every walk answers
-  `NoGraph` and nothing goes on the wire.
 - **The map view's contents**: the grid that sizes its world map is sent (`0x008B`, `0x008A`) with
   nothing explored, and the map's own art and areas come from the client's archive.
 

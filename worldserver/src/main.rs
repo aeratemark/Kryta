@@ -320,9 +320,47 @@ fn run(args: &[String]) -> Result<(), String> {
         Err(error) => log.out(
             LogLevel::Warn,
             "server.worldserver",
-            format!("No client archive at {gw_dat}: {error}. Every walk answers NoGraph until one is reachable (World.GwDat)."),
+            format!("No client archive at {gw_dat}: {error}. Every walk answers NoGraph until one is reachable (GwDat)."),
         ),
     }
+    // The path graphs, which is what a move to a point is answered from: the same blob a map's geometry
+    // comes from. `ASURA/crates/asura-worldserver/src/main.rs:366-391`, with the dump's name and the
+    // archive's path as this program's settings rather than that program's arguments (rule 7).
+    let (graph_dump, notes) = config
+        .value_string("PathGraphs", "")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let graphs = if graph_dump.trim().is_empty() {
+        load_graphs_from_archive(&gw_dat, world.maps(), &log)
+    } else {
+        match game::terrain::pathfind::PathGraphs::from_dump(&graph_dump) {
+            Ok(graphs) => {
+                let bound = graphs.bind(world.maps());
+                log.out(
+                    LogLevel::Info,
+                    "server.worldserver",
+                    format!(
+                        "Path graphs from the dump {graph_dump}: {bound} of {} map(s) bound.",
+                        world.maps().len()
+                    ),
+                );
+                graphs
+            }
+            Err(error) => {
+                log.out(
+                    LogLevel::Warn,
+                    "server.worldserver",
+                    format!(
+                        "Could not read the path-graph dump {graph_dump}: {error}; falling back to {gw_dat}."
+                    ),
+                );
+                load_graphs_from_archive(&gw_dat, world.maps(), &log)
+            }
+        }
+    };
+    world.set_graphs(graphs);
 
     let (bags, items, sets) = world.load_creation(&inventory_file, &equipment_file, &log)?;
     log.out(
@@ -696,6 +734,47 @@ impl Options {
         }
 
         Ok(options)
+    }
+}
+
+/// Import the graphs out of a `Gw.dat`, logging what was found or why nothing was.
+///
+/// `ASURA/crates/asura-worldserver/src/main.rs:542-567`, `load_graphs_from_archive`: the count, the
+/// catalogue's size and the map ids that are pathable, or the reason every walk will be refused.
+fn load_graphs_from_archive(
+    archive: &str,
+    maps: &[game::world::MapEntry],
+    log: &Log,
+) -> game::terrain::pathfind::PathGraphs {
+    match game::terrain::pathfind::PathGraphs::load(archive, maps) {
+        Ok(graphs) => {
+            let with_graphs = graphs.maps();
+            log.out(
+                LogLevel::Info,
+                "server.worldserver",
+                format!(
+                    "Path graphs from {archive}: {} of {} map(s) ({}).",
+                    with_graphs.len(),
+                    maps.len(),
+                    with_graphs
+                        .iter()
+                        .map(|map_id| map_id.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
+            graphs
+        }
+        Err(error) => {
+            log.out(
+                LogLevel::Warn,
+                "server.worldserver",
+                format!(
+                    "No path graphs, so every walk will be refused: could not open {archive}: {error}. Point GwDat at the client archive, or PathGraphs at a dump written by ASURA's dumper (this tree has none yet)."
+                ),
+            );
+            game::terrain::pathfind::PathGraphs::empty()
+        }
     }
 }
 
