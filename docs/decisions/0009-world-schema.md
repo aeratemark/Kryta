@@ -14,13 +14,19 @@ Rows, in `kryta_world` (`data/sql/base/db_world/0001-world.sql`):
 
 | table | holds | read by |
 |---|---|---|
-| `map` | id, type, file id, name, party cap | the travel answer (`0x0009`), the load (`0x0196`, `0x019A`), the party cap rule (R15) |
+| `map` | id, type, file id, name, party cap, instance value | the travel answer (`0x0009`), the load (`0x0196`, `0x019A`, `0x01A0`), the party cap rule (R15) |
 | `map_spawn` | one row per spawn point | entry placement (R13) |
 | `map_arrival` | the point a portal crossing arrives at, per source map | portal arrivals (R21) |
 
 And a map's rows are seeded by the updater from `data/sql/base/db_world/0002-maps.sql`, which carries one
 outpost - Ascalon City (pre-Searing), map 148 - with the file id and spawn point a working server sent in
 `recordings/asura/feature/travel/first-crossing-20261031.jsonl` seq 125.
+
+The instance value is the one destination fact a map carries of its own: `0x0007-map-instance-value.sql`
+adds the column and states map 148's `3138712889` (`0xBB14F539`), which is the pair a live load of it
+carried (`recordings/client/feature/maps/pre-searing-load-3.jsonl` seq 751). A map whose row states no
+value is left out of the `0x01A0` table and the world says so, because a wrong value is worse than a
+destination the client cannot resolve yet.
 
 ## Why
 

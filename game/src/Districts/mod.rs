@@ -274,6 +274,9 @@ mod tests {
             kind: OUTPOST,
             file_id: 112_509,
             name: "Ascalon City (pre-Searing)".to_string(),
+            // The value a live load of map 148 carried (`0xBB14F539`,
+            // `recordings/client/feature/maps/pre-searing-load-3.jsonl` seq 751).
+            instance_value: Some(0xBB14_F539),
         }
     }
 
@@ -283,6 +286,7 @@ mod tests {
             kind: map_kind::EXPLORABLE,
             file_id: 1,
             name: "Regent Valley".to_string(),
+            instance_value: None,
         }
     }
 

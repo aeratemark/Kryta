@@ -455,15 +455,28 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         };
         let (mut stream, mut reading, mut sending) = open_connection(port, version);
 
-        // The block: head, player-data start, the name, the instance's record, and the exploration
-        // grid - right after the record, which is where a live server sends it
-        // (`ASURA/crates/asura-world/src/map.rs:22-48`).
+        // The block: head, player-data start, the name, the instance's record, the exploration grid
+        // and the instance table - right after the record, which is where a live server sends them
+        // (`ASURA/crates/asura-world/src/map.rs:22-58`).
         let grid = game::maps::cartography::init_frames(game::maps::cartography::grid_for(148));
+        let hosted = game::maps::DatabaseMaps::new(Arc::clone(&world_pool), Log::new())
+            .load()
+            .expect("the maps are readable")
+            .0;
+        let (table, notes) = game::maps::instance_table::table_for(&hosted);
+        assert!(notes.is_empty(), "no map id fails the wire's width: {notes:?}");
+        let table_frames = table.frames();
+        assert!(
+            table.pairs.contains(&(148, 0xBB14_F539)),
+            "map 148's own value is in the table: {:?}",
+            table.pairs
+        );
         let block_size = instance_packets::instance_load_head().len()
             + instance_packets::instance_player_data_start().len()
             + instance_packets::instance_load_player_name(name).len()
             + instance_packets::instance_load_info(1, 148, 0, 1, 0, 0).len()
-            + grid.iter().map(Vec::len).sum::<usize>();
+            + grid.iter().map(Vec::len).sum::<usize>()
+            + table_frames.iter().map(Vec::len).sum::<usize>();
         let mut block = read_exact(&mut stream, block_size);
         reading.apply(&mut block);
         assert_eq!(
@@ -495,10 +508,18 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             "64 x 128 cells and sixteen compressed bytes"
         );
         assert_eq!(&block[grid_at + 14..grid_at + 16], &[0x8A, 0x00], "a slice");
+        // And the instance table: the destinations the client can resolve, in the batches a load uses.
+        let grid_size = grid.iter().map(Vec::len).sum::<usize>();
+        let table_at = grid_at + grid_size;
         assert_eq!(
-            &block[grid_at + 14..],
+            &block[grid_at + 14..table_at],
             grid[1].as_slice(),
             "the slice is the blob in a counted, fixed array"
+        );
+        assert_eq!(
+            &block[table_at..],
+            table_frames.concat().as_slice(),
+            "the instance table, in the batch a load sends"
         );
 
         // The ping pair, unasked.

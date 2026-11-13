@@ -20,6 +20,9 @@ pub mod travel_targets;
 #[path = "Cartography.rs"]
 pub mod cartography;
 
+#[path = "InstanceTable.rs"]
+pub mod instance_table;
+
 pub use travel_targets::{TRAVEL_TARGETS, TravelTarget};
 pub use travels::{DatabaseTravels, Travel};
 
@@ -62,7 +65,7 @@ pub struct Arrival {
 
 const SELECT_ARRIVALS: &str = "SELECT \"map_id\"::bigint, \"from_map\"::bigint, \"x\", \"y\", \"plane\"::bigint FROM \"map_arrival\" ORDER BY \"map_id\", \"from_map\"";
 
-const SELECT_MAPS: &str = "SELECT \"id\"::bigint, \"type\"::bigint, \"file_id\"::bigint, \"name\", \"party_cap\"::bigint FROM \"map\" ORDER BY \"id\"";
+const SELECT_MAPS: &str = "SELECT \"id\"::bigint, \"type\"::bigint, \"file_id\"::bigint, \"name\", \"party_cap\"::bigint, \"instance_value\"::bigint FROM \"map\" ORDER BY \"id\"";
 
 const SELECT_SPAWNS: &str = "SELECT \"map_id\"::bigint, \"idx\"::bigint, \"x\", \"y\", \"plane\"::bigint FROM \"map_spawn\" ORDER BY \"map_id\", \"idx\"";
 
@@ -89,6 +92,10 @@ impl DatabaseMaps {
                     kind: read_number(row, "type")? as u8,
                     file_id: read_number(row, "file_id")? as u32,
                     name: read_text(row, "name")?,
+                    instance_value: row
+                        .try_get::<_, Option<i64>>("instance_value")
+                        .map_err(|error| format!("column instance_value: {error}"))?
+                        .map(|value| value as u32),
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;

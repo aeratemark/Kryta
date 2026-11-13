@@ -188,6 +188,7 @@ mod tests {
             kind,
             file_id: 0,
             name: name.to_string(),
+            instance_value: None,
         }
     }
 

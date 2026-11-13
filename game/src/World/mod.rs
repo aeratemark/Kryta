@@ -36,6 +36,10 @@ pub struct MapEntry {
     pub file_id: u32,
     /// What the map is called, for a log line and the administration tool.
     pub name: String,
+    /// The value the client resolves this map's destination by, in `0x01A0`. `None` means the map is
+    /// left out of the instance table - a wrong value is worse than a destination the client cannot
+    /// resolve yet (`ASURA/crates/asura-world/src/instance_table.rs:12-13`, `44-42`).
+    pub instance_value: Option<u32>,
 }
 
 impl MapEntry {
@@ -249,12 +253,14 @@ mod tests {
                     kind: map_kind::CREATION,
                     file_id: 0,
                     name: "Character creation".to_string(),
+                    instance_value: None,
                 },
                 MapEntry {
                     id: 148,
                     kind: map_kind::OUTPOST,
                     file_id: 112_509,
                     name: "Ascalon City (pre-Searing)".to_string(),
+                    instance_value: Some(0xBB14_F539),
                 },
             ],
             vec![crate::maps::MapSpawn {

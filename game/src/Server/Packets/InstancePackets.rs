@@ -105,6 +105,14 @@ pub const CARTOGRAPHY_DATA_SLOTS: usize = 64;
 /// The blob bytes one [`CARTOGRAPHY_DATA`] message carries.
 pub const CARTOGRAPHY_DATA_BYTES: usize = CARTOGRAPHY_DATA_SLOTS * 4;
 
+/// `GAME_SMSG_INSTANCE_TABLE` (`0x01A0`): one batch of the destinations a client can resolve - a `u8`
+/// count and that many `{u16 instance, u32 value}` pairs.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:864-878`, `instance_table`. A load sends it in batches
+/// during the load block, and the working implementation's value for this shape is the one a live
+/// client's own load carried for map 148 (`ASURA/crates/asura-world/src/instance_table.rs:154-173`).
+pub const INSTANCE_TABLE: u16 = 0x01A0;
+
 /// A frame: the `u16` header and then the body.
 fn frame(header: u16, body: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(2 + body.len());
@@ -276,6 +284,19 @@ pub fn cartography_data(blob: &[u8]) -> Vec<u8> {
     frame(CARTOGRAPHY_DATA, &body)
 }
 
+/// `0x01A0`: one batch of the instance table - a `u8` count and that many `{u16, u32}` pairs.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:872`, `instance_table`.
+pub fn instance_table(batch: &[(u16, u32)]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(1 + batch.len() * 6);
+    body.push(batch.len().min(usize::from(u8::MAX)) as u8);
+    for (instance, value) in batch.iter().take(usize::from(u8::MAX)) {
+        body.extend_from_slice(&instance.to_le_bytes());
+        body.extend_from_slice(&value.to_le_bytes());
+    }
+    frame(INSTANCE_TABLE, &body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,5 +408,19 @@ mod tests {
         let odd = cartography_data(&[1, 2, 3]);
         assert_eq!(u16::from_le_bytes([odd[2], odd[3]]), 1, "three bytes, one dword");
         assert_eq!(&odd[4..8], &[1, 2, 3, 0], "padded inside the dword");
+    }
+
+    /// The batch is the count and the pairs: map 148's own value is the one a live load carried
+    /// (`recordings/client/feature/maps/pre-searing-load-3.jsonl`, seq 751).
+    #[test]
+    fn a_table_batch_is_a_count_and_its_pairs() {
+        let frame = instance_table(&[(148, 0xBB14_F539), (145, 0xF15F_BD2A)]);
+        assert_eq!(frame.len(), 2 + 1 + 12);
+        assert_eq!(&frame[..2], &[0xA0, 0x01]);
+        assert_eq!(frame[2], 2, "two pairs");
+        assert_eq!(&frame[3..5], &148u16.to_le_bytes());
+        assert_eq!(&frame[5..9], &0xBB14_F539u32.to_le_bytes());
+        assert_eq!(&frame[9..11], &145u16.to_le_bytes());
+        assert_eq!(&frame[11..15], &0xF15F_BD2Au32.to_le_bytes());
     }
 }

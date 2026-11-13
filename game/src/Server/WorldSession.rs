@@ -792,6 +792,16 @@ impl WorldSession {
                 map.id,
             ));
             frames.extend(grid);
+            // And the destinations it can resolve, in the batches a load uses - the working
+            // implementation sends these in the same phase (`ASURA/crates/asura-world/src/map.rs:49-58`).
+            let (table, notes) = crate::maps::instance_table::table_for(&self.maps);
+            for note in &notes {
+                self.say(
+                    LogLevel::Warn,
+                    format!("Gameplay connection from {peer}: instance table: {note}"),
+                );
+            }
+            frames.extend(table.frames());
             let mut block = Vec::new();
             for frame in &frames {
                 block.extend_from_slice(frame);
@@ -801,7 +811,7 @@ impl WorldSession {
                 Ok(()) => self.say(
                     LogLevel::Info,
                     format!(
-                        "Gameplay connection from {peer}: map {} ({}, type {}) is loading - {} message(s), {} bytes: the load head, the player-data start, the name '{}', the instance's record (district {district}, language {language}) and the exploration grid ({} x {}, nothing explored).",
+                        "Gameplay connection from {peer}: map {} ({}, type {}) is loading - {} message(s), {} bytes: the load head, the player-data start, the name '{}', the instance's record (district {district}, language {language}), the exploration grid ({} x {}, nothing explored) and the instance table ({} pair(s)).",
                         map.id,
                         map.name,
                         map.kind,
@@ -809,7 +819,8 @@ impl WorldSession {
                         block.len(),
                         sheet.name,
                         crate::maps::cartography::grid_for(map.id).0,
-                        crate::maps::cartography::grid_for(map.id).1
+                        crate::maps::cartography::grid_for(map.id).1,
+                        table.pairs.len()
                     ),
                 ),
                 Err(error) => {
@@ -2900,12 +2911,14 @@ mod tests {
                     kind: map_kind::CREATION,
                     file_id: 0,
                     name: "Character creation".to_string(),
+                    instance_value: None,
                 },
                 MapEntry {
                     id: 148,
                     kind: map_kind::OUTPOST,
                     file_id: 113_021,
                     name: "Ascalon City (pre-Searing)".to_string(),
+                    instance_value: Some(0xBB14_F539),
                 },
             ],
             vec![crate::maps::MapSpawn {
@@ -3312,6 +3325,10 @@ Logger.root = 6,Console
             instance_packets::instance_load_info(1, 148, 0, 1, 0, 0),
         ];
         expected.extend(grid);
+        // And the instance table: one batch, because this world's one map with a value states it.
+        let (table, notes) = crate::maps::instance_table::table_for(world.maps());
+        assert!(notes.is_empty(), "every map's value is stated or absent: {notes:?}");
+        expected.extend(table.frames());
         let expected_bytes: usize = expected.iter().map(Vec::len).sum();
         let mut block = vec![0u8; expected_bytes];
         client.read_exact(&mut block).unwrap();
@@ -3327,7 +3344,7 @@ Logger.root = 6,Console
             .collect();
         assert_eq!(
             headers,
-            vec![0x017C, 0x0186, 0x017D, 0x019A, 0x008B, 0x008A]
+            vec![0x017C, 0x0186, 0x017D, 0x019A, 0x008B, 0x008A, 0x01A0]
         );
 
         // 4. The ping pair the measured load follows the head block with.
@@ -3929,6 +3946,7 @@ Logger.root = 6,Console
             kind: crate::world::map_kind::OUTPOST,
             file_id: 112_508,
             name: "Ascalon Academy".to_string(),
+            instance_value: None,
         });
         let mut spawns = prepared.spawns().to_vec();
         spawns.push(crate::maps::MapSpawn {
