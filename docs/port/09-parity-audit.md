@@ -334,9 +334,20 @@ road.
    `Cursor`, the three index/tag helpers, and its tests - in `game/src/Terrain/GraphDump.rs`, three
    tests green (a round trip of every field, a foreign or truncated or future-version file refused, an
    empty dump).
-3. **`pathfind.rs`** and **`pathfind/directional.rs`**, whole: the finder, with the reference's own
-   quirks kept - `PathReciproc`/`PathSqrt` through the ported tables, `PathFindTrapezoid` by the same
-   walk, no FPU substitutions, no tidying.
+3. **(in progress)** **`pathfind.rs`** and **`pathfind/directional.rs`**, whole: the finder, with the
+   reference's own quirks kept - `PathReciproc`/`PathSqrt` through the ported tables,
+   `PathFindTrapezoid` by the same walk, no FPU substitutions, no tidying.
+   Carried so far, in `game/src/Terrain/Pathfind.rs`: ASURA lines **33-454** - the vector helpers
+   (`clampf`, `is_zero`, `equal`, `add`, `sub`, `dot`, `cross`, `div`, `vec2f_dist`, `vec2f_unit`),
+   `Pos::v2`, `FindPoint`, `FindNode`, `HeapNode`, `BuildStep`, `heap_push`, `heap_pop` (the
+   reference's own sift-down), `reverse_path_find_node`, `is_point_in_trap`, `closest_point_on_segment`
+   (offset-not-point quirk kept), `dist_to_trap`, `find_point_on_next_trap`,
+   `find_intersection_point`, `pick_next_point`, `precise_cross`. Three tests green (the heap's cost
+   order, `precise_cross`'s near-parallel rule, and the pre-existing shim's). The trapezoid predicates
+   are exercised by the finder's own real graphs, not by invented ones. **Left**: lines **455-1794** -
+   `PathContext`, `find_trapezoid`, `plane_at`, `path_finding`, `Bound`, `BuildHelper`, `PathGraphs`
+   (`load`, `from_dump`, `bind`, `import`, `walk`, `walk_direction`, `walk_any_plane`),
+   `import_graph`, `find_path_blob` - and all of `pathfind/directional.rs` (320 lines).
 4. **The importer** in `map_data.rs` last, only so this machine can produce a dump from its own
    `Gw.dat`; the world's start-up then loads a dump the way ASURA does.
 
