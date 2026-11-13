@@ -72,7 +72,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x8026` | `AUTH_CMSG_ACCEPT_EULA` | `lib.rs:487`, `decode_eula` | `session.rs`, recorded | ported |
 | `0x8029` | `AUTH_CMSG_REQUEST_GAME_INSTANCE` | `lib.rs:507`, `travel::answer` | `session.rs` `answer_game_instance` | ported thin: no lease, no capacity, no world probe, 1 of 3 placement rules |
 | `0x8035` | `AUTH_CMSG_ASK_SERVER_RESPONSE` | `lib.rs` | `session.rs` | ported |
-| `0x8038` | `AUTH_CMSG_PORTAL_ACCOUNT_LOGIN` | `lib.rs`, `decode` | `session.rs` `answer_login` | ported thin: the named character is not recorded |
+| `0x8038` | `AUTH_CMSG_PORTAL_ACCOUNT_LOGIN` | `lib.rs:572-680` | `session.rs` `answer_login`: the named character is recorded, or the account's first | ported |
 
 ### 3.2 The game connection (21)
 

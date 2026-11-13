@@ -973,6 +973,37 @@ impl AuthSession {
             );
         }
 
+        // The character this connection names, recorded so a travel that follows carries it: the one the
+        // login message asked for when the account still has it, and the account's first one otherwise.
+        //
+        // `ASURA/crates/asura-auth/src/lib.rs:637-670` is the working implementation's own rule, and it
+        // exists because of a measured fault: a session can name a character that no longer exists -
+        // deleting one leaves its id behind, and every travel then names a ghost, which the world refuses
+        // ("the character named by the transfer is gone"). The reference falls back to the first
+        // character the same way when a session records none, because refusing to pick leaves the client
+        // at character select with a travel it cannot complete.
+        self.character_chosen = None;
+        self.character_map = None;
+        if let Some(rows) = self.characters.as_ref().map(|source| {
+            source.for_account(&game::characters::uuid_text(&login.user_id))
+        }) {
+            let named = rows
+                .iter()
+                .find(|character| character.name.eq_ignore_ascii_case(&login.character))
+                .or_else(|| rows.first());
+            if let Some(character) = named {
+                self.character_chosen = Some(character.uuid);
+                self.character_map = Some(character.settings.last_outpost);
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Connection from {peer}: this connection names the character '{}', which stands in map {}.",
+                        character.name, character.settings.last_outpost
+                    ),
+                );
+            }
+        }
+
         // The EULA version this account accepted, which the account info carries back so the client
         // does not ask again (`AuthSrv_SendAccountInfo`; `ASURA/crates/asura-auth/src/lib.rs:610-629`
         // reads it from the account row and sends it, and the reference's own hardcoded 24 is why its
