@@ -43,6 +43,21 @@ impl MapEntry {
     pub fn is_creation(&self) -> bool {
         self.kind == map_kind::CREATION
     }
+
+    /// The alias `/tp` would take for this map: the reference's aliases are lower-case names with
+    /// single spaces ("lakeside county"), so this is the name lower-cased. An unnamed map has no alias
+    /// to type and says so, rather than inventing one.
+    ///
+    /// `ASURA/crates/asura-world/src/catalogue.rs:134`.
+    pub fn alias(&self) -> String {
+        let alias = self.name.to_lowercase();
+        let collapsed = alias.split_whitespace().collect::<Vec<_>>().join(" ");
+        if collapsed.is_empty() {
+            format!("map {}", self.id)
+        } else {
+            collapsed
+        }
+    }
 }
 
 /// The world a program represents.

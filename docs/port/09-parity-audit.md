@@ -90,7 +90,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x8047` | `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` | `agent.rs:1117` | `answer_last_position` | ported |
 | `0x804F` | `GAME_CMSG_UNEQUIP_ITEM` (6) | `item.rs:555`, `handle_unequip_item` | `CLIENT_UNEQUIP_ITEM`: ASURA's answer, a log line and nothing on the wire | ported |
 | `0x8060` | `GAME_CMSG_CHAR_CREATION_CHANGE_PROF` (4) | `creation.rs:275` | handled | ported |
-| `0x8064` | `GAME_CMSG_SEND_CHAT_MESSAGE` (286) | `chat::handle_chat_message` | - | **missing** |
+| `0x8064` | `GAME_CMSG_SEND_CHAT_MESSAGE` (286) | `chat.rs:193`, `handle_chat_message` | `answer_chat_message` | ported |
 | `0x8072` | `GAME_CMSG_ITEM_MOVE` (9) | `item::handle_item_move` | handled | ported thin |
 | `0x8088` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_SPAWN` | `agent.rs:1219` | handled | ported thin |
 | `0x8089` | `GAME_CMSG_CHAR_CREATION_REQUEST_PLAYER` (2) | `creation.rs:190` | handled | ported |
@@ -100,7 +100,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x8091` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_ITEMS` (4) | `item.rs:448` | handled | ported thin |
 | `0x80B1` | `GAME_CMSG_PARTY_TRAVEL` (9) | `travel.rs`, `handle_party_travel` | `answer_party_travel` and `begin_transfer` | ported |
 
-**Score: 30 ported or ported thin (11 auth + 19 game), 1 ours, 5 missing.**
+**Score: 31 ported or ported thin (11 auth + 20 game), 1 ours, 4 missing.**
 
 ## 4. Server -> client: the 87 messages ASURA emits
 
@@ -145,9 +145,9 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x0048` | display cape | `agent_display_cape` | same | ported |
 | `0x0059` | player create (91) | `player_create` | same | ported |
 | `0x005A` | player destroy | `player_destroy` | `character_packets::player_destroy` | ported |
-| `0x005D` | chat: the body | `chat_message_core` | - | **missing** |
-| `0x005E` | chat: the server speaking | `chat_message_server` | - | **missing** |
-| `0x0061` | chat: which player spoke | `chat_message_local` | - | **missing** |
+| `0x005D` | chat: the body | `chat_message_core` | `chat_packets::chat_message_core` | ported |
+| `0x005E` | chat: the server speaking | `chat_message_server` | `chat_packets::chat_message_server` | ported thin: the builder is ASURA's, and ASURA itself never sends it |
+| `0x0061` | chat: which player spoke | `chat_message_local` | `chat_packets::chat_message_local` | ported |
 | `0x006E` | visual equipment | `update_agent_visual_equipment` | same | ported |
 | `0x0070` | hard mode | `hard_mode_unlocked` | same | ported |
 | `0x008A` | cartography data (262) | `cartography_data` | - | **missing** |
@@ -198,7 +198,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x01D3` | party create | `party_create` | same | ported |
 | `0x01D4` | party member stream end | `party_member_stream_end` | same | ported |
 
-**Score: 72 ported or ported thin, 7 missing, 0 ours among the emitted set.**
+**Score: 75 ported or ported thin, 4 missing, 0 ours among the emitted set.**
 
 ### 4.3 Builders ASURA has that no message above covers
 
@@ -222,7 +222,7 @@ setting that selects one.
 | the players ask | 34 frames, in one order (`player.rs:382-388` for the party) | the same 34, the same order | ported |
 | the travel | the redirect `0x01A6`, `0x0099` in its twelve-byte form, `0x00B0`, `0x00B1`, `0x005A`, `0x0021` (`travel.rs:480-518`) | the same eight, in the same order, out of `begin_transfer` | ported thin: no seat reservation and no doorway crossing |
 | a player joining a map others are in | `introduction` (`0x0059`, `0x00B0`, `0x00B1`, `0x0020`) and `farewell` (`0x005A`, `0x0021`) | nothing | **missing** |
-| chat | `0x005D` bodies, one of `0x005E`/`0x0061` committing | nothing | **missing** |
+| chat | `0x005D` body plus `0x0061` who spoke, and every generated answer printed (`chat.rs:193-353`) | the same pair, and `/maps`, `/stuck`, `/tp` and `Unknown command` printed | ported |
 | the exploration grid | `0x008B` then `0x008A`, 0.58-0.73 s into the load, once per instance (`cartography.rs`) | nothing | **missing** |
 
 ## 6. What the protocol audit says, in numbers
@@ -230,13 +230,13 @@ setting that selects one.
 | | count |
 |---|---|
 | messages ASURA handles (client -> server) | 36 |
-| ... this tree handles as ASURA does | **30** (11 auth, 19 game) |
+| ... this tree handles as ASURA does | **31** (11 auth, 20 game) |
 | ... this tree handles, but not as ASURA does | **1** |
 | ... of those, answered differently | 1 (`0x800D`: echoed instead of answered with the ping reply) |
-| ... this tree does not handle | **5** |
+| ... this tree does not handle | **4** (`0x8000`, `0x8001`, `0x8002`, `0x8007`) |
 | messages ASURA emits (server -> client) | 87 |
-| ... this tree emits | **80** (8 auth, 72 game) |
-| ... this tree does not emit | **7** |
+| ... this tree emits | **83** (8 auth, 75 game) |
+| ... this tree does not emit | **4** (`0x008A`, `0x008B`, `0x015F`, `0x01A0`) |
 | messages this tree emits that ASURA does not have | 1: the district-count answer on the auth connection |
 | sequences ported whole | 6 of 9 |
 | the packet table | identical, 782 rows (682 game + 100 auth) |
@@ -245,23 +245,22 @@ setting that selects one.
 
 1. **The movement family is ported and the graph it walks on is not.** The five frames and their
    `_live` forms, `AgentState`, `densify`, the cadence, the tolerance and the four handlers are
-   `ASURA`'s, ported on 2026-11-12; the tick carries elapsed time. What is still missing is the map's
-   path graph (`gwdat.rs`, `fa_compress.rs`, `map_data.rs`, `path_tables.rs`, `pathfind.rs`), so every
-   walk is answered exactly as the working implementation answers a map it holds no graph for:
-   `NoGraph`, and nothing on the wire.
-2. **Chat is absent**: three emitted frames and one handled message (`0x005D`, `0x005E`, `0x0061`,
-   `0x8064`).
-3. **The exploration grid is absent** (`0x008B`, `0x008A`), so the map view asserts.
-4. **`0x015F` (the unnamed item) and `0x01A0` (the instance table) are absent.**
-5. **The thin rows**: `0x0030` with no name, `0x00DA` and `0x00DB` always empty, `0x017C`'s two
-   unlock bytes as a constant, `0x0198`'s words carried rather than derived, and the items block
-   without `0x015E`.
-6. **The travel sequence is absent**: `0x01A6`, `0x00B0`/`0x00B1`, `0x005A`, `0x0021`, `0x01A0`.
-7. **`0x015F` (unnamed item) and `0x804F` (unequip) are absent.**
-8. **Six auth messages are absent** (`0x8000`, `0x8001`, `0x8002`, `0x8007`, and the two settings
-   uploads are acknowledged rather than stored).
-9. **The thin rows**: `0x0030` with no name, `0x00DA`/`0x00DB` always empty, `0x017C`'s unlock bytes,
-   `0x0198`'s words, `0x009F`'s three properties, the items block without `0x015E`.
+   `ASURA`'s; the tick carries elapsed time. What is still missing is the map's path graph
+   (`gwdat.rs`, `fa_compress.rs`, `map_data.rs`, `path_tables.rs`, `pathfind.rs`), so every walk is
+   answered exactly as the working implementation answers a map it holds no graph for: `NoGraph`, and
+   nothing on the wire.
+2. **The exploration grid is absent** (`0x008B`, `0x008A`), so the map view asserts.
+3. **`0x015F` (the unnamed item) and `0x01A0` (the instance table) are absent**, and the items block
+   goes without `0x015E`.
+4. **The thin rows**: `0x0030` with no name, `0x00DA` and `0x00DB` always empty, `0x017C`'s two unlock
+   bytes as a constant, `0x0198`'s words carried rather than derived, and `0x009F`'s three properties.
+5. **The travel is ported thin**: the eight frames and the three triggers are ASURA's, but there is no
+   seat reservation and no doorway crossing (`portals.rs`), so a portal in the map does nothing.
+6. **`0x800D` is ours**: the ping is echoed instead of answered with the ping reply.
+7. **`introduction` and `farewell` are absent**: a player joining a map others are in is not announced,
+   and one leaving is not withdrawn.
+8. **Four auth messages are absent** (`0x8000`, `0x8001`, `0x8002`, `0x8007`), and the two settings
+   uploads are acknowledged rather than stored.
 
 ## 8. The order this audit imposes
 
@@ -269,9 +268,9 @@ setting that selects one.
    `fa_compress.rs`, `map_data.rs`, `path_tables.rs` and `pathfind.rs` out of ASURA. Until it lands a
    walk is refused with `NoGraph` - the working implementation's own answer for a map with no graph -
    and nothing else about movement is outstanding.
-2. The two wrong headers and the six absent client messages.
-3. The travel sequence and the introduction/farewell pair.
-4. Chat, whole.
-5. The cartography pair.
-6. `0x015F`, `0x804F`, `0x01A0`.
-7. The thin rows, each replaced by ASURA's own.
+2. The cartography pair (`0x008B`, `0x008A`), which the map view waits for.
+3. `0x015F` and `0x01A0`, and with them the items block's `0x015E`.
+4. The thin rows, each replaced by ASURA's own.
+5. The introduction and farewell pair.
+6. `0x800D` answered as ASURA answers it, then the four absent auth messages.
+7. The travel's own remaining half: the seat reservation and the doorway crossing.

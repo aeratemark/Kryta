@@ -744,6 +744,77 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             );
         }
 
+        // 12. The client speaks (`GAME_CMSG_SEND_CHAT_MESSAGE`, `0x8064`: `{agent u32, text
+        // String16}`, whose first unit is the channel). A `!` line is answered with the text
+        // (`0x005D`) and who spoke it (`0x0061`), **sent ungated** as the reference sends a player's
+        // own line (`ASURA/crates/asura-world/src/chat.rs:227-247`).
+        let speak = |text: &str| {
+            let mut ask = vec![0x64, 0x80];
+            ask.extend_from_slice(&1u32.to_le_bytes()); // the agent the client sends with it
+            let units: Vec<u16> = text.encode_utf16().collect();
+            ask.extend_from_slice(&(units.len() as u16).to_le_bytes());
+            for unit in &units {
+                ask.extend_from_slice(&unit.to_le_bytes());
+            }
+            ask
+        };
+        let mut ask = speak("!hello");
+        sending.apply(&mut ask);
+        stream.write_all(&ask).expect("a spoken line");
+        // `0x005D` is the text ("hello": 2 + 2 + 10) and `0x0061` is ten bytes.
+        let mut said = read_exact(&mut stream, 14 + 10);
+        reading.apply(&mut said);
+        assert_eq!(&said[..2], &[0x5D, 0x00], "the text of the line");
+        assert_eq!(
+            u16::from_le_bytes([said[2], said[3]]),
+            5,
+            "five units, the marker stripped"
+        );
+        assert_eq!(
+            u16::from_le_bytes([said[4], said[5]]),
+            u16::from(b'h'),
+            "the line itself"
+        );
+        assert_eq!(&said[14..16], &[0x61, 0x00], "who spoke it");
+        assert_eq!(&said[16..20], &1u32.to_le_bytes(), "the speaker");
+        assert_eq!(
+            &said[20..24],
+            &3u32.to_le_bytes(),
+            "Channel_All, the channel `!` speaks on"
+        );
+
+        // The commands the reference answers in its log and nowhere else, and a channel it drops:
+        // `/maps` prints the alias table, `/tp ascalon` is the command's own "You are already here."
+        // (this connection is in map 148), and `@` is one of the three channels the reference ignores.
+        // Every one of them leaves the wire to the simulation tick
+        // (`ASURA/crates/asura-world/src/chat.rs:288-352`).
+        for silent in ["/maps", "/tp ascalon", "@/ignored", "/nonsense"] {
+            let mut ask = speak(silent);
+            sending.apply(&mut ask);
+            stream.write_all(&ask).expect("a command");
+            let mut tick = read_exact(&mut stream, 6);
+            reading.apply(&mut tick);
+            assert_eq!(
+                &tick[..2],
+                &[0x1E, 0x00],
+                "{silent} is answered in the log and not on the wire"
+            );
+        }
+
+        // `/stuck` broadcasts where the agent stands: `0x002C`, **not** `AGENT_STOP_MOVING`
+        // (`ASURA/crates/asura-world/src/chat.rs:260-287`).
+        let mut ask = speak("/stuck");
+        sending.apply(&mut ask);
+        stream.write_all(&ask).expect("the stuck command");
+        let mut stood = read_exact(&mut stream, 16);
+        reading.apply(&mut stood);
+        assert_eq!(&stood[..2], &[0x2C, 0x00], "the agent's position");
+        assert_eq!(
+            &stood[2..6],
+            &1u32.to_le_bytes(),
+            "the agent that stood still"
+        );
+
         // The instance is a row in the world database while the connection is inside it. Its id is
         // kept, so the cleanup removes this test's copy and nothing else.
         {
@@ -765,9 +836,16 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             *copy.lock().unwrap() = Some(rows[0].get::<usize, i64>(0));
         }
 
-        // The client's travel request is read and does not end the connection: a tick follows it.
+        // The client's own travel request (`GAME_CMSG_PARTY_TRAVEL`, `0x80B1`, nine bytes: the header,
+        // the instance, and three bytes it does not interpret). It is answered with the eight frames
+        // `ASURA/crates/asura-world/src/travel.rs:480-518` sends, in that order: the travel effect, the
+        // walk's stop, the redirect, the map update in its twelve-byte form, and the travelling body
+        // withdrawn - its party size, its party, the player and the agent.
+        //
+        // Read as one block rather than by the frame walker, because `0x0099`'s table row is its
+        // five-byte form and this answer carries the twelve-byte one; the sizes are the table's own.
         let mut travel = vec![0u8; 9];
-        travel[0..2].copy_from_slice(&0x00B1u16.to_le_bytes());
+        travel[0..2].copy_from_slice(&0x80B1u16.to_le_bytes());
         travel[2..4].copy_from_slice(&148u16.to_le_bytes());
         travel[4] = 0;
         travel[5..7].copy_from_slice(&1u16.to_le_bytes());
@@ -775,9 +853,28 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         travel[8] = 0;
         sending.apply(&mut travel);
         stream.write_all(&travel).expect("the travel request");
-        let mut tick = read_exact(&mut stream, 6);
-        reading.apply(&mut tick);
-        assert_eq!(&tick[..2], &[0x1E, 0x00], "the world keeps ticking");
+        let sizes = [10usize, 6, 46, 12, 12, 12, 8, 8];
+        let mut redirect = read_exact(&mut stream, sizes.iter().sum());
+        reading.apply(&mut redirect);
+        let mut headers = Vec::new();
+        let mut at = 0;
+        for size in sizes {
+            headers.push(u16::from_le_bytes([redirect[at], redirect[at + 1]]));
+            at += size;
+        }
+        assert_eq!(
+            headers,
+            vec![0x00F1, 0x0028, 0x01A6, 0x0099, 0x00B0, 0x00B1, 0x005A, 0x0021],
+            "the redirect's eight frames, in the working implementation's order"
+        );
+        // The twelve-byte map update names the map the client is being sent to: the effect, the stop
+        // and the redirect come first (10 + 6 + 46 bytes), then its header, the upper half of its
+        // four-byte game header, and the map.
+        assert_eq!(
+            &redirect[66..70],
+            &148u32.to_le_bytes(),
+            "the redirect's map update names map 148"
+        );
 
         // Ending the socket releases the copy: its row is emptied or disposed by the world.
         let _ = stream.shutdown(std::net::Shutdown::Both);

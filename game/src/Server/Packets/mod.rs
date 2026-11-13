@@ -8,6 +8,8 @@
 pub mod agent_packets;
 #[path = "CharacterPackets.rs"]
 pub mod character_packets;
+#[path = "ChatPackets.rs"]
+pub mod chat_packets;
 #[path = "InstancePackets.rs"]
 pub mod instance_packets;
 #[path = "ItemPackets.rs"]

@@ -74,21 +74,24 @@ being served.
 | 9 | drag an item in the inventory | `the item's new place answered with 1 message(s), 11 bytes`; the item stays where you put it |
 | 10 | equip an item | the same placement answer, into the equipped bag's slot for that kind of item |
 | 11 | destroy an item | `the item's removal answered with 1 message(s), 8 bytes`; the item is gone |
-| 12 | reopen the world map | the district count answer again (step 3) |
-| 13 | leave the client | `Gameplay connection ... closed.` and, after the hold, `Instance on map 148, district 1, was empty for 900 s and is disposed (R37, R40)` |
+| 12 | say something on the all channel (`!hello`) | `... spoke "hello" on channel 3` and `a spoken line answered with 2 message(s), 24 bytes`; the client's chat box is the judge of whether the line renders - the bytes are ASURA's, and ASURA's own notes say no chat text has ever reached a screen in either server |
+| 13 | type `/maps`, then `/stuck`, then `/tp ascalon` | `/maps` prints `Teleport targets (2 aliases, every one with a map config):` and its two rows and sends nothing; `/stuck` is answered with `the agent's position` (16 bytes, `0x002C`); `/tp ascalon` says `You are already here.` because the character is in map 148 |
+| 14 | type `/tp kamadan` | `Kamadan, Jewel of Istan (449) is not hosted by this world; the teleport is refused.` - the alias is the reference's, and this world has no row for that map |
+| 15 | travel from the world map | `the redirect answered with 8 message(s), 114 bytes` and `the client is told to dial 127.0.0.1:6112 with token 0x...`; the client reconnects and loads the map it asked for |
+| 16 | reopen the world map | the district count answer again (step 3) |
+| 17 | leave the client | `Gameplay connection ... closed.` and, after the hold, `Instance on map 148, district 1, was empty for 900 s and is disposed (R37, R40)` |
 
 ## What is not expected to work yet, and why
 
 These are the plan's known gaps, each waiting on a capture rather than on work:
 
-- **Travelling between maps** (a door, a portal, the world map's travel button): the client's request is
-  read and named in the log (`the client asks to travel to map M ...; the redirect's own wire is not
-  captured yet`), and nothing else happens. The redirect the client expects is the one message of this
-  path without a measurement (`docs/port/06-world-plan.md`, "Where the ledger says we do not know").
 - **Other players, NPCs and monsters in the outpost**: the map is drawn with no agents in it. The
   agent-creation stream is not captured on this build; the load sends its own body and nothing else.
 - **Walking on real terrain**: movement is read and kept on the player's agent, but the world has no
-  terrain data - the `Gw.dat` archive format has not been measured in this tree.
+  terrain data - the `Gw.dat` archive format has not been measured in this tree, so every walk answers
+  `NoGraph` and nothing goes on the wire.
+- **The map view's exploration grid**: the map opens, and the pair that fills it in (`0x008B`, `0x008A`)
+  is not ported yet, so the map view is what asserts and not the load.
 
 ## What to send back
 
@@ -101,7 +104,8 @@ one that says which half broke - the login program's, the world program's, or th
 The world half of this journey is also played automatically against the *program* by
 `cargo test -p worldserver --test end_to_end -- --ignored --nocapture`: it starts the real
 `worldserver`, performs the creation screen, loads map 148, asks for the items, the spawn point and the
-players, sends the travel request and reads the ticks - the same wire steps 5 to 8 do with a client.
+players, drags, equips and destroys an item, speaks a line and types the chat commands, sends the travel
+request and reads the redirect's eight frames - the same wire steps 5 to 15 do with a client.
 The login half is `cargo test -p authserver --test end_to_end -- --ignored --nocapture`, which starts
 the real `authserver` and performs the client's file check, version message, key exchange and portal
 login, reading the character list it answers with - then the district list (`0x800B`, one district in

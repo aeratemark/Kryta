@@ -24,8 +24,8 @@ use shared::cryptography::AuthCrypt;
 use shared::network::socket::{Session, SessionFuture, SessionIo};
 
 use crate::server::packets::{
-    agent_packets, character_packets, creation_load_block, instance_packets, item_packets,
-    misc_packets, party_packets,
+    agent_packets, character_packets, chat_packets, creation_load_block, instance_packets,
+    item_packets, misc_packets, party_packets,
 };
 use crate::server::protocol::GameVersion;
 use crate::server::protocol::FrameError;
@@ -120,6 +120,11 @@ const CLIENT_CANCEL_MOVEMENT: u16 = 0x8028;
 /// (`ASURA/crates/asura-protocol/src/packets.rs`; the client's own frame is `B1 80 | <instance> | ...`).
 /// This tree listened for `0x00B1`, which is the *server's* party message, until 2026-11-12.
 const CLIENT_PARTY_TRAVEL: u16 = 0x80B1;
+
+/// `GAME_CMSG_SEND_CHAT_MESSAGE` (`0x8064`): the client speaks - `{agent u32, text String16}`, whose
+/// first unit is the channel (`ASURA/crates/asura-protocol/src/packets.rs`, and
+/// `ASURA/docs/reference/client-protocol.md:920-926`).
+const CLIENT_CHAT_MESSAGE: u16 = 0x8064;
 
 // The simulation's tick period is a setting (R33): `World.SimulationTickMs` (default 105 - the
 // reference sent one `0x001E` every 90-110 ms, average 105 ms over 1780 ticks,
@@ -1307,6 +1312,247 @@ impl WorldSession {
         );
     }
 
+    /// `/tp <alias>` and `/teleport <alias>`: the reference's `GameSrv_HandleTeleportCommand`
+    /// (`GmCommands.c:155-216`), ported whole from
+    /// `ASURA/crates/asura-world/src/travel.rs:184-258` (`teleport`).
+    ///
+    /// A teleport is not a position change - it is a **server transfer**, the same cycle a portal
+    /// starts, so it ends in `begin_transfer` exactly as the client's own request does. The reference's
+    /// three refusals are here verbatim, in its order: an argument that names nothing, an alias its
+    /// table does not list (`Unknown map name. Type /maps.`), a target with no map config, a target
+    /// this world has no row for, and finally the command's own "You are already here."
+    ///
+    /// What is not here, and is named rather than hidden: the working implementation also loads a
+    /// destination on demand (`--on-demand`, `travel.rs:216-247`); this world has no such switch, so a
+    /// map it has no row for is refused instead of loaded.
+    async fn answer_teleport_command(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        crypt: &mut AuthCrypt,
+        sheet: &CharacterSheet,
+        argument: &str,
+    ) {
+        if crate::chat::alias_key(argument).is_empty() {
+            // `GmCommand_ToAscii` refuses an empty argument, and the answer is the invalid-command line.
+            self.say(
+                LogLevel::Info,
+                format!("Gameplay connection from {peer}: /tp without a map name."),
+            );
+            return;
+        }
+        // The alias table, not the map names: the reference accepts `lakeside` as well as
+        // `lakeside county`, so matching against a map's own name would refuse half the aliases its
+        // own `/maps` prints.
+        let Some(target) = crate::chat::travel_target(argument) else {
+            // `GmCommands.c:172-177`: "Unknown map name. Type /maps." through the gated chat sender,
+            // which with the gate off is a log line.
+            self.say(
+                LogLevel::Info,
+                format!("Gameplay connection from {peer}: Unknown map name. Type /maps."),
+            );
+            return;
+        };
+        if !target.hosted {
+            // `GmCommands.c:180-190`: the reference refuses a target with no `GmMapConfig` rather than
+            // letting its map load fall back to Kamadan.
+            self.say(
+                LogLevel::Info,
+                format!(
+                    "Gameplay connection from {peer}: That map has no config; the server would fall back, so the teleport is refused ({}).",
+                    target.label
+                ),
+            );
+            return;
+        }
+        let Some(destination) = self
+            .maps
+            .iter()
+            .find(|map| map.id == target.map_id)
+            .cloned()
+        else {
+            // The table knows the map; this world hosts no row for it. The reference pre-spawns one
+            // server per map, so its answer would be a transfer; this one can only say so.
+            self.say(
+                LogLevel::Info,
+                format!(
+                    "Gameplay connection from {peer}: {} ({}) is not hosted by this world; the teleport is refused.",
+                    target.label, target.map_id
+                ),
+            );
+            return;
+        };
+        if target.map_id == self.map_id() {
+            // `GmCommands.c:198-202`. **The command's own refusal, not a travel policy**: the
+            // client-driven requests (`0x80B1`) are carried out without this check, because there the
+            // client has already decided and a second opinion is a gate. A typed alias that names the
+            // instance the character stands in is the reference's "You are already here." and nothing
+            // more.
+            self.say(
+                LogLevel::Info,
+                format!("Gameplay connection from {peer}: You are already here."),
+            );
+            return;
+        }
+        self.begin_transfer(io, peer, crypt, sheet, &destination).await;
+    }
+
+    /// `GAME_CMSG_SEND_CHAT_MESSAGE` (`0x8064`): the client speaks.
+    ///
+    /// Ported whole from `ASURA/crates/asura-world/src/chat.rs:193-353` (`handle_chat_message`). The
+    /// frame is `{agent u32, text String16}` - the table's own field list
+    /// (`ASURA/docs/reference/client-protocol.md:920-926`), which is why the text's count sits four
+    /// bytes in - and the **first unit of the text is the channel**: `!` all, `#` group, `$` trade,
+    /// `/` a command, `@`/`%`/`"` dropped as the reference drops them, and anything else refused.
+    ///
+    /// A player's line is **sent**, exactly as the reference sends it: the text (`0x005D`) and who spoke
+    /// it (`0x0061`), because the reference's own chat gate covers the text the *server* generates and
+    /// not a line a player typed. Every answer the server generates is printed instead - `/maps`' table
+    /// and every refusal - because that is what the reference's gate does with them.
+    async fn answer_chat_message(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        message: &[u8],
+        crypt: &mut AuthCrypt,
+        sheet: &CharacterSheet,
+    ) {
+        let body = &message[2..];
+        if body.len() < 6 {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: a chat line is {} bytes and carries no text; it cannot be read.",
+                    message.len()
+                ),
+            );
+            return;
+        }
+        let units = u16::from_le_bytes([body[4], body[5]]) as usize;
+        let text: Vec<u16> = (0..units)
+            .map(|index| {
+                let at = 6 + index * 2;
+                u16::from_le_bytes([
+                    body.get(at).copied().unwrap_or(0),
+                    body.get(at + 1).copied().unwrap_or(0),
+                ])
+            })
+            .collect();
+        let Some(channel) = text.first().copied() else {
+            // An empty message, which the reference drops.
+            return;
+        };
+        let spoken: String = char::decode_utf16(text[1.min(text.len())..].iter().copied())
+            .map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER))
+            .collect();
+
+        match u8::try_from(channel).unwrap_or(0) as char {
+            // `Channel_All`, `Channel_Group`, `Channel_Trade`: the three channels the reference speaks
+            // on. Sent ungated, as the reference sends them.
+            speaker @ ('!' | '#' | '$') => {
+                let channel = match speaker {
+                    '#' => chat_packets::CHANNEL_GROUP,
+                    '$' => chat_packets::CHANNEL_TRADE,
+                    _ => chat_packets::CHANNEL_ALL,
+                };
+                // The player's id and its agent's are one number here (`CREATION_AGENT`, the id the
+                // load drew the body as); the working implementation reads them from its player.
+                let frames = vec![
+                    chat_packets::chat_message_core(&spoken),
+                    chat_packets::chat_message_local(CREATION_AGENT, channel),
+                ];
+                self.send(io, peer, crypt, &frames, "a spoken line").await;
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Gameplay connection from {peer}: {} spoke {spoken:?} on channel {channel}.",
+                        sheet.name
+                    ),
+                );
+            }
+            '/' => {
+                // The command surface, from the reference's own two places: `GmCommands.c`'s
+                // `GameSrv_TryHandleGmCommand` (`/tp`, `/teleport`, `/maps`) and `GmChat.c`'s
+                // `GameSrv_HandleChatCommand` (`/stuck`). `crate::chat::COMMANDS` names them once.
+                let spoken = spoken.trim();
+                let (name, argument) = match spoken.split_once(' ') {
+                    Some((name, rest)) => (name, rest.trim_start()),
+                    None => (spoken, ""),
+                };
+                match crate::chat::command(name) {
+                    Some(named) if named.names.contains(&"stuck") && argument.is_empty() => {
+                        // `GameSrv_HandleChatCommand`'s `stuck`: broadcast where the agent is now.
+                        // **Not** `AGENT_STOP_MOVING` - that is what `0x8028` answers - and the working
+                        // implementation sends the position alone (`chat.rs:260-287`); the tick it also
+                        // broadcasts is the ticker's own, so no second clock is invented.
+                        let Some(frame) = self.with_agent(|agent| {
+                            agent_packets::agent_update_position(
+                                agent.agent_id,
+                                agent.position,
+                                agent.plane,
+                            )
+                            .1
+                        }) else {
+                            return;
+                        };
+                        self.send(io, peer, crypt, &[frame], "where the agent stands")
+                            .await;
+                    }
+                    Some(named) if named.names.contains(&"maps") && argument.is_empty() => {
+                        // `GmCommand_ListTargets`, as it behaves with the reference's own defaults: the
+                        // table goes to the log, and nothing goes on the wire. That is parity, not a
+                        // gate - sending it crashed a live client, which is why the answer is printed
+                        // (`chat.rs:288-324`). The chat half is written too, and printed at debug,
+                        // which is the level this tree's traces are read at.
+                        let answer = crate::chat::maps_answer(&self.maps);
+                        for line in &answer.table {
+                            self.say(LogLevel::Info, format!("Gameplay connection from {peer}: {line}"));
+                        }
+                        for line in &answer.chat {
+                            self.say(
+                                LogLevel::Debug,
+                                format!(
+                                    "Gameplay connection from {peer}: /maps (chat, not sent): {line}"
+                                ),
+                            );
+                        }
+                    }
+                    Some(named) if named.names.contains(&"tp") && !argument.is_empty() => {
+                        self.answer_teleport_command(io, peer, crypt, sheet, argument)
+                            .await;
+                    }
+                    _ => {
+                        // `GameSrv_SendInvalidCommand`: the reference's text is "Unknown command",
+                        // which covers `/tp` with no map name and every name not in the table; with its
+                        // chat gate off it is a log line and nothing else.
+                        self.say(
+                            LogLevel::Info,
+                            format!("Gameplay connection from {peer}: Unknown command"),
+                        );
+                    }
+                }
+            }
+            other => {
+                // `@`, `%` and `"` are ignored by the reference; anything else it refuses.
+                if matches!(other, '@' | '%' | '"') {
+                    self.say(
+                        LogLevel::Debug,
+                        format!(
+                            "Gameplay connection from {peer}: channel {other:?} ignored, as the reference ignores it."
+                        ),
+                    );
+                } else {
+                    self.say(
+                        LogLevel::Info,
+                        format!(
+                            "Gameplay connection from {peer}: chat on channel {other:?} refused, as the reference refuses it."
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
     /// `GAME_CMSG_MOVE_TO_COORD` (`0x803E`): the agent is asked to walk to a point.
     ///
     /// `ASURA/crates/asura-world/src/agent.rs:710` (`handle_move_to_coord`), ported whole: the finder
@@ -1996,11 +2242,17 @@ impl WorldSession {
                     CLIENT_LAST_POS_BEFORE_MOVE_CANCELED => {
                         self.answer_last_position(io, peer, &message, crypt).await;
                     }
-                    // The client's own in-game travel request. The redirect that answers it is not
-                    // captured on this build, so the connection stays where it is and the request is
-                    // named in the log rather than acted on (`docs/port/06-world-plan.md`, step 3).
+                    // The client's own in-game travel request. `ASURA/crates/asura-world/src/travel.rs`
+                    // answers it with the same cycle `/tp` ends in: a map this world hosts goes to
+                    // `begin_transfer`, and one it cannot serve is refused in the log.
                     CLIENT_PARTY_TRAVEL => {
                         self.answer_party_travel(io, peer, &message, crypt, sheet)
+                            .await;
+                    }
+                    // The client speaks: a line on a channel, or one of the reference's commands
+                    // (`ASURA/crates/asura-world/src/chat.rs`).
+                    CLIENT_CHAT_MESSAGE => {
+                        self.answer_chat_message(io, peer, &message, crypt, sheet)
                             .await;
                     }
                     // The client destroys one of its items: the row goes, and the item is told gone

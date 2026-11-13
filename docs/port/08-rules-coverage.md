@@ -76,7 +76,7 @@ The states are:
 | R52 missions are instances with success/failure | not started | |
 | R56 a mission outpost presents the Enter Mission button | data | `World.MissionButton` setting; the button is the client's |
 | R55 quests | not started | |
-| the chat and social wire | not started | `game/Chat/` is a stub |
+| the chat and social wire | the channel rule and the commands in; guilds, friends and alliance not started | `game/Chat/` holds the reference's three commands and `/maps`' table, and the connection answers `0x8064` with ASURA's pair (`0x005D`, `0x0061`) - `ASURA/crates/asura-world/src/chat.rs`, and `worldserver/tests/end_to_end.rs` speaks a line and types the commands against the program; `game/Guilds/` is a stub |
 | guilds, friends, alliance | not started | `game/Guilds/` is a stub |
 | titles and character slots | not started | |
 
