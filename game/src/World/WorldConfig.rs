@@ -24,6 +24,13 @@ pub struct WorldConfig {
     pub spawn_scatter: f32,
     /// Whether an instance keeps a clock at all (R33). The game ticks one; an operator may choose not to.
     pub instance_tick: bool,
+    /// The number a ping reply carries.
+    ///
+    /// The working implementation reads it from its own interval file
+    /// (`ASURA/config/Server/intervals.json`, `ping_value`: 20, whose note says it is GWPS's number and
+    /// has not been verified against this client). It is also the dword the reference's own send log
+    /// carried - `0D 00 14 00 00 00` - so 20 is the measured value and an operator may change it.
+    pub ping_value: u32,
     /// The interval one connection's simulation is ticked at (R33), in milliseconds. The game's measured
     /// cadence is ~105 ms (`recordings/asura/feature/travel/first-crossing-20261031.jsonl`, 1780 ticks);
     /// an operator may run it faster or slower, which is why it is a setting and not a law.
@@ -81,6 +88,7 @@ impl Default for WorldConfig {
             party_size_cap: 8,
             spawn_scatter: 250.0,
             instance_tick: true,
+            ping_value: 20,
             simulation_tick_ms: 105,
             sweep_interval_ms: 1000,
             compass_range: 10_000.0,
@@ -122,6 +130,7 @@ impl WorldConfig {
         settings.compass_range = number(config, "CompassRange", settings.compass_range)?;
         settings.instance_tick = flag(config, "InstanceTick", settings.instance_tick)?;
         settings.simulation_tick_ms = small(config, "SimulationTickMs", settings.simulation_tick_ms)?;
+        settings.ping_value = small(config, "PingValue", settings.ping_value)?;
         settings.sweep_interval_ms = small(config, "SweepIntervalMs", settings.sweep_interval_ms)?;
         settings.mission_button = flag(config, "MissionButton", settings.mission_button)?;
 

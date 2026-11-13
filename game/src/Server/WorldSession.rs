@@ -1361,14 +1361,19 @@ impl WorldSession {
             // implementation's dispatch ends the connection on it
             // (ASURA/crates/asura-world/src/dispatch.rs:86).
             CLIENT_DISCONNECT => Some(false),
-            // A ping on the gameplay connection: two bytes, answered with the same two bytes.
+            // `GAME_CMSG_PING_REQUEST` (`0x800D`): the client asks to be pinged back, and the answer is
+            // the ping reply - `0x000D` and the value this world runs with, **not** the request echoed
+            // (`ASURA/crates/asura-world/src/connection.rs:579-587`, `handle_ping_request`).
             GAME_PING => {
-                let mut answer = message.to_vec();
-                crypt.encrypt(&mut answer);
-                match io.write_all(&answer).await {
-                    Ok(()) => Some(true),
-                    Err(_) => Some(false),
-                }
+                self.send(
+                    io,
+                    peer,
+                    crypt,
+                    &[misc_packets::ping_reply(self.settings.ping_value)],
+                    "the ping reply",
+                )
+                .await;
+                Some(true)
             }
             _ => None,
         }
@@ -2597,14 +2602,18 @@ impl WorldSession {
                     CLIENT_PING_REPLY | CLIENT_HEARTBEAT => {}
                     // The client's own ping on a live connection: the reference logs it and
                     // answers nothing, so this does the same.
+                    // `GAME_CMSG_PING_REQUEST` (`0x800D`) on a loaded connection: the same answer as
+                    // before the load, because the working implementation has one handler for the
+                    // connection's whole life (`ASURA/crates/asura-world/src/connection.rs:579-587`).
                     GAME_PING => {
-                        self.say(
-                            LogLevel::Info,
-                            format!(
-                                "Gameplay connection from {peer}: a ping on the loaded map, {message_len} bytes.",
-                                message_len = message.len()
-                            ),
-                        );
+                        self.send(
+                            io,
+                            peer,
+                            crypt,
+                            &[misc_packets::ping_reply(self.settings.ping_value)],
+                            "the ping reply",
+                        )
+                        .await;
                     }
                     // The client's movement. Four messages, four handlers, ported from the working
                     // implementation's own (`ASURA/crates/asura-world/src/agent.rs`): `0x803E` asks for

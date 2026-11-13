@@ -862,6 +862,28 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             );
         }
 
+        // A ping on the loaded connection (`GAME_CMSG_PING_REQUEST`, `0x800D`, two bytes) is answered
+        // with the ping reply - `0x000D` and the value the world runs with - and not with an echo
+        // (`ASURA/crates/asura-world/src/connection.rs:579-587`).
+        let mut ping = vec![0x0Du8, 0x80];
+        sending.apply(&mut ping);
+        stream.write_all(&ping).expect("the ping");
+        // A tick may already have been on its way, so the answer is read until it is the reply itself.
+        let mut answered;
+        loop {
+            answered = read_exact(&mut stream, 6);
+            reading.apply(&mut answered);
+            if answered[..2] == [0x0D, 0x00] {
+                break;
+            }
+            assert_eq!(&answered[..2], &[0x1E, 0x00], "only a tick comes before the reply");
+        }
+        assert_eq!(
+            &answered[2..6],
+            &20u32.to_le_bytes(),
+            "the value the world runs with (World.PingValue)"
+        );
+
         // 12. The client speaks (`GAME_CMSG_SEND_CHAT_MESSAGE`, `0x8064`: `{agent u32, text
         // String16}`, whose first unit is the channel). A `!` line is answered with the text
         // (`0x005D`) and who spoke it (`0x0061`), **sent ungated** as the reference sends a player's

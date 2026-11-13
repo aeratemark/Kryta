@@ -63,6 +63,10 @@
       "value": 105,
       "doc": "How often one connection's simulation is ticked (R33), in milliseconds. 105 is the game's measured cadence (one 0x001E every 90-110 ms over 1780 ticks in the reference's own crossing); an operator may run faster or slower."
     },
+    "PingValue": {
+      "value": 20,
+      "doc": "The number a ping reply carries (0x000D). 20 is what a working server sent and what the reference's own log carried (0D 00 14 00 00 00); the client echoes it back in its own ping."
+    },
     "SweepIntervalMs": {
       "value": 1000,
       "doc": "How often the world checks its instance table for copies to dispose (R33, R40), in milliseconds. The reference's own check is not measured; a second is what a fifteen-minute hold needs."
