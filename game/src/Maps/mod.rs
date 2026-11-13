@@ -125,7 +125,10 @@ impl DatabaseMaps {
             .map(|row| {
                 Ok(MapEntry {
                     id: read_number(row, "id")? as u32,
-                    kind: read_number(row, "type")? as u8,
+                    kind: row
+                        .try_get::<_, Option<i64>>("type")
+                        .map_err(|error| format!("column type: {error}"))?
+                        .map(|value| value as u8),
                     file_id: read_number(row, "file_id")? as u32,
                     name: read_text(row, "name")?,
                     instance_value: row
@@ -366,7 +369,7 @@ mod tests {
             .iter()
             .find(|map| map.id == 148)
             .expect("map 148 is seeded");
-        assert_eq!(outpost.kind, 0, "Ascalon City is an outpost");
+        assert_eq!(outpost.kind, Some(0), "Ascalon City is an outpost");
         assert_eq!(
             outpost.file_id, 113_021,
             "the file id the recording carried (0x0001B97D)"

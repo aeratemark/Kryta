@@ -250,18 +250,42 @@ fn run(args: &[String]) -> Result<(), String> {
         Some(maps) => world.load_maps(maps, &log)?,
         None => 0,
     };
+    // The maps this world can put a client in: a record the pack states no type or no blob for is a
+    // destination the client can resolve and this world cannot load, so it is not asked for a graph
+    // (`ASURA/crates/asura-world/src/catalogue.rs:54-63`).
+    let hostable: Vec<game::world::MapEntry> = world
+        .maps()
+        .iter()
+        .filter(|map| map.is_hostable())
+        .cloned()
+        .collect();
     log.out(
         LogLevel::Info,
         "server.worldserver",
         format!(
-            "World of {} map(s): {}.",
-            maps,
-            world
-                .maps()
-                .iter()
-                .map(|map| format!("{} '{}' (type {})", map.id, map.name, map.kind))
-                .collect::<Vec<_>>()
-                .join(", ")
+            "World of {maps} map(s), {} of them hosted{}.{}",
+            hostable.len(),
+            if maps <= 8 {
+                format!(
+                    ": {}",
+                    world
+                        .maps()
+                        .iter()
+                        .map(|map| format!("{} '{}' (type {})", map.id, map.name, map.kind_name()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            } else {
+                String::new()
+            },
+            if world.maps().len() > hostable.len() {
+                format!(
+                    " {} record(s) are destinations the client can resolve and this world cannot load.",
+                    world.maps().len() - hostable.len()
+                )
+            } else {
+                String::new()
+            }
         ),
     );
     // The creation screen's own content: the bags and items a client is given, and what a new
@@ -333,11 +357,11 @@ fn run(args: &[String]) -> Result<(), String> {
         report(&note);
     }
     let graphs = if graph_dump.trim().is_empty() {
-        load_graphs_from_archive(&gw_dat, world.maps(), &log)
+        load_graphs_from_archive(&gw_dat, &hostable, &log)
     } else {
         match game::terrain::pathfind::PathGraphs::from_dump(&graph_dump) {
             Ok(graphs) => {
-                let bound = graphs.bind(world.maps());
+                let bound = graphs.bind(&hostable);
                 log.out(
                     LogLevel::Info,
                     "server.worldserver",
@@ -356,7 +380,7 @@ fn run(args: &[String]) -> Result<(), String> {
                         "Could not read the path-graph dump {graph_dump}: {error}; falling back to {gw_dat}."
                     ),
                 );
-                load_graphs_from_archive(&gw_dat, world.maps(), &log)
+                load_graphs_from_archive(&gw_dat, &hostable, &log)
             }
         }
     };

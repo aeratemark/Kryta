@@ -266,9 +266,12 @@ setting that selects one.
 
 2. **The items block goes without `0x015E`** (the low-detail item), and so does ASURA's: the message is
    observed in a capture and emitted by neither implementation, so it is not this tree's to invent.
-3. **The instance table is ported thin**: ASURA's batch shape goes on the wire, and its content is the
-   maps whose rows state an `instance_value` - one today (map 148). A client can resolve a destination
-   only once that map's row carries its value.
+3. **The instance table carries the whole catalogue.** ASURA's batch shape goes on the wire and its
+   content is every record the pack gives a value to: **137 pairs** in ten `0x01A0` batches - 17 of them
+   hosted maps and 120 that are destinations only (`ASURA/crates/asura-world/src/instance_table.rs:63-71`
+   keeps a record its own catalogue reader skips). A record with no type is a row like any other and
+   `MapEntry::is_hostable` is the difference: a travel or a crossing that names one is refused, exactly
+   as `catalogue::entry` answers `None` for it (`ASURA/crates/asura-world/src/catalogue.rs:54-63`).
 4. **The travel is ported with its cycle and without the doorway.** The eight frames, the three
    triggers (`/tp`, the world map's `0x80B1`, the touch's `0x80C1`), the `is_explorable` switch and the
    hand-off row are ASURA's. Two parts are not, each named with its reason:
@@ -466,5 +469,10 @@ keeps its traversal order, its tie-breaking and its quirks; the dump keeps its b
 2. **(done)** The doorway crossing (`portals.rs`, whole) and the travel's cycle, so a step through a
    map's own wall starts a transfer that lands on the receiving map's arrival. What is not here is
    named in §7.4: ASURA's seat reservation, which is its own deployment accounting.
-3. The instance table's content: an `instance_value` on every map row the world hosts, and the map rows
-   themselves for the places a character can travel to - a doorway's destination needs one.
+3. **(done)** The catalogue and the instance table's content: every record ASURA's pack states is a row
+   (265 of them: 145 with a type and an archive file - the maps this world puts a client in - and 120
+   that state only an `instance_value`, which is a destination the client can resolve and this world
+   cannot load), with 466 spawn points, 28 arches and 28 arrivals from the same per-map files. A load
+   sends **137** `{instance, value}` pairs in ten `0x01A0` batches. On this machine the world starts
+   with `World of 265 map(s), 145 of them hosted`, imports **144** graphs out of `Gw.dat` in 12 s, and
+   holds 131 MB.

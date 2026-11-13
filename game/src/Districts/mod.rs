@@ -92,7 +92,7 @@ impl Districts {
         language: u32,
         allotment: u32,
     ) -> Result<u32, String> {
-        if map.kind != OUTPOST {
+        if map.kind != Some(OUTPOST) {
             // R3: an explorable copy belongs to one party. Without parties yet, one connection is
             // one party, so it gets a copy of its own - numbered after the copies this world already
             // holds for the map, which is what the client shows as districts.
@@ -214,7 +214,7 @@ impl Districts {
     /// Open a copy, and write the row that records it.
     fn open_copy(&mut self, map: &MapEntry, district: u32, language: u32) {
         let db_id = match self.store.as_ref() {
-            Some(store) => match store.open(map.id, district, language, map.kind) {
+            Some(store) => match store.open(map.id, district, language, map.kind.unwrap_or(0)) {
                 Ok(id) => Some(id),
                 Err(error) => {
                     self.say(format!(
@@ -275,7 +275,7 @@ mod tests {
     fn outpost() -> MapEntry {
         MapEntry {
             id: 148,
-            kind: OUTPOST,
+            kind: Some(OUTPOST),
             file_id: 112_509,
             name: "Ascalon City (pre-Searing)".to_string(),
             // The value a live load of map 148 carried (`0xBB14F539`,
@@ -287,7 +287,7 @@ mod tests {
     fn explorable() -> MapEntry {
         MapEntry {
             id: 5,
-            kind: map_kind::EXPLORABLE,
+            kind: Some(map_kind::EXPLORABLE),
             file_id: 1,
             name: "Regent Valley".to_string(),
             instance_value: None,

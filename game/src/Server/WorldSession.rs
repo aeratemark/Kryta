@@ -1016,12 +1016,9 @@ impl WorldSession {
                 match characters.unlocked_maps(&uuid) {
                     Ok(unlocked) if unlocked.contains(&map.id) => {}
                     Ok(unlocked) if unlocked.is_empty() => {
-                        let first = self
-                            .maps
-                            .iter()
-                            .filter(|map| !map.is_creation())
-                            .map(|map| map.id)
-                            .min();
+                        // R12: a character starts with one unlock, and it is the outpost the world
+                        // starts characters in - not the lowest id the catalogue happens to hold.
+                        let first = self.starting_outpost().map(|map| map.id);
                         match first {
                             Some(first) => {
                                 if let Err(error) = characters.unlock_map(&uuid, first) {
@@ -1612,7 +1609,12 @@ impl WorldSession {
                 }
             ),
         );
-        let Some(destination) = self.maps.iter().find(|map| map.id == to_map).cloned() else {
+        let Some(destination) = self
+            .maps
+            .iter()
+            .find(|map| map.id == to_map && map.is_hostable())
+            .cloned()
+        else {
             self.say(
                 LogLevel::Info,
                 format!(
@@ -1652,7 +1654,15 @@ impl WorldSession {
             return;
         }
         let map_id = u32::from(u16::from_le_bytes([body[0], body[1]]));
-        let Some(destination) = self.maps.iter().find(|map| map.id == map_id).cloned() else {
+        // A record the client can resolve and this world cannot load is not servable: ASURA's own
+        // `catalogue::entry` answers `None` for a map with no archive file
+        // (`ASURA/crates/asura-world/src/catalogue.rs:54-63`).
+        let Some(destination) = self
+            .maps
+            .iter()
+            .find(|map| map.id == map_id && map.is_hostable())
+            .cloned()
+        else {
             self.say(
                 LogLevel::Info,
                 format!(
@@ -1774,7 +1784,7 @@ impl WorldSession {
 
         let agent = self.player_id();
         let player = self.player_id();
-        let is_explorable = self.settings.travel_explorable.flag(destination.kind);
+        let is_explorable = self.settings.travel_explorable.flag(destination.kind.unwrap_or(0));
         let frames = vec![
             agent_packets::agent_update_effects(agent, TRAVEL_EFFECT).1,
             agent_packets::agent_stop_moving(agent).1,
@@ -1901,7 +1911,7 @@ impl WorldSession {
         let Some(destination) = self
             .maps
             .iter()
-            .find(|map| map.id == target.map_id)
+            .find(|map| map.id == target.map_id && map.is_hostable())
             .cloned()
         else {
             // The table knows the map; this world hosts no row for it. The reference pre-spawns one
@@ -2452,6 +2462,21 @@ impl WorldSession {
             Ok(entered) => entered.map(|(_, district)| district).unwrap_or(0),
             Err(_) => 0,
         }
+    }
+
+    /// The outpost this world starts a fresh character in: `World.StartingOutpost`, or the lowest-id
+    /// outpost it hosts when that row is absent, which is said in the log rather than hidden.
+    ///
+    /// R12 gives a new character exactly one unlock; R14 places a load at the character's last outpost.
+    fn starting_outpost(&self) -> Option<&crate::world::MapEntry> {
+        let wanted = self.settings.starting_outpost;
+        if let Some(map) = self.maps.iter().find(|map| map.id == wanted && map.is_hostable()) {
+            return Some(map);
+        }
+        self.maps
+            .iter()
+            .filter(|map| map.kind == Some(crate::world::map_kind::OUTPOST))
+            .min_by_key(|map| map.id)
     }
 
     /// The map this connection is in, as the graph lookup wants it.
@@ -3224,11 +3249,7 @@ impl WorldSession {
         // hosts. `GameSrv_HandleCharCreationConfirm` writes the character's starting map into its own
         // row, and the login's list reads it back, so a row without one is a character the client can
         // only be sent back into the creation instance for.
-        let starting_outpost = self
-            .maps
-            .iter()
-            .filter(|map| map.kind == crate::world::map_kind::OUTPOST)
-            .min_by_key(|map| map.id);
+        let starting_outpost = self.starting_outpost();
         let start_map = starting_outpost.map(|map| map.id as u16).unwrap_or(0);
 
         let reply = match pool.lock() {
@@ -3536,14 +3557,14 @@ mod tests {
             vec![
                 MapEntry {
                     id: 0,
-                    kind: map_kind::CREATION,
+                    kind: Some(map_kind::CREATION),
                     file_id: 0,
                     name: "Character creation".to_string(),
                     instance_value: None,
                 },
                 MapEntry {
                     id: 148,
-                    kind: map_kind::OUTPOST,
+                    kind: Some(map_kind::OUTPOST),
                     file_id: 113_021,
                     name: "Ascalon City (pre-Searing)".to_string(),
                     instance_value: Some(0xBB14_F539),
@@ -4855,7 +4876,7 @@ Logger.root = 6,Console
         let mut maps = prepared.maps().to_vec();
         maps.push(crate::world::MapEntry {
             id: 147,
-            kind: crate::world::map_kind::OUTPOST,
+            kind: Some(crate::world::map_kind::OUTPOST),
             file_id: 112_508,
             name: "Ascalon Academy".to_string(),
             instance_value: None,

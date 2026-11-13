@@ -88,6 +88,13 @@ pub struct WorldConfig {
     /// box, and an extent of 0 or less disables point doorways entirely
     /// (`ASURA/crates/asura-world/src/portals.rs:31-64`, `point_half_extent`, `box_crossed`).
     pub point_box_half_extent: f32,
+    /// The outpost a fresh character is placed in and has unlocked: the one unlock a character starts
+    /// with (R12), and the map its own row names as its start.
+    ///
+    /// The login's placement names the same fact for a character with no map anywhere
+    /// (`authserver.json`, `FallbackOutpost`); a world that wrote a different number here would hand a
+    /// new character an unlock the login never sends it to.
+    pub starting_outpost: u32,
     /// The address a travelling client is told to reconnect to, as `host:port`.
     ///
     /// The working implementation publishes one (`--public`, `ASURA/crates/asura-world/src/main.rs:73`);
@@ -119,6 +126,7 @@ impl Default for WorldConfig {
             max_allowed_correction: 250.0,
             travel_explorable: TravelExplorable::Zero,
             point_box_half_extent: 250.0,
+            starting_outpost: 148,
             public_address: "127.0.0.1:6112".to_string(),
         }
     }
@@ -222,6 +230,7 @@ impl WorldConfig {
             .map_err(|error| error.to_string())?;
         settings.point_box_half_extent =
             number(config, "PointBoxHalfExtent", settings.point_box_half_extent)?;
+        settings.starting_outpost = small(config, "StartingOutpost", settings.starting_outpost)?;
         settings.travel_explorable = TravelExplorable::parse(&travel_explorable)
             .ok_or_else(|| {
                 format!(
@@ -250,9 +259,10 @@ impl WorldConfig {
             settings.public_address,
         ));
         notes.push(format!(
-            "World: a travel's is_explorable: {}; a point doorway's box has a half side of {:.0}.",
+            "World: a travel's is_explorable: {}; a point doorway's box has a half side of {:.0}; a new character starts in outpost {} (R12).",
             settings.travel_explorable.mode(),
             settings.point_box_half_extent,
+            settings.starting_outpost,
         ));
         notes.push(format!(
             "World: a player agent is created with {} health, {} energy, {:.1} energy a second and a walking speed of {:.0}; a character with no appearance of its own is drawn as 0x{:08X}.",

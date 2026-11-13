@@ -1820,14 +1820,14 @@ mod tests {
         let maps = vec![
             MapEntry {
                 id: 148,
-                kind: 0,
+                kind: Some(0),
                 file_id: 0x1B97D,
                 name: "Ascalon City (pre-Searing)".to_string(),
                 instance_value: Some(0xBB14_F539),
             },
             MapEntry {
                 id: 146,
-                kind: 1,
+                kind: Some(1),
                 file_id: 0x1B97E,
                 name: "Lakeside County".to_string(),
                 instance_value: None,
@@ -1866,7 +1866,7 @@ mod tests {
         let graphs = PathGraphs::from_dump(&path.to_string_lossy()).expect("load the dump");
         graphs.bind(&[MapEntry {
             id: 148,
-            kind: 0,
+            kind: Some(0),
             file_id: 0x1B97D,
             name: "Ascalon City (pre-Searing)".to_string(),
             instance_value: None,
@@ -1905,7 +1905,7 @@ mod tests {
         };
         let map = MapEntry {
             id: 148,
-            kind: 0,
+            kind: Some(0),
             file_id: 0x1B97D,
             name: "Ascalon City (pre-Searing)".to_string(),
             instance_value: Some(0xBB14_F539),

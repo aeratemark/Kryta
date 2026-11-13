@@ -30,8 +30,10 @@ pub mod map_kind {
 pub struct MapEntry {
     /// The client's own id for the map.
     pub id: u32,
-    /// Which kind of place it is, from [`map_kind`].
-    pub kind: u8,
+    /// Which kind of place it is, from [`map_kind`], or `None` for a record the client can resolve and
+    /// this world does not host: the pack states a type only for a map it can put a client in
+    /// (`ASURA/crates/asura-config/src/world.rs:41-44`, `catalogue::load`).
+    pub kind: Option<u8>,
     /// The `Gw.dat` file id the client loads the map from (`0x0196`).
     pub file_id: u32,
     /// What the map is called, for a log line and the administration tool.
@@ -45,7 +47,20 @@ pub struct MapEntry {
 impl MapEntry {
     /// Whether this entry is the character-creation instance.
     pub fn is_creation(&self) -> bool {
-        self.kind == map_kind::CREATION
+        self.kind == Some(map_kind::CREATION)
+    }
+
+    /// Whether this world can put a client in this map at all.
+    ///
+    /// `ASURA/crates/asura-world/src/catalogue.rs:54-63`, `entry`: a record with no archive file is not
+    /// hosted, **except** the character-creation instance, which is a conversation rather than a place
+    /// and needs no geometry. A record with no type is not hosted either - it is a destination the
+    /// client can name (`0x01A0`) and this world cannot load.
+    pub fn is_hostable(&self) -> bool {
+        match self.kind {
+            None => false,
+            Some(kind) => self.file_id != 0 || kind == map_kind::CREATION,
+        }
     }
 
     /// How the map is named in an answer or a log line: its name when it has one, its id when it does
@@ -66,9 +81,12 @@ impl MapEntry {
     /// `ASURA/crates/asura-world/src/catalogue.rs:144-152`, `MapEntry::kind`.
     pub fn kind_name(&self) -> &'static str {
         match self.kind {
-            map_kind::OUTPOST => "outpost",
-            map_kind::EXPLORABLE => "explorable",
-            _ => "other",
+            Some(map_kind::OUTPOST) => "outpost",
+            Some(map_kind::EXPLORABLE) => "explorable",
+            Some(_) => "other",
+            // A record with no type is a destination the client can resolve and this world cannot
+            // serve (`ASURA/crates/asura-config/src/world.rs:41-44`).
+            None => "destination only",
         }
     }
 
@@ -311,7 +329,7 @@ mod tests {
     fn a_map_is_named_as_the_working_implementation_names_it() {
         let named = MapEntry {
             id: 148,
-            kind: map_kind::OUTPOST,
+            kind: Some(map_kind::OUTPOST),
             file_id: 113_021,
             name: "Ascalon City (pre-Searing)".to_string(),
             instance_value: Some(0xBB14_F539),
@@ -320,7 +338,7 @@ mod tests {
         assert_eq!(named.kind_name(), "outpost");
         let unnamed = MapEntry {
             id: 999,
-            kind: map_kind::EXPLORABLE,
+            kind: Some(map_kind::EXPLORABLE),
             file_id: 0,
             name: String::new(),
             instance_value: None,
@@ -329,7 +347,7 @@ mod tests {
         assert_eq!(unnamed.kind_name(), "explorable");
         let other = MapEntry {
             id: 0,
-            kind: map_kind::CREATION,
+            kind: Some(map_kind::CREATION),
             file_id: 0,
             name: "Character creation".to_string(),
             instance_value: None,
@@ -344,14 +362,14 @@ mod tests {
             vec![
                 MapEntry {
                     id: 0,
-                    kind: map_kind::CREATION,
+                    kind: Some(map_kind::CREATION),
                     file_id: 0,
                     name: "Character creation".to_string(),
                     instance_value: None,
                 },
                 MapEntry {
                     id: 148,
-                    kind: map_kind::OUTPOST,
+                    kind: Some(map_kind::OUTPOST),
                     file_id: 112_509,
                     name: "Ascalon City (pre-Searing)".to_string(),
                     instance_value: Some(0xBB14_F539),
@@ -395,6 +413,47 @@ mod tests {
         assert!(world.spawns_of(148).is_empty());
     }
 
+    /// `ASURA/crates/asura-world/src/catalogue.rs:54-63`, `entry`: a map with no archive file is not
+    /// hosted, **except** the character-creation instance; and a record the pack states no type for is
+    /// a destination the client can resolve (`0x01A0`) that this world cannot load.
+    #[test]
+    fn only_a_record_with_a_type_and_a_blob_is_hosted() {
+        let host = MapEntry {
+            id: 148,
+            kind: Some(map_kind::OUTPOST),
+            file_id: 113_021,
+            name: "Ascalon City (pre-Searing)".to_string(),
+            instance_value: Some(0xBB14_F539),
+        };
+        assert!(host.is_hostable());
+        let creation = MapEntry {
+            id: 0,
+            kind: Some(map_kind::CREATION),
+            file_id: 0,
+            name: "Character Creation".to_string(),
+            instance_value: None,
+        };
+        assert!(creation.is_hostable(), "the creation instance needs no geometry");
+        let no_blob = MapEntry {
+            file_id: 0,
+            ..host.clone()
+        };
+        assert!(!no_blob.is_hostable(), "an outpost with no blob loads to a black screen");
+        let destination_only = MapEntry {
+            id: 4,
+            kind: None,
+            file_id: 0,
+            name: String::new(),
+            instance_value: Some(943_034_109),
+        };
+        assert!(
+            !destination_only.is_hostable(),
+            "a record with no type is a destination the client can resolve and this world cannot load"
+        );
+        assert_eq!(destination_only.kind_name(), "destination only");
+        assert_eq!(destination_only.label(), "map 4", "an unnamed map names its id");
+    }
+
     /// What the world program does at start-up: the graphs are imported for the maps it hosts, and a
     /// walk asked through the world is answered from them - map 148 from its own spawn point to a point
     /// beside it, and a map the archive holds no graph for with `NoGraph`.
@@ -417,21 +476,21 @@ mod tests {
             vec![
                 MapEntry {
                     id: 0,
-                    kind: map_kind::CREATION,
+                    kind: Some(map_kind::CREATION),
                     file_id: 0,
                     name: "Character creation".to_string(),
                     instance_value: None,
                 },
                 MapEntry {
                     id: 148,
-                    kind: map_kind::OUTPOST,
+                    kind: Some(map_kind::OUTPOST),
                     file_id: 0x1B97D,
                     name: "Ascalon City (pre-Searing)".to_string(),
                     instance_value: Some(0xBB14_F539),
                 },
                 MapEntry {
                     id: 146,
-                    kind: map_kind::OUTPOST,
+                    kind: Some(map_kind::OUTPOST),
                     file_id: 0x1,
                     name: "a map with no graph".to_string(),
                     instance_value: None,

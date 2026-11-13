@@ -67,7 +67,7 @@ mod tests {
     fn map(id: u32, value: Option<u32>) -> MapEntry {
         MapEntry {
             id,
-            kind: map_kind::OUTPOST,
+            kind: Some(map_kind::OUTPOST),
             file_id: 0,
             name: format!("map {id}"),
             instance_value: value,

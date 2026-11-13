@@ -185,7 +185,7 @@ mod tests {
     fn map(id: u32, kind: u8, name: &str) -> MapEntry {
         MapEntry {
             id,
-            kind,
+            kind: Some(kind),
             file_id: 0,
             name: name.to_string(),
             instance_value: None,

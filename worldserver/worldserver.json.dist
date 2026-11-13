@@ -113,7 +113,10 @@
       "value": "127.0.0.1:6112",
       "doc": "The address a travelling client is told to reconnect to, as host:port - the redirect (0x01A6) carries it as a Winsock sockaddr_in. The working implementation publishes one (its --public argument, ASURA/crates/asura-world/src/main.rs:73). This stack's client dials the address it was launched against, which is the login port, and the front door copies that connection to the world, so the default is that address."
     },
-    "PointBoxHalfExtent": {
+    "StartingOutpost": {
+      "value": 148,
+      "doc": "The outpost a fresh character is placed in and has unlocked (R12, R14) - the one unlock a character starts with, and the map its own row names as its start. The login's placement names the same fact for a character with no map anywhere (authserver.json, FallbackOutpost); a different number here would hand a new character an unlock the login never sends it to."
+    },    "PointBoxHalfExtent": {
       "value": 250,
       "doc": "Half the side, in map units, of the box around a point-shaped doorway - the older shape that states one coordinate pair and no wall. A step crosses such a doorway only by intersecting a box edge; a doorway stated as a wall does not use this at all, and 0 disables point doorways (ASURA/config/Server/portals.json, point_box_half_extent; ASURA/crates/asura-world/src/portals.rs:31-64)."
     },    "TravelExplorable": {

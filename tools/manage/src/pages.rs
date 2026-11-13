@@ -276,7 +276,7 @@ pub fn content(manage: &Manage) -> Response {
              cap <input type=\"text\" name=\"cap\" size=\"3\" value=\"0\"> \
              <button type=\"submit\">set the party cap (0 = the world's)</button></form></td><td>{arrivals}</td></tr>\n",
             id = map.id,
-            kind = map.kind,
+            kind = map.kind_name(),
             file_id = map.file_id,
             name = escape(&map.name),
             party_cap = match manage.party_cap(map.id) {
