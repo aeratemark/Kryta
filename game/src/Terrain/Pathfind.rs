@@ -833,6 +833,355 @@ struct BuildHelper<'c> {
     waypoints: &'c mut Vec<Waypoint>,
 }
 
+// ---------------------------------------------------------------------------------------------
+// ASURA/crates/asura-world/src/pathfind.rs, lines 941-1286: the corridor walk. Every step is the
+// reference's, including the two places where its behaviour is undefined or surprising and the port
+// says so: the uninitialised `t`/`s` of a parallel step (`add_waypoint_and_reduce`) and the swap of
+// the edges when the corridor goes down into the next trapezoid (`run`).
+// ---------------------------------------------------------------------------------------------
+
+impl BuildHelper<'_> {
+    /// `PathBuildHelper`: walk the chain of trapezoids the search chose.
+    fn run(&mut self, src_trap: u32) {
+        const MAX_LOOP: i32 = 0xBB8;
+
+        let mut curr_node = src_trap;
+        let mut loop_count = 0i32;
+        loop {
+            loop_count += 1;
+            assert!(
+                loop_count < MAX_LOOP,
+                "the reference asserts the walk terminates"
+            );
+
+            let curr_trap_id = self.context.nodes[curr_node as usize].point.trap;
+            let curr_trap = self.context.trap(curr_trap_id);
+            let next_node = self.context.nodes[curr_node as usize].next;
+
+            if next_node.is_none() || curr_trap_id == self.dst_point.trap {
+                if self.add_last(&mut curr_node, self.dst_point) {
+                    break;
+                }
+                continue;
+            }
+
+            let next = self.context.nodes[next_node.expect("checked above") as usize];
+            let next_trap_id = next.point.trap;
+            let next_trap = self.context.trap(next_trap_id);
+
+            let top_left = self.context.neighbour(curr_trap_id, curr_trap.top_left);
+            let top_right = self.context.neighbour(curr_trap_id, curr_trap.top_right);
+            let bottom_left = self.context.neighbour(curr_trap_id, curr_trap.bottom_left);
+            let bottom_right = self.context.neighbour(curr_trap_id, curr_trap.bottom_right);
+
+            if Some(next_trap_id) == top_left || Some(next_trap_id) == top_right {
+                let left = Vec2f {
+                    x: curr_trap.xtl.max(next_trap.xbl),
+                    y: curr_trap.yt,
+                };
+                let right = Vec2f {
+                    x: curr_trap.xtr.min(next_trap.xbr),
+                    y: curr_trap.yt,
+                };
+                self.process_next(left, right, next_trap_id, &mut curr_node);
+            } else if Some(next_trap_id) == bottom_left || Some(next_trap_id) == bottom_right {
+                let left = Vec2f {
+                    x: curr_trap.xbl.max(next_trap.xtl),
+                    y: curr_trap.yb,
+                };
+                let right = Vec2f {
+                    x: curr_trap.xbr.min(next_trap.xtr),
+                    y: curr_trap.yb,
+                };
+                // Note the swap: going down, the reference passes `right` as the left edge.
+                self.process_next(right, left, next_trap_id, &mut curr_node);
+            } else if let Some(portal) = self.portal_adjacent(curr_trap.portal_right, next_trap_id)
+            {
+                let top = if next_trap.yt <= curr_trap.yt {
+                    Vec2f {
+                        x: next_trap.xtl,
+                        y: next_trap.yt,
+                    }
+                } else {
+                    Vec2f {
+                        x: curr_trap.xtr,
+                        y: curr_trap.yt,
+                    }
+                };
+                let bottom = if curr_trap.yb <= next_trap.yb {
+                    Vec2f {
+                        x: next_trap.xbl,
+                        y: next_trap.yb,
+                    }
+                } else {
+                    Vec2f {
+                        x: curr_trap.xbr,
+                        y: curr_trap.yb,
+                    }
+                };
+
+                self.current_plane = portal.neighbor_plane_id;
+                self.context.steps.push(BuildStep {
+                    pos: top,
+                    dir: sub(bottom, top),
+                    plane: self.current_plane,
+                    next_trap: next_trap_id,
+                });
+                self.process_next(top, bottom, next_trap_id, &mut curr_node);
+            } else if let Some(portal) = self.portal_adjacent(curr_trap.portal_left, next_trap_id) {
+                let top = if next_trap.yt <= curr_trap.yt {
+                    Vec2f {
+                        x: next_trap.xtr,
+                        y: next_trap.yt,
+                    }
+                } else {
+                    Vec2f {
+                        x: curr_trap.xtl,
+                        y: curr_trap.yt,
+                    }
+                };
+                let bottom = if curr_trap.yb <= next_trap.yb {
+                    Vec2f {
+                        x: next_trap.xbr,
+                        y: next_trap.yb,
+                    }
+                } else {
+                    Vec2f {
+                        x: curr_trap.xbl,
+                        y: curr_trap.yb,
+                    }
+                };
+
+                self.current_plane = portal.neighbor_plane_id;
+                self.context.steps.push(BuildStep {
+                    pos: top,
+                    dir: sub(bottom, top),
+                    plane: self.current_plane,
+                    next_trap: next_trap_id,
+                });
+                self.process_next(bottom, top, next_trap_id, &mut curr_node);
+            } else {
+                // The reference asserts "shouldn't be possible" here and stops.
+                break;
+            }
+        }
+    }
+
+    /// `PathBuildAddWaypointAndReduce`: flush the corridor steps to waypoints, dropping repeats.
+    fn add_waypoint_and_reduce(&mut self, new_point: FindPoint, from_pos: Vec2f) {
+        let steps = std::mem::take(&mut self.context.steps);
+
+        for step in &steps {
+            let best_pos = if !is_zero(step.dir) {
+                let to_point = sub(new_point.pos.v2(), from_pos);
+                if let Some((t, _s)) =
+                    find_intersection_point(step.pos, step.dir, from_pos, to_point)
+                {
+                    if 1.01 < t {
+                        add(step.pos, step.dir)
+                    } else if t < -0.01 {
+                        step.pos
+                    } else {
+                        Vec2f {
+                            x: step.pos.x + (t * step.dir.x),
+                            y: step.pos.y + (t * step.dir.y),
+                        }
+                    }
+                } else {
+                    // The reference reads its uninitialised `t` here; leaving it at zero reproduces the
+                    // 11-waypoint answer to the one parallel case measured, byte for byte.
+                    step.pos
+                }
+            } else {
+                step.pos
+            };
+
+            if !equal(self.last_pos.v2(), best_pos) || self.last_pos.plane != step.plane {
+                self.last_pos = Pos {
+                    x: best_pos.x,
+                    y: best_pos.y,
+                    plane: step.plane,
+                };
+
+                if let Some(previous) = self.waypoints.last() {
+                    if equal(best_pos, previous.pos.v2()) {
+                        self.waypoints.pop();
+                    }
+                }
+
+                self.waypoints.push(Waypoint {
+                    pos: self.last_pos,
+                    trap_id: step.next_trap,
+                });
+            }
+        }
+
+        if !equal(self.last_pos.v2(), new_point.pos.v2()) {
+            self.last_pos = new_point.pos;
+
+            if let Some(previous) = self.waypoints.last() {
+                if equal(new_point.pos.v2(), previous.pos.v2()) {
+                    self.waypoints.pop();
+                }
+            }
+
+            self.waypoints.push(Waypoint {
+                pos: new_point.pos,
+                trap_id: new_point.trap,
+            });
+        }
+    }
+
+    /// `PathBuildAddWaypoint`: the corridor has to be cut at one of the two bounds.
+    fn add_waypoint(&mut self, left: Vec2f, right: Vec2f, node: &mut u32) {
+        let bound_used;
+        if equal(self.left_bound.point.pos.v2(), left) {
+            bound_used = self.left_bound;
+            self.right_bound.point = self.left_bound.point;
+            self.right_bound.step_id = self.left_bound.step_id;
+            *node = self.left_bound.point.trap;
+        } else if equal(self.right_bound.point.pos.v2(), right) {
+            bound_used = self.right_bound;
+            self.left_bound.point = self.right_bound.point;
+            self.left_bound.step_id = self.right_bound.step_id;
+            *node = self.right_bound.point.trap;
+        } else {
+            let mut dx = left.x - self.curr_start_point.pos.x;
+            let mut dy = left.y - self.curr_start_point.pos.y;
+            let left_value = (dy * dy) + (dx * dx);
+
+            dx = right.x - self.curr_start_point.pos.x;
+            dy = right.y - self.curr_start_point.pos.y;
+            let right_value = (dy * dy) + (dx * dx);
+
+            bound_used = if left_value < right_value {
+                self.left_bound
+            } else {
+                self.right_bound
+            };
+        }
+
+        self.context.steps.truncate(bound_used.step_id);
+
+        let from_pos = self.curr_start_point.pos.v2();
+        self.add_waypoint_and_reduce(bound_used.point, from_pos);
+        self.curr_start_point = bound_used.point;
+        self.right_bound.vec = Vec2f::default();
+        self.left_bound.vec = Vec2f::default();
+        self.current_plane = bound_used.point.pos.plane;
+    }
+
+    /// `PathBuildProcessNext`: extend the corridor across the edge into `next_trap`, or cut it.
+    fn process_next(&mut self, left: Vec2f, right: Vec2f, next_trap: u32, node: &mut u32) {
+        let mut to_left = sub(left, self.curr_start_point.pos.v2());
+        let mut to_right = sub(right, self.curr_start_point.pos.v2());
+
+        let new_left_bound;
+        if precise_cross(to_left, self.left_bound.vec) < 0.0 {
+            // `to_left` is left of the left bound, so the bound is tighter and stays.
+            to_left = self.left_bound.vec;
+            new_left_bound = self.left_bound;
+        } else {
+            new_left_bound = Bound {
+                vec: to_left,
+                point: FindPoint {
+                    pos: Pos {
+                        x: left.x,
+                        y: left.y,
+                        plane: self.current_plane,
+                    },
+                    trap: next_trap,
+                },
+                step_id: self.context.steps.len(),
+            };
+        }
+
+        let new_right_bound;
+        if 0.0 < precise_cross(to_right, self.right_bound.vec) {
+            to_right = self.right_bound.vec;
+            new_right_bound = self.right_bound;
+        } else {
+            new_right_bound = Bound {
+                vec: to_right,
+                point: FindPoint {
+                    pos: Pos {
+                        x: right.x,
+                        y: right.y,
+                        plane: self.current_plane,
+                    },
+                    trap: next_trap,
+                },
+                step_id: self.context.steps.len(),
+            };
+        }
+
+        if is_zero(self.left_bound.vec) || precise_cross(to_left, to_right) <= 0.0 {
+            self.left_bound = new_left_bound;
+            self.right_bound = new_right_bound;
+            *node = self.context.nodes[*node as usize]
+                .next
+                .expect("the walk follows the chain it was given");
+        } else {
+            let left = new_left_bound.point.pos.v2();
+            let right = new_right_bound.point.pos.v2();
+            self.add_waypoint(left, right, node);
+        }
+    }
+
+    /// `PathAddLast`: the chain has run out; close the corridor at the destination.
+    fn add_last(&mut self, node: &mut u32, new_point: FindPoint) -> bool {
+        let to_new_point = sub(new_point.pos.v2(), self.curr_start_point.pos.v2());
+        if 0.0 <= precise_cross(to_new_point, self.left_bound.vec) {
+            if precise_cross(to_new_point, self.right_bound.vec) <= 0.0 {
+                let from_pos = self.curr_start_point.pos.v2();
+                self.add_waypoint_and_reduce(new_point, from_pos);
+                return true;
+            }
+
+            self.right_bound.vec = Vec2f::default();
+            self.left_bound.point = self.right_bound.point;
+            *node = self.right_bound.point.trap;
+            self.context.steps.truncate(self.right_bound.step_id);
+            let from_pos = self.curr_start_point.pos.v2();
+            let point = self.right_bound.point;
+            self.add_waypoint_and_reduce(point, from_pos);
+            self.curr_start_point = self.right_bound.point;
+            self.current_plane = self.right_bound.point.pos.plane;
+            false
+        } else {
+            self.left_bound.vec = Vec2f::default();
+            self.right_bound.point = self.left_bound.point;
+            *node = self.left_bound.point.trap;
+            self.context.steps.truncate(self.left_bound.step_id);
+            let from_pos = self.curr_start_point.pos.v2();
+            let point = self.left_bound.point;
+            self.add_waypoint_and_reduce(point, from_pos);
+            self.curr_start_point = self.left_bound.point;
+            self.current_plane = self.left_bound.point.pos.plane;
+            false
+        }
+    }
+
+    /// `GetPortalAndCheckTrapAdjacent`: the portal of the current plane on the given side, if it leads
+    /// to `trap`.
+    fn portal_adjacent(&self, portal_id: u16, trap: u32) -> Option<Portal> {
+        if portal_id == 0xFFFF {
+            return None;
+        }
+        let portal = self
+            .context
+            .portal(self.current_plane, usize::from(portal_id))?;
+        let pair = portal.pair?;
+        let pair_portal = self.context.portal(pair.0, pair.1)?;
+        for candidate in self.context.portal_pair_traps(&pair_portal) {
+            if candidate == trap {
+                return Some(portal);
+            }
+        }
+        None
+    }
+}
+
 /// What the finder said about a walk.
 ///
 /// `ASURA/crates/asura-world/src/agent.rs:570`.

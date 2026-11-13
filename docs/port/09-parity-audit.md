@@ -351,12 +351,14 @@ road.
    by real graphs, not by invented ones; then lines **559-777** - the search's single expansion:
    `add_node`, `visit_trap` (the 0.01 estimate nudge kept), `visit_above`, `visit_bellow`, `visit_portal`
    (the pair's mirror asserted, the `0x4` flag refused, the corner choice by `left`, and the entry point
-   from `pick_next_point`); then lines **921-940** - `Bound` and `BuildHelper`'s fields, declared so
-   that `PathFinding` and `PathCreateWaypoints` can arrive together with the helper they hand
-   themselves to. **Left**: `PathFinding` (line 783) and `PathCreateWaypoints` (line 891), which need
-   `BuildHelper`'s own `impl` (lines **941-1483**, the corridor walk - the next piece); then
-   `PathGraphs` (`load`, `from_dump`, `bind`, `import`, `walk`, `walk_direction`, `walk_any_plane`),
-   `import_graph`, `find_path_blob`, and all of `pathfind/directional.rs` (320 lines).
+   from `pick_next_point`); then lines **921-1286** - `Bound`, `BuildHelper` and **its whole `impl`**:
+   `run` (the corridor loop, the down-edge swap kept, MAX_LOOP asserted), `add_waypoint_and_reduce`
+   (including the parallel-step case the reference leaves undefined, answered the way the one measured
+   walk is answered), `add_waypoint`, `process_next`, `add_last`, `portal_adjacent`. **Left**:
+   `PathFinding` (line 783) and `PathCreateWaypoints` (line 891) - the pieces that call this helper -
+   then `PathGraphs` (`load`, `from_dump`, `bind`, `import`, `walk`, `walk_direction`,
+   `walk_any_plane`), `import_graph`, `find_path_blob`, and all of `pathfind/directional.rs` (320
+   lines).
 4. **The importer** in `map_data.rs` last, only so this machine can produce a dump from its own
    `Gw.dat`; the world's start-up then loads a dump the way ASURA does.
 
