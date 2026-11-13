@@ -31,8 +31,8 @@ Concretely, and binding:
    every branch, the settings it reads, the data it carries - not with the slice a first run happened
    to need. A subject that is only partly ported is declared *ported thin* in
    `docs/port/09-parity-audit.md`, in the same commit that makes it so.
-7. **The audit is the ledger of this rule.** `docs/port/09-parity-audit.md` holds every message and
-   every subject with a verdict - ported, ported thin, ours, missing. Anything marked **ours** is a
+7. **The audit is the ledger of this rule.** `docs/port/09-parity-audit.md` holds every packet and
+   every sequence with a verdict - ported, ported thin, ours, missing. Anything marked **ours** is a
    defect of this rule and is removed by porting the ASURA code, not by improving ours. The audit is
    updated in the same commit as any change to what it lists.
 
@@ -58,7 +58,7 @@ Guild Wars in place of Azeroth.
 | the game | Guild Wars. Tyria's client, protocol, nouns and content replace Azeroth's. |
 | consulted per question | `C:\Users\Apo\Documents\GitHub\ASURA` at `ca9f532`, a previous server for this client. **Under Rule 0 it is the authority for the protocol and for everything the client can see or do**: every message, field, length, ordering and handler step is ported from it 1:1, and it is opened before any client-facing code is written. What it is *not* the authority for is this tree's structure - where a file goes, what a program starts, how a layer is arranged - which stays the reference's. Its documents describe its own function; they are not rules here. |
 | how the game works, described | **`docs/game-rules.md`** - the owner's game-rules ledger: 58 asserted rules and 220 evidenced facts, by subject (travel, districts and instances; party, heroes and henchmen; items and commerce; quests and missions; characters, skills and movement; chat; death and morale; guilds; aggro and monster AI; titles; combat numbers; merchants). Recovered from ASURA's history and kept here because it is the description this port is measured against. Read the subject before porting it; `docs/port/06-world-plan.md` maps each subject to the noun that owns it. |
-| the ledger of Rule 0 | **`docs/port/09-parity-audit.md`** - every message in both directions and every subject in ASURA's tree, with what this tree has, where, and a verdict: ported, ported thin, ours, missing. Read it before writing anything that faces the client, and update it in the same commit as any change to what it lists. |
+| the ledger of Rule 0 | **`docs/port/09-parity-audit.md`** - the protocol audit: every packet in both directions (the 682 game rows and 100 auth rows of the table, the 36 messages ASURA handles, the 87 it emits), the wire beneath them, the sequences, and a verdict for each - ported, ported thin, ours, missing. Scope is the protocol only, not this tree's structure. Read it before writing anything that faces the client, and update it in the same commit as any change to what it lists. |
 
 When the reference and another source disagree about design, the reference wins. When the question
 is what the client sends or expects, the client wins, and the captures in `recordings/` are where that
