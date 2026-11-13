@@ -19,7 +19,11 @@
 #[path = "Instances.rs"]
 pub mod instances;
 
+#[path = "Peers.rs"]
+pub mod peers;
+
 pub use instances::{DatabaseInstances, InstanceRow};
+pub use peers::{PeerView, Peers, Standing, farewell, introduction};
 
 use common::logging::{Log, LogLevel};
 use std::sync::Arc;

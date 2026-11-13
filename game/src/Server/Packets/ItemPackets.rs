@@ -18,6 +18,8 @@ pub const ITEM_SET_ACTIVE_WEAPON_SET: u16 = 0x0148;
 pub const INVENTORY_CREATE_BAG: u16 = 0x013F;
 /// `GAME_SMSG_CREATE_NAMED_ITEM`: one item, with the name and modifiers the client draws.
 pub const CREATE_NAMED_ITEM: u16 = 0x0161;
+/// `GAME_SMSG_CREATE_UNNAMED_ITEM`: the same item without its name - a bag slot's, or one worn.
+pub const CREATE_UNNAMED_ITEM: u16 = 0x015F;
 /// `GAME_SMSG_ITEM_MOVED_TO_LOCATION`: where an item sits.
 pub const ITEM_MOVE_TO_LOCATION: u16 = 0x013E;
 /// `GAME_SMSG_ITEM_SET_PROFESSION`: the profession an item was made for.
@@ -216,9 +218,64 @@ pub fn item_remove(stream: u16, item_id: u32) -> Vec<u8> {
     frame(ITEM_REMOVE, body)
 }
 
+/// `0x015F`: the same item without its name - a bag slot's item, which the client draws from its model.
+///
+/// The reference sends this one for the items in a bag and for what a player wears
+/// (`GameSrv_SendItemsInBag`, `GmItem.c:111-127`, and `GameSrv_BroadcastPlayerEquippedItems`,
+/// `GmItem.c:129-160`) and the named one for the inventory stream. The difference is the name: an item
+/// sitting in a bag slot is drawn from its model, so the client is not told a name it can already
+/// resolve (`ASURA/crates/asura-protocol/src/game/mod.rs:670-688`, `create_unnamed_item`).
+pub fn create_unnamed_item(item: &NamedItem) -> Vec<u8> {
+    let mut body = Vec::with_capacity(23);
+    u32s(&mut body, item.id);
+    u32s(&mut body, item.file_id);
+    u8s(&mut body, item.item_type);
+    u8s(&mut body, item.dye_tint);
+    u16s(&mut body, item.dye_colors);
+    u16s(&mut body, item.materials);
+    u8s(&mut body, item.unk1);
+    u32s(&mut body, item.flags);
+    u32s(&mut body, item.value);
+    frame(CREATE_UNNAMED_ITEM, body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The unnamed item is the named one without its two counted fields: 25 bytes on the wire, the size
+    /// the table declares (`ASURA/crates/asura-protocol/src/game/mod.rs:676-688`).
+    #[test]
+    fn an_unnamed_item_is_the_named_one_without_its_counts() {
+        let item = NamedItem {
+            id: 3,
+            file_id: 0x0004_7C34,
+            item_type: 15,
+            dye_tint: 0,
+            dye_colors: 0,
+            materials: 0,
+            unk1: 0,
+            flags: 0,
+            value: 25,
+            model_id: 22269,
+            quantity: 1,
+            name: vec![],
+            modifiers: vec![],
+        };
+        let unnamed = create_unnamed_item(&item);
+        assert_eq!(&unnamed[..2], &[0x5F, 0x01]);
+        assert_eq!(unnamed.len(), 25, "the table's declared size");
+        assert_eq!(&unnamed[2..6], &3u32.to_le_bytes(), "the item");
+        assert_eq!(&unnamed[6..10], &0x0004_7C34u32.to_le_bytes(), "the file");
+        assert_eq!(unnamed[10], 15, "its kind");
+        assert_eq!(&unnamed[17..21], &0u32.to_le_bytes(), "its flags");
+        assert_eq!(&unnamed[21..25], &25u32.to_le_bytes(), "its value");
+        // The named form is the same bytes with the two counted fields after it.
+        let named = create_named_item(&item);
+        assert_eq!(&named[2..25], &unnamed[2..25], "the same fields, then the name");
+        // `33 + 2n + 1 + 4m` after the header: an empty name and no modifiers is 36 bytes.
+        assert_eq!(named.len(), 36, "and an empty name, and no modifiers");
+    }
 
     fn sample() -> NamedItem {
         NamedItem {

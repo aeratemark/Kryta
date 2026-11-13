@@ -77,9 +77,10 @@ being served.
 | 12 | say something on the all channel (`!hello`) | `... spoke "hello" on channel 3` and `a spoken line answered with 2 message(s), 24 bytes`; the client's chat box is the judge of whether the line renders - the bytes are ASURA's, and ASURA's own notes say no chat text has ever reached a screen in either server |
 | 13 | type `/maps`, then `/stuck`, then `/tp ascalon` | `/maps` prints `Teleport targets (2 aliases, every one with a map config):` and its two rows and sends nothing; `/stuck` is answered with `the agent's position` (16 bytes, `0x002C`); `/tp ascalon` says `You are already here.` because the character is in map 148 |
 | 14 | type `/tp kamadan` | `Kamadan, Jewel of Istan (449) is not hosted by this world; the teleport is refused.` - the alias is the reference's, and this world has no row for that map |
-| 15 | travel from the world map | `the redirect answered with 8 message(s), 114 bytes` and `the client is told to dial 127.0.0.1:6112 with token 0x...`; the client reconnects and loads the map it asked for |
-| 16 | reopen the world map | the district count answer again (step 3) |
-| 17 | leave the client | `Gameplay connection ... closed.` and, after the hold, `Instance on map 148, district 1, was empty for 900 s and is disposed (R37, R40)` |
+| 15 | open a second client, or log a second character in, and stand in the outpost | each client is told about the other: the first logs `N other player(s) introduced` and the second draws the first's body; when the second leaves, the first is told the player and its agent are gone |
+| 16 | travel from the world map | `the redirect answered with 8 message(s), 114 bytes` and `the client is told to dial 127.0.0.1:6112 with token 0x...`; the client reconnects and loads the map it asked for |
+| 17 | reopen the world map | the district count answer again (step 3) |
+| 18 | leave the client | `Gameplay connection ... closed.` and, after the hold, `Instance on map 148, district 1, was empty for 900 s and is disposed (R37, R40)` |
 
 ## What is not expected to work yet, and why
 

@@ -224,6 +224,21 @@ pub struct WorldSession {
     /// The master secret to draw the exchange from, when the caller wants a known one. A program
     /// leaves it empty and every connection draws its own.
     master: Option<[u8; shared::cryptography::handshake::MASTER_SECRET_LEN]>,
+    /// The players loaded in this world's running copies: a connection tells them it arrived, and is
+    /// told when one of them does (game/Districts/Peers.rs).
+    peers: std::sync::Arc<std::sync::Mutex<crate::districts::Peers>>,
+    /// The frames other sessions pushed to this one, which it scrambles with its own cipher and writes
+    /// when it next looks. A session that has not loaded a map has no channel at all.
+    outbox: std::sync::Mutex<Option<std::sync::mpsc::Receiver<Vec<u8>>>>,
+    /// The id this connection's player and agent are known by, drawn the moment a map load begins.
+    ///
+    /// One number for both, as every message in this tree already treats them: the load draws the body
+    /// as `CHAR_CLASS_PLAYER_BASE | player`, the party records name the player, and the agent messages
+    /// name the agent. It is **drawn per connection** (`Peers::allocate`), not a constant, because two
+    /// players in one map are two players: a second connection that carried the first one's id would be
+    /// the same body to every client. `None` until a real map is loaded - the creation instance has no
+    /// population to be told apart in.
+    id: std::sync::Mutex<Option<u32>>,
 }
 
 impl WorldSession {
@@ -246,6 +261,9 @@ impl WorldSession {
             creation: Some(world.creation().clone()),
             templates: world.templates().to_vec(),
             master: None,
+            peers: world.peers(),
+            outbox: std::sync::Mutex::new(None),
+            id: std::sync::Mutex::new(None),
         }
     }
 
@@ -694,7 +712,7 @@ impl WorldSession {
         characters: &crate::characters::DatabaseCharacters,
     ) -> Vec<u8> {
         let equipped = characters.equipped_item_ids(uuid, bags).unwrap_or([0u32; 9]);
-        misc_packets::update_agent_visual_equipment(CREATION_AGENT, equipped)
+        misc_packets::update_agent_visual_equipment(self.player_id(), equipped)
     }
 
     fn say(&self, level: LogLevel, text: impl Into<String>) {
@@ -1032,7 +1050,7 @@ impl WorldSession {
                 instance_packets::instance_player_data_start(),
                 instance_packets::instance_load_player_name(&sheet.name),
                 instance_packets::instance_load_info(
-                    CREATION_AGENT,
+                    self.player_id(),
                     map.id as u16,
                     is_explorable,
                     district,
@@ -1304,7 +1322,7 @@ impl WorldSession {
                 }
                 frames.push(character_packets::update_unlocked_skills(&[]));
                 frames.push(character_packets::player_update_profession(
-                    CREATION_AGENT,
+                    self.player_id(),
                     creation.profession,
                     0,
                     0,
@@ -1555,8 +1573,8 @@ impl WorldSession {
             return;
         }
 
-        let agent = CREATION_AGENT;
-        let player = CREATION_AGENT;
+        let agent = self.player_id();
+        let player = self.player_id();
         let is_explorable = u32::from(destination.kind == crate::world::map_kind::EXPLORABLE);
         let frames = vec![
             agent_packets::agent_update_effects(agent, TRAVEL_EFFECT).1,
@@ -1737,11 +1755,11 @@ impl WorldSession {
                     '$' => chat_packets::CHANNEL_TRADE,
                     _ => chat_packets::CHANNEL_ALL,
                 };
-                // The player's id and its agent's are one number here (`CREATION_AGENT`, the id the
+                // The player's id and its agent's are one number here (`self.player_id()`, the id the
                 // load drew the body as); the working implementation reads them from its player.
                 let frames = vec![
                     chat_packets::chat_message_core(&spoken),
-                    chat_packets::chat_message_local(CREATION_AGENT, channel),
+                    chat_packets::chat_message_local(self.player_id(), channel),
                 ];
                 self.send(io, peer, crypt, &frames, "a spoken line").await;
                 self.say(
@@ -2095,11 +2113,70 @@ impl WorldSession {
         }
     }
 
+    /// Write everything other sessions have pushed at this one, and nothing when they pushed nothing.
+    async fn flush_outbox(&self, io: &mut SessionIo, peer: &str, crypt: &mut AuthCrypt) {
+        let mut frames: Vec<Vec<u8>> = Vec::new();
+        if let Ok(outbox) = self.outbox.lock()
+            && let Some(receiver) = outbox.as_ref()
+        {
+            while let Ok(frame) = receiver.try_recv() {
+                frames.push(frame);
+            }
+        }
+        if !frames.is_empty() {
+            self.send(io, peer, crypt, &frames, "what another session announced").await;
+        }
+    }
+
     /// Run something against this session's own agent, when it has one.
+    ///
+    /// Every message that moves a body goes through here, so this is also where the peer registry learns
+    /// where the body stands: an introduction names the point a player is at **now**, not the one it
+    /// entered at (`ASURA/crates/asura-world/src/instance.rs:249-255`, `standing`, and `PeerView::from`,
+    /// which reads the live agent).
     fn with_agent<T>(&self, work: impl FnOnce(&mut crate::agents::Agent) -> T) -> Option<T> {
         let mut agent = self.agent.lock().ok()?;
         let agent = agent.as_mut()?;
-        Some(work(agent))
+        let answer = work(agent);
+        if let Ok(mut peers) = self.peers.lock() {
+            peers.moved(
+                self.player_id(),
+                crate::districts::Standing {
+                    position: agent.position,
+                    plane: agent.plane,
+                    direction: agent.facing,
+                },
+            );
+        }
+        Some(answer)
+    }
+
+    /// The id this connection's player and agent are known by: drawn once, when a map load begins, and
+    /// the first id until then (the creation instance's own body).
+    fn player_id(&self) -> u32 {
+        match self.id.lock() {
+            Ok(id) => id.unwrap_or(CREATION_AGENT),
+            Err(_) => CREATION_AGENT,
+        }
+    }
+
+    /// Draw this connection's id, once. A connection that already has one keeps it.
+    fn draw_player_id(&self) {
+        if let Ok(mut id) = self.id.lock()
+            && id.is_none()
+            && let Ok(mut peers) = self.peers.lock()
+        {
+            *id = Some(peers.allocate());
+        }
+    }
+
+    /// The district this connection entered, when it has entered one: the number a copy is known by
+    /// (`game/Districts/`), and the half a peer registry keys on.
+    fn district(&self) -> u32 {
+        match self.entered.lock() {
+            Ok(entered) => entered.map(|(_, district)| district).unwrap_or(0),
+            Err(_) => 0,
+        }
     }
 
     /// The map this connection is in, as the graph lookup wants it.
@@ -2140,6 +2217,9 @@ impl WorldSession {
 
         let mut pending: Vec<u8> = Vec::new();
         let mut buffer = vec![0u8; 1024];
+        // This connection's own id, drawn before anything names it: the load block, the entry point and
+        // every message after them carry the same number (`Peers::allocate`).
+        self.draw_player_id();
         let inventory = self.load_inventory(sheet);
         // The instant the last tick went out, so the next one carries how long it really has been.
         let mut last_tick = std::time::Instant::now();
@@ -2150,6 +2230,12 @@ impl WorldSession {
         let load_started = std::time::Instant::now();
 
         loop {
+            // Whatever other sessions pushed at this one - an introduction, a farewell, a move - is
+            // written before anything else is read: it travels plaintext and is scrambled here, with
+            // this connection's own cipher (`game/Districts/Peers.rs`).
+            if loaded {
+                self.flush_outbox(io, peer, crypt).await;
+            }
             while let Some(bytes) = pending.first_chunk::<2>() {
                 let header = u16::from_le_bytes(*bytes);
                 let used = match crate::server::protocol::decode_game_message(&pending, true) {
@@ -2205,7 +2291,7 @@ impl WorldSession {
                                 );
                                 if let Ok(mut agent) = self.agent.lock() {
                                     *agent = Some(crate::agents::Agent::new(
-                                        CREATION_AGENT,
+                                        self.player_id(),
                                         (point.0, point.1),
                                         point.2,
                                         // Our spawn rows carry no angle yet, so the facing is the neutral
@@ -2245,8 +2331,8 @@ impl WorldSession {
                     // visibility and player flags, the player and the agent it is drawn as, the
                     // agent's own properties and look, the party, and the message that ends the load.
                     instance_packets::CLIENT_LOAD_REQUEST_PLAYERS => {
-                        let agent = CREATION_AGENT;
-                        let player = CREATION_AGENT;
+                        let agent = self.player_id();
+                        let player = self.player_id();
                         let position = entry
                             .map(|point| (point.0, point.1))
                             .unwrap_or((0.0, 0.0));
@@ -2310,7 +2396,40 @@ impl WorldSession {
                         let load_ms = u32::try_from(load_started.elapsed().as_millis())
                             .unwrap_or(u32::MAX);
 
+                        // Everyone already in this copy of the map is introduced first: the player, its
+                        // party size, its party and its agent, in that order
+                        // (`ASURA/crates/asura-world/src/player.rs:499-501`, `introduction`).
+                        let standing = crate::districts::Standing {
+                            position,
+                            plane,
+                            direction: (0.0, 1.0),
+                        };
+                        let me = crate::districts::PeerView {
+                            player_id: player,
+                            agent_id: agent,
+                            name: sheet.name.clone(),
+                            standing,
+                            equipped,
+                            map_id: map.id,
+                            district: self.district(),
+                        };
+                        let (sending, receiving) = std::sync::mpsc::channel();
+                        let others = match self.peers.lock() {
+                            Ok(mut peers) => peers.join(me.clone(), sending),
+                            Err(_) => Vec::new(),
+                        };
+                        if let Ok(mut outbox) = self.outbox.lock() {
+                            *outbox = Some(receiving);
+                        }
                         let mut frames = Vec::with_capacity(40);
+                        for peer in &others {
+                            frames.extend(crate::districts::introduction(
+                                peer,
+                                appearance,
+                                self.settings.agent_speed,
+                                PLAYER_TEAM_TOKEN,
+                            ));
+                        }
                         frames.push(misc_packets::pvp_update_unlocked_skills(&[]));
                         frames.push(misc_packets::pvp_update_unlocked_heroes(&[0xFFFF_FFFF; 8]));
                         for item in crate::data_stores::pvp_items::PVP_ITEMS {
@@ -2432,10 +2551,38 @@ impl WorldSession {
                         self.say(
                             LogLevel::Info,
                             format!(
-                                "Gameplay connection from {peer}: map {} is loaded - the character '{}' is in it ({count} message(s)).",
-                                map.id, sheet.name
+                                "Gameplay connection from {peer}: map {} is loaded - the character '{}' is in it ({count} message(s), {} other player(s) introduced).",
+                                map.id,
+                                sheet.name,
+                                others.len()
                             ),
                         );
+                        // And the others are told this body is here: the introduction, then the items it
+                        // wears in the form a bag slot uses (`CREATE_UNNAMED_ITEM`, `GameSrv_BroadcastPlayerEquippedItems`,
+                        // `GmItem.c:129-160`), then what the agent is drawn wearing and its cape - the
+                        // reference's own order (`ASURA/crates/asura-world/src/player.rs:509-532`).
+                        let mut mine = crate::districts::introduction(
+                            &me,
+                            appearance,
+                            self.settings.agent_speed,
+                            PLAYER_TEAM_TOKEN,
+                        );
+                        if let Some(bag) = self
+                            .creation
+                            .as_ref()
+                            .and_then(crate::creation::equipped_bag)
+                        {
+                            for item in inventory.items_in(bag.id) {
+                                mine.push(item_packets::create_unnamed_item(
+                                    &crate::creation::named_item(item),
+                                ));
+                            }
+                        }
+                        mine.push(misc_packets::update_agent_visual_equipment(agent, equipped));
+                        mine.push(misc_packets::agent_display_cape(agent, 1));
+                        if let Ok(peers) = self.peers.lock() {
+                            peers.broadcast(player, map.id, self.district(), &mine);
+                        }
                         loaded = true;
                     }
                     // A drag in the inventory: where the item goes is a row, the rules are ASURA's, and
@@ -3042,6 +3189,14 @@ impl WorldSession {
         {
             districts.leave(map_id, district, unix_now());
         }
+        // And the body is taken back out of everyone else's world: the player destroyed, then its agent
+        // removed, in that order (`ASURA/crates/asura-world/src/instance.rs:466-473`, `farewell`).
+        if let Ok(mut peers) = self.peers.lock()
+            && let Some(peer) = peers.leave(self.player_id())
+        {
+            let frames = crate::districts::farewell(peer.player_id, peer.agent_id);
+            peers.broadcast(peer.player_id, peer.map_id, peer.district, &frames);
+        }
     }
 }
 
@@ -3152,9 +3307,29 @@ mod tests {
         client: &mut std::net::TcpStream,
         reading: &mut common::cryptography::Arc4,
     ) -> Vec<(u16, Vec<u8>)> {
+        read_frames_until(client, reading, instance_packets::INSTANCE_LOAD_FINISH)
+    }
+
+    /// Read whole frames off a scrambled connection until `terminal` arrives, answering every frame.
+    fn read_frames_until(
+        client: &mut std::net::TcpStream,
+        reading: &mut common::cryptography::Arc4,
+        terminal: u16,
+    ) -> Vec<(u16, Vec<u8>)> {
+        read_frames_until_n(client, reading, terminal, 1)
+    }
+
+    /// The same, but waiting for the `times`-th `terminal`: a load's manifest carries two ends.
+    fn read_frames_until_n(
+        client: &mut std::net::TcpStream,
+        reading: &mut common::cryptography::Arc4,
+        terminal: u16,
+        times: usize,
+    ) -> Vec<(u16, Vec<u8>)> {
         let mut frames = Vec::new();
         let mut pending: Vec<u8> = Vec::new();
         let mut buffer = [0u8; 4096];
+        let mut seen = 0usize;
         loop {
             while pending.len() >= 2 {
                 match crate::server::protocol::decode_game_message(&pending, false) {
@@ -3162,8 +3337,11 @@ mod tests {
                         let header = frame.header();
                         let whole: Vec<u8> = pending.drain(..used).collect();
                         frames.push((header, whole));
-                        if header == instance_packets::INSTANCE_LOAD_FINISH {
-                            return frames;
+                        if header == terminal {
+                            seen += 1;
+                            if seen == times {
+                                return frames;
+                            }
                         }
                     }
                     Err(FrameError::Incomplete { .. }) => break,
@@ -3663,6 +3841,171 @@ Logger.root = 6,Console
         client.read_exact(&mut tick).unwrap();
         reading.apply(&mut tick);
         assert_eq!(&tick[..2], &[0x1E, 0x00], "the world is still ticking");
+
+        manager.stop_network();
+        log.shutdown();
+    }
+
+    /// Play one connection up to a loaded map, and answer the frames its players request carried.
+    ///
+    /// The exchange, the head block, the ping pair, the items, the entry point and the players - the
+    /// same steps `an_outpost_connection_is_loaded_with_its_entry_point` walks in detail, kept here so a
+    /// second player can be put in the same map without repeating them.
+    fn load_a_player(
+        port: u16,
+        master: [u8; MASTER_SECRET_LEN],
+        character: [u8; 16],
+    ) -> (
+        std::net::TcpStream,
+        common::cryptography::Arc4,
+        Vec<u16>,
+    ) {
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let version = GameVersion {
+            version: 39167,
+            h0008: 1,
+            map_token: 2,
+            map_id: 148,
+            player_token: 0x1234,
+            account: [0xAA; 16],
+            character,
+            h0038: 0,
+            h003c: 0,
+        };
+        client.write_all(&version.encode()).unwrap();
+        let mut public = [0u8; handshake::PUBLIC_LEN];
+        public[0] = 2;
+        let mut seed = CLIENT_SEED_HEADER.to_le_bytes().to_vec();
+        seed.extend_from_slice(&public);
+        client.write_all(&seed).unwrap();
+        let mut answer = [0u8; handshake::SERVER_SEED_LEN];
+        client.read_exact(&mut answer).unwrap();
+        let key: [u8; KEY_LEN] = handshake::derive_key(&master);
+        let mut reading = common::cryptography::Arc4::new(&key);
+        let mut sending = common::cryptography::Arc4::new(&key);
+
+        // The head block ends with the instance table; the ping pair follows it unasked.
+        read_frames_until(&mut client, &mut reading, instance_packets::INSTANCE_TABLE);
+        let mut ping = vec![0u8; 8];
+        client.read_exact(&mut ping).unwrap();
+        reading.apply(&mut ping);
+
+        // The items ask, the entry point, and the players.
+        let mut ask = vec![0x91, 0x80, 0x00, 0x00];
+        sending.apply(&mut ask);
+        client.write_all(&ask).unwrap();
+        let items = read_frames_until_n(
+            &mut client,
+            &mut reading,
+            instance_packets::INSTANCE_MANIFEST_DONE,
+            2,
+        );
+        assert_eq!(
+            items.last().map(|(header, _)| *header),
+            Some(instance_packets::INSTANCE_MANIFEST_DONE),
+            "the items answer ends with the second manifest end"
+        );
+        let mut ask = vec![0x88, 0x80];
+        sending.apply(&mut ask);
+        client.write_all(&ask).unwrap();
+        let mut spawn = vec![0u8; 32];
+        client.read_exact(&mut spawn).unwrap();
+        reading.apply(&mut spawn);
+        let mut ask = vec![0x90, 0x80];
+        ask.extend_from_slice(&[0u8; 17]);
+        sending.apply(&mut ask);
+        client.write_all(&ask).unwrap();
+        let players = read_load_frames(&mut client, &mut reading);
+        let headers = players.iter().map(|(header, _)| *header).collect();
+        (client, reading, headers)
+    }
+
+    /// Two players in one copy of a map: the second is told about the first before the load's own block,
+    /// the first is told the second arrived, and told again when it leaves.
+    ///
+    /// `ASURA/crates/asura-world/src/player.rs:499-532` and `instance.rs:432-473`: the introduction is
+    /// the player, its party size, its party and its agent; the farewell is the player destroyed and the
+    /// agent removed.
+    #[test]
+    fn two_connections_in_one_map_introduce_each_other() {
+        let log = Log::new();
+        let world = Arc::new(world());
+        let master = [0x5Au8; MASTER_SECRET_LEN];
+        let factory = factory(log.clone(), Arc::clone(&world), master);
+        let mut manager = shared::network::socket_mgr::SocketMgr::new(factory);
+        let port = manager.start_network("127.0.0.1", 0, 1).unwrap();
+
+        let (client, mut reading, first) = load_a_player(port, master, [0xBB; 16]);
+        assert_eq!(
+            first.first(),
+            Some(&0x001D),
+            "the first player has no introductions before its own block: {first:04X?}"
+        );
+        assert_eq!(
+            first.iter().filter(|header| **header == 0x0020).count(),
+            1,
+            "one body in the map, its own: {first:04X?}"
+        );
+
+        let (second_client, _second_reading, second) =
+            load_a_player(port, master, [0xCC; 16]);
+        // The second player's answer opens with the first player's introduction, then its own block.
+        assert_eq!(
+            &second[..4],
+            &[0x0059, 0x00B0, 0x00B1, 0x0020],
+            "the introduction comes before the block: {second:04X?}"
+        );
+        assert_eq!(
+            second[4], 0x001D,
+            "and the block itself follows it: {second:04X?}"
+        );
+
+        // And the first player is told the second arrived: the introduction, the items it wears in the
+        // unnamed form, what the agent is drawn wearing, and its cape (`player.rs:509-532`).
+        let mut first_client = client;
+        let arrived = read_frames_until(
+            &mut first_client,
+            &mut reading,
+            misc_packets::AGENT_DISPLAY_CAPE,
+        );
+        // The world keeps ticking the connection while it waits, so the ticks are set aside first: what
+        // is being read is the announcement, in the order the working implementation sends it.
+        let headers: Vec<u16> = arrived
+            .iter()
+            .map(|(header, _)| *header)
+            .filter(|header| *header != misc_packets::WORLD_SIMULATION_TICK)
+            .collect();
+        assert_eq!(
+            &headers[..4],
+            &[0x0059, 0x00B0, 0x00B1, 0x0020],
+            "the other player's introduction: {headers:04X?}"
+        );
+        assert!(
+            headers.contains(&item_packets::CREATE_UNNAMED_ITEM),
+            "and what it wears, in the form a bag slot uses: {headers:04X?}"
+        );
+        assert!(
+            headers.contains(&misc_packets::UPDATE_AGENT_VISUAL_EQUIPMENT),
+            "and the nine items its agent is drawn wearing: {headers:04X?}"
+        );
+        assert_eq!(headers.last(), Some(&misc_packets::AGENT_DISPLAY_CAPE));
+
+        // The second player leaves; the first is told the player is gone and the agent with it.
+        let _ = second_client.shutdown(std::net::Shutdown::Both);
+        let gone = read_frames_until(&mut first_client, &mut reading, 0x0021);
+        let headers: Vec<u16> = gone
+            .iter()
+            .map(|(header, _)| *header)
+            .filter(|header| *header != misc_packets::WORLD_SIMULATION_TICK)
+            .collect();
+        assert_eq!(
+            headers,
+            vec![0x005A, 0x0021],
+            "the farewell, in the reference's order"
+        );
 
         manager.stop_network();
         log.shutdown();

@@ -176,7 +176,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x0148` | active weapon set | `item_set_active_weapon_set` | same | ported |
 | `0x014D` | item remove | `item_remove` | same | ported |
 | `0x015A` | item set profession | `item_set_profession` | same | ported |
-| `0x015F` | create unnamed item (25) | `create_unnamed_item` | - | **missing** |
+| `0x015F` | create unnamed item (25) | `create_unnamed_item` | `item_packets::create_unnamed_item` | ported |
 | `0x0161` | create named item | `create_named_item` | same | ported |
 | `0x017C` | instance load head | `instance_load_head(pve, pvp)` | `(0x3F, 0x3F)` - ASURA's own default | ported |
 | `0x017D` | the player's name | `instance_load_player_name` | same | ported |
@@ -198,7 +198,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x01D3` | party create | `party_create` | same | ported |
 | `0x01D4` | party member stream end | `party_member_stream_end` | same | ported |
 
-**Score: 78 ported or ported thin, 1 missing, 0 ours among the emitted set.**
+**Score: 79 ported or ported thin, 0 missing, 0 ours among the emitted set.**
 
 ### 4.3 Builders ASURA has that no message above covers
 
@@ -221,7 +221,7 @@ setting that selects one.
 | the spawn ask | the entry point (`agent.rs:1219`) | the entry point and the first tick, as the reference's own send log has it | ported thin |
 | the players ask | 34 frames, in one order (`player.rs:382-388` for the party) | the same 34, the same order | ported |
 | the travel | the redirect `0x01A6`, `0x0099` in its twelve-byte form, `0x00B0`, `0x00B1`, `0x005A`, `0x0021` (`travel.rs:480-518`) | the same eight, in the same order, out of `begin_transfer` | ported thin: no seat reservation and no doorway crossing |
-| a player joining a map others are in | `introduction` (`0x0059`, `0x00B0`, `0x00B1`, `0x0020`) and `farewell` (`0x005A`, `0x0021`) | nothing | **missing** |
+| a player joining a map others are in | `introduction` (`0x0059`, `0x00B0`, `0x00B1`, `0x0020`) and `farewell` (`0x005A`, `0x0021`) (`instance.rs:432-473`, `player.rs:499-532`) | the same, plus the worn items in the unnamed form and the agent's look, out of `game/Districts/Peers.rs` | ported |
 | chat | `0x005D` body plus `0x0061` who spoke, and every generated answer printed (`chat.rs:193-353`) | the same pair, and `/maps`, `/stuck`, `/tp` and `Unknown command` printed | ported |
 | the exploration grid | `0x008B` then `0x008A`, 0.58-0.73 s into the load, once per instance (`cartography.rs`, `map.rs:22-48`) | the same two, right after the instance's record, with every band empty (`maps::cartography::init_frames`) | ported |
 | the instance table | `0x01A0` batches of fifteen pairs, in the same phase (`instance_table.rs`, `map.rs:49-58`) | the same batches, from the maps whose rows state a value (`maps::instance_table::table_for`) | ported thin: one pair today |
@@ -236,10 +236,10 @@ setting that selects one.
 | ... of those, answered differently | 1 (`0x800D`: echoed instead of answered with the ping reply) |
 | ... this tree does not handle | **4** (`0x8000`, `0x8001`, `0x8002`, `0x8007`) |
 | messages ASURA emits (server -> client) | 87 |
-| ... this tree emits | **86** (8 auth, 78 game) |
-| ... this tree does not emit | **1** (`0x015F`) |
+| ... this tree emits | **87** (8 auth, 79 game) |
+| ... this tree does not emit | **0** |
 | messages this tree emits that ASURA does not have | 1: the district-count answer on the auth connection |
-| sequences ported whole | 7 of 9 |
+| sequences ported whole | 8 of 9 |
 | the packet table | identical, 782 rows (682 game + 100 auth) |
 
 ## 7. The defects, in the order the client feels them
@@ -250,17 +250,15 @@ setting that selects one.
    (`gwdat.rs`, `fa_compress.rs`, `map_data.rs`, `path_tables.rs`, `pathfind.rs`), so every walk is
    answered exactly as the working implementation answers a map it holds no graph for: `NoGraph`, and
    nothing on the wire.
-2. **`0x015F` (the unnamed item) is absent**, and the items block goes without `0x015E` - as ASURA's
-   does. Its one caller in ASURA is the introduction (`player.rs:527`), so it arrives with that pair.
+2. **The items block goes without `0x015E`** (the low-detail item), and so does ASURA's: the message is
+   observed in a capture and emitted by neither implementation, so it is not this tree's to invent.
 3. **The instance table is ported thin**: ASURA's batch shape goes on the wire, and its content is the
    maps whose rows state an `instance_value` - one today (map 148). A client can resolve a destination
    only once that map's row carries its value.
 4. **The travel is ported thin**: the eight frames and the three triggers are ASURA's, but there is no
    seat reservation and no doorway crossing (`portals.rs`), so a portal in the map does nothing.
 5. **`0x800D` is ours**: the ping is echoed instead of answered with the ping reply.
-6. **`introduction` and `farewell` are absent**: a player joining a map others are in is not announced,
-   and one leaving is not withdrawn.
-7. **Four auth messages are absent** (`0x8000`, `0x8001`, `0x8002`, `0x8007`), and the two settings
+6. **Four auth messages are absent** (`0x8000`, `0x8001`, `0x8002`, `0x8007`), and the two settings
    uploads are acknowledged rather than stored.
 
 ## 8. The order this audit imposes
@@ -269,7 +267,6 @@ setting that selects one.
    `fa_compress.rs`, `map_data.rs`, `path_tables.rs` and `pathfind.rs` out of ASURA. Until it lands a
    walk is refused with `NoGraph` - the working implementation's own answer for a map with no graph -
    and nothing else about movement is outstanding.
-2. The introduction and farewell pair, with `0x015F` and the items block's `0x015E`.
-3. The instance table's content: an `instance_value` on every map row the world hosts.
-4. `0x800D` answered as ASURA answers it, then the four absent auth messages.
-5. The travel's own remaining half: the seat reservation and the doorway crossing.
+2. The instance table's content: an `instance_value` on every map row the world hosts.
+3. `0x800D` answered as ASURA answers it, then the four absent auth messages.
+4. The travel's own remaining half: the seat reservation and the doorway crossing.

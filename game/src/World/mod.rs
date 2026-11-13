@@ -89,6 +89,10 @@ pub struct World {
     /// lookup then answers Walk::NoGraph, which is the working implementation's own answer for a map
     /// it holds no graph for.
     graphs: crate::terrain::Graphs,
+    /// The players loaded in this world's running copies, shared by every session: a copy of a map is a
+    /// place other players can be in, and a connection is told about them (`game/Districts/Peers.rs`,
+    /// `ASURA/crates/asura-world/src/instance.rs:406-473`).
+    peers: Arc<Mutex<crate::districts::Peers>>,
 }
 
 impl World {
@@ -104,6 +108,7 @@ impl World {
             districts: Arc::new(Mutex::new(crate::districts::Districts::new())),
             templates: Vec::new(),
             graphs: crate::terrain::Graphs::new(),
+            peers: Arc::new(Mutex::new(crate::districts::Peers::new())),
         }
     }
 
@@ -132,6 +137,15 @@ impl World {
     /// for.
     pub fn graphs(&self) -> &crate::terrain::Graphs {
         &self.graphs
+    }
+
+    /// The players loaded in this world's running copies.
+    ///
+    /// `ASURA/crates/asura-world/src/instance.rs:474-499`: the working implementation keeps one
+    /// `Instance` per map and every session shares it. This tree's copy of a map is a district
+    /// (`game/Districts/`), and the population is the same kind of shared state, so it lives beside it.
+    pub fn peers(&self) -> Arc<Mutex<crate::districts::Peers>> {
+        Arc::clone(&self.peers)
     }
 
     /// Set the item templates, after the program read them from its world database.
