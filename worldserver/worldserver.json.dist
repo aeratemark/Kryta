@@ -37,6 +37,10 @@
     "doc": "The bags and items a character-creation screen is given - a record list, read at start-up. A client with no items has no inventory model to draw."
   },
 
+  "GwDat": {
+    "value": "Gw.dat",
+    "doc": "Path to the client's Gw.dat archive, where a map's geometry - the path graph a walk is answered from - lives. A world without it says so, and every walk answers NoGraph, which is what the working implementation answers for a map it holds no graph for."
+  },
   "EquipmentFile": {
     "value": "data/equipment.json",
     "doc": "What a new character wears per campaign and profession - a record list of sets, read at start-up."
@@ -63,6 +67,7 @@
       "value": 105,
       "doc": "How often one connection's simulation is ticked (R33), in milliseconds. 105 is the game's measured cadence (one 0x001E every 90-110 ms over 1780 ticks in the reference's own crossing); an operator may run faster or slower."
     },
+
     "PingValue": {
       "value": 20,
       "doc": "The number a ping reply carries (0x000D). 20 is what a working server sent and what the reference's own log carried (0D 00 14 00 00 00); the client echoes it back in its own ping."

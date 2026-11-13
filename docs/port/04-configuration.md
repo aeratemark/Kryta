@@ -122,6 +122,7 @@ added, and a field the file does not state keeps the table's value.
 | the agent a load creates: its health (`AgentHealth`, 400), energy (`AgentEnergy`, 25), energy regeneration (`AgentEnergyRegen`, 0.0) and walking speed (`AgentSpeed`, 288) - and the appearance a character with no bits of its own is drawn with (`Appearance`, `0x03100000`: profession 1, hair style 3) | `worldserver.json`, the `World` section |
 | how far a client may place itself when it cancels a walk and still be believed (`MaxAllowedCorrection`, 250 units - the reference's `MAXIMUM_ALLOWED_CORRECTION`, through ASURA's `config/Server/movement.json`) | `worldserver.json`, the `World` section |
 | the creation screen's content: the bags and items a client is given, and what a new character wears per campaign and profession | `worldserver.json`, `InventoryFile` and `EquipmentFile`, naming `data/inventory.json` and `data/equipment.json` |
+| the client's own archive, where a map's geometry lives | `worldserver.json`, `GwDat`, naming this machine's `Gw.dat`; a world without one says so and every walk answers `NoGraph` |
 | loot tables: what a source drops and how often - a setting, not a row | a JSON file under `data/loot/`, arriving with the drop stage |
 | logging: directory, appenders, logger levels | `authserver.json`, `worldserver.json` |
 | the PID file, the effective-config dump | `authserver.json`, `worldserver.json` |

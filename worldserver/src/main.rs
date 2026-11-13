@@ -296,6 +296,34 @@ fn run(args: &[String]) -> Result<(), String> {
         ),
     );
 
+    // The client's own archive: the file a map's geometry is a chunk of. Its path is a setting, because
+    // where a client's `Gw.dat` sits is this machine's fact and not a law; a world started without one
+    // says so and every walk answers `NoGraph`, which is what it answers for a map it holds no graph
+    // for (`game/Pack/Gwdat.rs`, `ASURA/crates/asura-world/src/gwdat.rs`).
+    let (gw_dat, notes) = config
+        .value_string("GwDat", "Gw.dat")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    match game::pack::GwDat::open(&gw_dat) {
+        Ok(archive) => log.out(
+            LogLevel::Info,
+            "server.worldserver",
+            format!(
+                "The client archive at {gw_dat} holds {} entries (header {} bytes, table at {}); a map's file id is looked up in it.",
+                archive.len(),
+                archive.header().header_size,
+                archive.header().mft_offset
+            ),
+        ),
+        Err(error) => log.out(
+            LogLevel::Warn,
+            "server.worldserver",
+            format!("No client archive at {gw_dat}: {error}. Every walk answers NoGraph until one is reachable (World.GwDat)."),
+        ),
+    }
+
     let (bags, items, sets) = world.load_creation(&inventory_file, &equipment_file, &log)?;
     log.out(
         LogLevel::Info,
