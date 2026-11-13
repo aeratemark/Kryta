@@ -17,6 +17,8 @@
 //! * `XNode`, `YNode`, `SinkNode`, `Trapezoid`, `Portal`, `Plane` - the import's own records;
 //! * `PathStaticData` - one map's planes and the trapezoid counter they share;
 //! * `Bounds` - the `worldDims` an agent's position is checked against.
+#![allow(dead_code)] // the importer container arrives ahead of the plane readers; see docs/port/09-parity-audit.md 7b item 4
+
 
 /// `PATH_DATA_SIGNATURE` / `PATH_DATA_VERSION`: the first eight bytes of the path section.
 pub const PATH_DATA_SIGNATURE: u32 = 0xEEFE_704C;
@@ -427,5 +429,240 @@ mod tests {
         assert_eq!(FIRST_SINK_NODE_INDEX, 0x8000_0000);
 
         assert_eq!([NODE_TYPE_X, NODE_TYPE_Y, NODE_TYPE_SINK], [0, 1, 2]);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// ASURA/crates/asura-world/src/map_data.rs, lines 145-482: the blob's container - the records a map
+// file is made of - and the node-id lookup the plane readers use. The plane readers themselves
+// (`read_planes` and the eleven `read_*` functions) are the next piece.
+// ---------------------------------------------------------------------------------------------
+
+/// `RIFF_SIGNATURE` (`GmMapDataImport.c:3`): the four bytes a map blob starts with.
+pub const RIFF_SIGNATURE: &[u8] = b"ffna";
+
+/// `RIFF_TYPES`: a type byte at or above this is not a container at all (`RiffCheckHeader`).
+pub const RIFF_TYPES: u8 = 9;
+
+/// Why a blob is not a map this reader can use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportError {
+    /// The first five bytes are not `"ffna"` plus a type below `RIFF_TYPES` (`RiffCheckHeader`).
+    Header,
+    /// The container's type byte is a known container but not one of the two map types.
+    NotAMap {
+        /// The type byte it carried.
+        found: u8,
+    },
+    /// A record claims more bytes than the blob holds (`RiffParseChunks`).
+    ChunkPastTheEnd,
+    /// The container has no stage-2 path chunk (`GmImportMap`): no graph, so no walking.
+    NoPathChunk,
+    /// A section did not begin with the tag its reader requires. `found` is `None` when fewer than five
+    /// bytes were left, which is how `ParseTaggedChunk` fails first.
+    Tag {
+        /// The tag the reader required.
+        expected: u8,
+        /// The tag it found, or `None` when there was not even a header.
+        found: Option<u8>,
+    },
+    /// A section's header claims more payload than the blob has left (`ParseTaggedChunk`).
+    TagPastTheEnd {
+        /// The section's tag.
+        tag: u8,
+    },
+    /// A field past the end of the bytes that were there.
+    Truncated(&'static str),
+    /// A payload does not have the shape its reader measured it against; the string says which.
+    Shape(&'static str),
+    /// An index does not name an element the plane has. The reference would read past its array here;
+    /// this refuses instead of reading someone else's memory.
+    Index {
+        /// What the index was for.
+        what: &'static str,
+    },
+}
+
+impl std::fmt::Display for ImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ImportError::Header => {
+                write!(f, "not a map blob: the header is not \"ffna\" and a type")
+            }
+            ImportError::NotAMap { found } => write!(f, "container type {found} is not a map"),
+            ImportError::ChunkPastTheEnd => write!(f, "a record claims more bytes than the blob holds"),
+            ImportError::NoPathChunk => write!(f, "the container has no path chunk"),
+            ImportError::Tag {
+                expected,
+                found: Some(found),
+            } => write!(f, "expected section {expected}, found {found}"),
+            ImportError::Tag {
+                expected,
+                found: None,
+            } => write!(f, "expected section {expected}, ran out of bytes"),
+            ImportError::TagPastTheEnd { tag } => {
+                write!(f, "section {tag} claims more bytes than are left")
+            }
+            ImportError::Truncated(what) => write!(f, "ran out of bytes reading {what}"),
+            ImportError::Shape(what) => write!(f, "{what}"),
+            ImportError::Index { what } => write!(f, "{what}"),
+        }
+    }
+}
+
+impl std::error::Error for ImportError {}
+
+/// One record of a map container: an id and the bytes it holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapChunk<'a> {
+    /// The record's id: a stage and a `ChunkId` in one word.
+    pub chunk_id: u32,
+    /// The bytes it holds.
+    pub data: &'a [u8],
+}
+
+/// A map container's records, sorted by id so a lookup is a binary search (`RiffParseChunks` sorts for
+/// `RiffGetChunk` for exactly that reason).
+#[derive(Debug, Clone)]
+pub struct Chunks<'a> {
+    sorted: Vec<MapChunk<'a>>,
+}
+
+/// A reading cursor over the bytes of one section. The reference passes a `slice_uint8_t` by pointer and
+/// advances it; this is that, with the bounds checks the reference leaves to the caller.
+struct Reader<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> Reader<'a> {
+    fn new(bytes: &'a [u8]) -> Reader<'a> {
+        Reader { bytes }
+    }
+
+    fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Take `count` bytes and advance past them.
+    fn take(&mut self, count: usize, what: &'static str) -> Result<&'a [u8], ImportError> {
+        if self.bytes.len() < count {
+            return Err(ImportError::Truncated(what));
+        }
+        let (head, tail) = self.bytes.split_at(count);
+        self.bytes = tail;
+        Ok(head)
+    }
+
+    /// `ParseTaggedChunk`: a tag byte, a length, five bytes of header, and a promise that the payload is
+    /// there. Returns the payload's length without consuming it - every caller reads its own.
+    fn tagged(&mut self, tag: u8) -> Result<usize, ImportError> {
+        let header = match self.take(5, "a section header") {
+            Ok(header) => header,
+            Err(_) => {
+                return Err(ImportError::Tag {
+                    expected: tag,
+                    found: None,
+                })
+            }
+        };
+        if header[0] != tag {
+            return Err(ImportError::Tag {
+                expected: tag,
+                found: Some(header[0]),
+            });
+        }
+        let length = u32_at(header, 1) as usize;
+        if self.bytes.len() < length {
+            return Err(ImportError::TagPastTheEnd { tag });
+        }
+        Ok(length)
+    }
+}
+
+fn u16_at(bytes: &[u8], at: usize) -> u16 {
+    u16::from_le_bytes([bytes[at], bytes[at + 1]])
+}
+
+fn u32_at(bytes: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+}
+
+fn f32_at(bytes: &[u8], at: usize) -> f32 {
+    f32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+}
+
+/// `RiffParseAndGetType`: the container's type byte, or `None` when this is not a container.
+pub fn riff_type(data: &[u8]) -> Option<u8> {
+    // `RiffCheckHeader`: five bytes, the signature, and a type below the table's end.
+    if data.len() < 5 || &data[0..4] != RIFF_SIGNATURE || data[4] >= RIFF_TYPES {
+        return None;
+    }
+    Some(data[4])
+}
+
+impl<'a> Chunks<'a> {
+    /// `RiffParseChunks`: split a blob into its records, then sort them by id.
+    pub fn parse(data: &'a [u8]) -> Result<Chunks<'a>, ImportError> {
+        if riff_type(data).is_none() {
+            return Err(ImportError::Header);
+        }
+
+        let mut rest = &data[5..];
+        let mut sorted = Vec::new();
+        // `while (8 <= size)`: a tail shorter than a record header is not a record, and the reference
+        // ignores it rather than complaining.
+        while rest.len() >= 8 {
+            let chunk_id = u32_at(rest, 0);
+            let chunk_size = u32_at(rest, 4) as usize;
+            if rest.len() < 8 + chunk_size {
+                return Err(ImportError::ChunkPastTheEnd);
+            }
+            sorted.push(MapChunk {
+                chunk_id,
+                data: &rest[8..8 + chunk_size],
+            });
+            rest = &rest[8 + chunk_size..];
+        }
+        sorted.sort_by_key(|chunk| chunk.chunk_id);
+        Ok(Chunks { sorted })
+    }
+
+    /// `RiffGetChunk`: the record with this id, by binary search over the sorted ids.
+    pub fn get(&self, chunk_id: u32) -> Option<&MapChunk<'a>> {
+        self.sorted
+            .binary_search_by_key(&chunk_id, |chunk| chunk.chunk_id)
+            .ok()
+            .map(|index| &self.sorted[index])
+    }
+
+    /// Every record, in id order.
+    pub fn iter(&self) -> impl Iterator<Item = &MapChunk<'a>> {
+        self.sorted.iter()
+    }
+
+    /// How many records the container holds.
+    pub fn len(&self) -> usize {
+        self.sorted.len()
+    }
+
+    /// Whether the container holds no record at all.
+    pub fn is_empty(&self) -> bool {
+        self.sorted.is_empty()
+    }
+}
+
+/// `GetNodeFromDatId`: a node id becomes the array it names and its position there. An id past the end
+/// of its array is `None` - the reference's dangling NULL, not an error.
+fn node_ref(node_id: u32, plane: &Plane) -> Option<NodeRef> {
+    if node_id < FIRST_Y_NODE_INDEX {
+        // `FIRST_X_NODE_INDEX` is zero, so the reference's subtraction is a no-op here.
+        let index = (node_id - FIRST_X_NODE_INDEX) as usize;
+        (index < plane.xnodes.len()).then_some(NodeRef::X(index))
+    } else if node_id < FIRST_SINK_NODE_INDEX {
+        let index = (node_id - FIRST_Y_NODE_INDEX) as usize;
+        (index < plane.ynodes.len()).then_some(NodeRef::Y(index))
+    } else {
+        let index = (node_id - FIRST_SINK_NODE_INDEX) as usize;
+        (index < plane.sink_nodes.len()).then_some(NodeRef::Sink(index))
     }
 }

@@ -379,12 +379,13 @@ road.
    piece of this subject.
 4. **The importer** in `map_data.rs` - the last piece, and its own session's work. Surveyed function by
    function (ASURA's line numbers), so the port starts from this map rather than from the file:
-   - `Reader` and its `new`/`len`/`take`/`tagged` (336-383), the `u16_at`/`u32_at`/`f32_at` reads
-     (385-396), `riff_type` (398), and the RIFF container: `Chunks::parse` (408), `get` (434), `iter`
-     (442), `len`/`is_empty` (446-455). `Chunks` and `MapChunk` are already ported in outline in the
-     types step; this is their parser.
-   - `node_ref` (457) and `trap_ref` (472): a dat node id -> `NodeRef`, and a dat trapezoid index ->
-     a position, or `None` the way the reference's NULL pointer answers.
+   - **(done)** `Reader` and its `new`/`len`/`take`/`tagged` (336-383), the `u16_at`/`u32_at`/`f32_at`
+     reads (385-396), `riff_type` (398), the RIFF container (`riff_type`, `RIFF_SIGNATURE`,
+     `RIFF_TYPES` = 9, `MapChunk`, `Chunks::parse`/`get`/`iter`/`len`/`is_empty`, 408-455) and
+     `node_ref` (457) - the dat node id to `NodeRef`, past the array's end answering `None`. All in
+     `game/src/Terrain/MapData.rs`, with the `ImportError` they answer with and its `Display`.
+   - `trap_ref` (472): a dat trapezoid index to a position, or `None` the way the reference's NULL
+     pointer answers - the next piece.
    - `PathStaticData::import` (490) and `read` (506): the `PATH_DATA_SIGNATURE`/`PATH_DATA_VERSION`
      check, then `read_planes` (535) -> `read_plane` (551) -> per plane `read_counts` (578),
      `skip_tag11` (606), `read_vectors` (618), `read_trapezoids` (639), `read_root_node` (681),
