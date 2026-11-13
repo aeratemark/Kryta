@@ -239,7 +239,7 @@ setting that selects one.
 | ... this tree emits | **87** (8 auth, 79 game) |
 | ... this tree does not emit | **0** |
 | messages this tree emits that ASURA does not have | 1: the district-count answer on the auth connection |
-| sequences ported whole | 8 of 9 |
+| sequences ported whole | **8 of 11**, with 3 ported thin (the spawn ask, the travel, the instance table) and none missing |
 | the packet table | identical, 782 rows (682 game + 100 auth) |
 
 ## 7. The defects, in the order the client feels them
