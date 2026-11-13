@@ -255,6 +255,11 @@ setting that selects one.
    still missing is the map blob's parse (`map_data.rs`) and the finder (`pathfind.rs`), so every walk
    is answered exactly as the working implementation answers a map it holds no graph for: `NoGraph`, and
    nothing on the wire.
+   Map 148's own blob is measured, for the parse to be written against: entry `0x0001B97D`, 1,300,044
+   stored bytes, announced 2,925,267, decoded to 2,925,267 that begin `ffna` and a type byte of 3, then
+   **24 records** of `(id u32, size u32, bytes)` that walk to exactly the blob's length. The path chunk
+   is `0x20000008` - stage 2, `ChunkId::Path` - at offset 1,956,355, **849,201 bytes**, the largest
+   record in the container after the terrain's.
 2. **The items block goes without `0x015E`** (the low-detail item), and so does ASURA's: the message is
    observed in a capture and emitted by neither implementation, so it is not this tree's to invent.
 3. **The instance table is ported thin**: ASURA's batch shape goes on the wire, and its content is the
