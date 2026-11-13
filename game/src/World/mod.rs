@@ -111,6 +111,9 @@ pub struct World {
     /// The path graphs this world serves, one finder per map: a walk is answered from these, and a map
     /// with none answers `NoGraph` (`ASURA/crates/asura-world/src/pathfind.rs:1484`, `PathGraphs`).
     graphs: std::sync::Arc<crate::terrain::pathfind::PathGraphs>,
+    /// The doorways this world judges a step against, one arch list per map, and the arrivals a
+    /// crossing lands on (game/Maps/Portals.rs, ASURA/crates/asura-world/src/portals.rs).
+    portals: std::sync::Arc<crate::maps::Portals>,
     /// The players loaded in this world's running copies, shared by every session: a copy of a map is a
     /// place other players can be in, and a connection is told about them (`game/Districts/Peers.rs`,
     /// `ASURA/crates/asura-world/src/instance.rs:406-473`).
@@ -130,6 +133,7 @@ impl World {
             districts: Arc::new(Mutex::new(crate::districts::Districts::new())),
             templates: Vec::new(),
             graphs: std::sync::Arc::new(crate::terrain::pathfind::PathGraphs::empty()),
+            portals: std::sync::Arc::new(crate::maps::Portals::empty()),
             peers: Arc::new(Mutex::new(crate::districts::Peers::new())),
         }
     }
@@ -158,6 +162,20 @@ impl World {
     /// implementation's own answer for a map it holds no graph for.
     pub fn graphs(&self) -> &std::sync::Arc<crate::terrain::pathfind::PathGraphs> {
         &self.graphs
+    }
+
+    /// The doorways this world judges a step against.
+    ///
+    /// `ASURA/crates/asura-world/src/portals.rs:313-377`: the pack's table, read once at start-up. A
+    /// map the rows describe is judged by its own walls, and a step that crosses none of them crosses
+    /// nothing.
+    pub fn portals(&self) -> &std::sync::Arc<crate::maps::Portals> {
+        &self.portals
+    }
+
+    /// Install the doorway table, once, before the listener opens.
+    pub fn set_portals(&mut self, portals: crate::maps::Portals) {
+        self.portals = std::sync::Arc::new(portals);
     }
 
     /// Install the graphs this world serves, once, before the listener opens.

@@ -85,9 +85,9 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x8028` | `GAME_CMSG_CANCEL_MOVEMENT` | `agent.rs:1062` | `answer_cancel_movement` | ported |
 | `0x802C` | `GAME_CMSG_DROP_ITEM` (7 bytes) | `item.rs:187`, `handle_drop_item` | `CLIENT_DROP_ITEM`: the stack is taken and nothing is sent | ported |
 | `0x8030` | `GAME_CMSG_EQUIP_ITEM` | `item.rs:314`, `equip_item` | `answer_equip_item` | ported |
-| `0x803D` | `GAME_CMSG_POSITION_UPDATE` (26) | `agent.rs:887` | `answer_position_update` | ported |
+| `0x803D` | `GAME_CMSG_POSITION_UPDATE` (26) | `agent.rs:887`, then `dispatch.rs:44-54` | `answer_position_update`, then `cross_portal` | ported (the doorway its step crosses is judged since round 18) |
 | `0x803E` | `GAME_CMSG_MOVE_TO_COORD` (14) | `agent.rs:710` | `answer_move_to_coord` | ported |
-| `0x8047` | `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` | `agent.rs:1117` | `answer_last_position` | ported |
+| `0x8047` | `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` | `agent.rs:1117`, then `dispatch.rs:60-68` | `answer_last_position`, then `cross_portal` | ported (a taken correction crosses a doorway like a step) |
 | `0x804F` | `GAME_CMSG_UNEQUIP_ITEM` (6) | `item.rs:555`, `handle_unequip_item` | `CLIENT_UNEQUIP_ITEM`: ASURA's answer, a log line and nothing on the wire | ported |
 | `0x8060` | `GAME_CMSG_CHAR_CREATION_CHANGE_PROF` (4) | `creation.rs:275` | handled | ported |
 | `0x8064` | `GAME_CMSG_SEND_CHAT_MESSAGE` (286) | `chat.rs:193`, `handle_chat_message` | `answer_chat_message` | ported |
@@ -240,7 +240,7 @@ setting that selects one.
 | ... this tree emits | **87** (8 auth, 79 game) |
 | ... this tree does not emit | **0** |
 | messages this tree emits that ASURA does not have | 1: the district-count answer on the auth connection |
-| sequences ported whole | **8 of 11**, with 3 ported thin (the spawn ask, the travel - cycle whole, doorway not yet - and the instance table) and none missing |
+| sequences ported whole | **9 of 11**, with 2 ported thin (the spawn ask and the instance table) and none missing |
 | the packet table | identical, 782 rows (682 game + 100 auth) |
 
 ## 7. The defects, in the order the client feels them
@@ -278,9 +278,14 @@ setting that selects one.
      is the reference's). The capacity it enforces has a counterpart here: a district holds
      `World.DistrictAllotment` players, a full outpost opens the next district and a named full district
      is refused (`game/Districts/mod.rs`, `enter`, R5/R22/R58).
-   - **The doorway crossing** (`travel.rs:319-388`, `portal_crossed`, and `portals.rs`, 503 lines) is
-     the next subject: it needs the pack's doorway geometry, and this tree's `map_arrival` rows already
-     carry the landing half of it (R21).
+   - **The doorway crossing** is ported (round 18): `game/Maps/Portals.rs` is `portals.rs` whole - the
+     wall test, the point box, `Crossed`, and the three lookups - with the rows in place of the pack's
+     `portals.json` (`map_arch` for arches, `map_arrival` for arrivals, which gains the facing as
+     `angle`), and `WorldSession::cross_portal` is `travel.rs:319-388`: the step between two reports,
+     the map's own walls, an arch that names no destination doing nothing, the receiving map's arrival
+     as the landing, and the same `begin_transfer` every trigger ends in. The landing travels on the
+     hand-off row (`travel.landing_x/y/plane/from`) and the arriving connection stands on it and faces
+     along the arrival's own angle. On this machine: `Doorways: 1 arch(es) on 1 map(s)`.
 
 **Two client-visible values this reading corrected.**
 
@@ -457,7 +462,8 @@ keeps its traversal order, its tie-breaking and its quirks; the dump keeps its b
    `path_tables.rs`, `pathfind.rs` and `pathfind/directional.rs`, on top of the archive - wired into the
    world and into the two handlers that ask for a walk. A walk is answered from the map's own graph, and
    a map with no graph is refused with `NoGraph`, the working implementation's own answer.
-2. The travel's own remaining half: the seat reservation and the doorway crossing (`portals.rs`), so a
-   portal in a map does something.
+2. **(done)** The doorway crossing (`portals.rs`, whole) and the travel's cycle, so a step through a
+   map's own wall starts a transfer that lands on the receiving map's arrival. What is not here is
+   named in §7.4: ASURA's seat reservation, which is its own deployment accounting.
 3. The instance table's content: an `instance_value` on every map row the world hosts, and the map rows
-   themselves for the places a character can travel to.
+   themselves for the places a character can travel to - a doorway's destination needs one.

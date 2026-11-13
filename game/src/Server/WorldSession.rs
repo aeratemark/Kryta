@@ -98,6 +98,34 @@ const CHAR_CREATION_CONFIRM: u16 = 0x808B;
 /// `GAME_CMSG_PING_REQUEST`: two bytes on the gameplay connection.
 const GAME_PING: u16 = 0x800D;
 
+/// Where a claimed travel said to stand: the receiving map's arrival, and the facing it states.
+///
+/// `ASURA/crates/asura-world/src/travel.rs:359-362` writes the arrival's point as the character's
+/// position before the redirect, and `portals::arrival_at` recovers its facing when the next connection
+/// enters the map. Here both travel on the hand-off row, and the facing is looked up in the arrival rows
+/// the world read with its maps.
+#[derive(Debug, Clone, Copy)]
+struct Claimed {
+    /// The map the landing belongs to: a landing for another map is not this connection's.
+    map_id: u32,
+    /// The point, and the plane it is on.
+    landing: crate::maps::travels::Landing,
+    /// The direction the arriving agent is created facing, as `Arrival::direction` gives it.
+    facing: (f32, f32),
+}
+
+/// The last client-reported position checked for a doorway, and the segment between two finite
+/// reports.
+///
+/// `ASURA/crates/asura-world/src/player.rs:43-74`: `portal_position` and `last_step`. The doorway test
+/// is the wall the step crosses, so the pair is what a crossing needs - not the agent's position, which
+/// a simulation tick may already have advanced.
+#[derive(Debug, Clone, Copy, Default)]
+struct PortalStep {
+    position: (f32, f32),
+    last_step: Option<((f32, f32), (f32, f32))>,
+}
+
 /// `GAME_CMSG_ITEM_MOVE` (`0x8072`): a drag in the inventory - the item, the bag and the slot.
 const CLIENT_ITEM_MOVE: u16 = 0x8072;
 /// `GAME_CMSG_ITEM_DESTROY` (`0x8069`): the item to destroy.
@@ -202,9 +230,24 @@ pub struct WorldSession {
     /// Whether a travel is already in flight: the client is about to reconnect, so a second crossing
     /// must not start another one (`ASURA/crates/asura-world/src/travel.rs:600`, `player.moved`).
     moved: std::sync::Mutex<bool>,
-    /// The map's walkable graph, which a walk request is answered from. Empty until the archive reader
-    /// lands, and every lookup then answers \Walk::NoGraph\ (\ASURA/crates/asura-world/src/pathfind.rs\).
+    /// The map's walkable graphs, which a walk request is answered from: one finder per map, imported
+    /// from the client archive at start-up (`ASURA/crates/asura-world/src/pathfind.rs:1484`). A map
+    /// whose graph was never bound answers `Walk::NoGraph`.
     graphs: std::sync::Arc<crate::terrain::pathfind::PathGraphs>,
+    /// The doorways a step is judged against, and the arrivals a crossing lands on.
+    portals: std::sync::Arc<crate::maps::Portals>,
+    /// The arrival points the world read with its maps (R21), so a crossing knows where the receiving
+    /// map puts the character.
+    arrivals: Vec<crate::maps::Arrival>,
+    /// Where a claimed travel says the receiving map puts this character, when it was a doorway
+    /// crossing: the load stands it there and faces it along the arrival, rather than scattering it
+    /// around a spawn point (R13/R21).
+    landing: std::sync::Mutex<Option<Claimed>>,
+    /// The last client-reported position checked for a doorway, and the segment between finite
+    /// reports: `ASURA/crates/asura-world/src/player.rs:43-74` (`portal_position`, `last_step`,
+    /// `record_portal_step`). Simulation ticks never move it - a tick can cross a wall between
+    /// reports, and that movement must remain in the next check.
+    portal: std::sync::Mutex<PortalStep>,
     /// The character database, when the program opened one: a creation screen's confirm writes a row
     /// there. A session without it can draw the screen but cannot finish it.
     characters: Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
@@ -257,6 +300,10 @@ impl WorldSession {
             account: std::sync::Mutex::new([0u8; 16]),
             moved: std::sync::Mutex::new(false),
             graphs: std::sync::Arc::clone(world.graphs()),
+            portals: std::sync::Arc::clone(world.portals()),
+            arrivals: world.arrivals().to_vec(),
+            landing: std::sync::Mutex::new(None),
+            portal: std::sync::Mutex::new(PortalStep::default()),
             characters: None,
             login: None,
             districts: world.districts(),
@@ -864,10 +911,40 @@ impl WorldSession {
                         self.say(
                             LogLevel::Info,
                             format!(
-                                "Gameplay connection from {peer}: the travel record is claimed - map {}, district {}, language {}.",
-                                travel.map_id, travel.district, travel.language
+                                "Gameplay connection from {peer}: the travel record is claimed - map {}, district {}, language {}{}.",
+                                travel.map_id,
+                                travel.district,
+                                travel.language,
+                                match travel.landing {
+                                    Some(landing) => format!(
+                                        ", landing at ({:.1}, {:.1}) plane {} from map {}",
+                                        landing.x, landing.y, landing.plane, landing.from_map
+                                    ),
+                                    None => String::new(),
+                                }
                             ),
                         );
+                        // A crossing states where the receiving map puts the character; the load
+                        // stands it there instead of scattering it around a spawn point (R13/R21,
+                        // `ASURA/crates/asura-world/src/travel.rs:446-468`), and faces it along the
+                        // arrival the receiving map states for the map it came from.
+                        if let (Some(landing), Ok(mut claimed)) = (travel.landing, self.landing.lock())
+                        {
+                            let facing = self
+                                .arrivals
+                                .iter()
+                                .find(|arrival| {
+                                    arrival.map_id == travel.map_id
+                                        && arrival.from_map == landing.from_map
+                                })
+                                .map(|arrival| arrival.direction())
+                                .unwrap_or((1.0, 0.0));
+                            *claimed = Some(Claimed {
+                                map_id: travel.map_id,
+                                landing,
+                                facing,
+                            });
+                        }
                         Some(travel)
                     }
                     Ok(None) => {
@@ -1443,6 +1520,111 @@ impl WorldSession {
             .unwrap_or(fallback)
     }
 
+    /// Preserve the full reported movement even when simulation ticks advanced the agent meanwhile.
+    ///
+    /// `ASURA/crates/asura-world/src/player.rs:60-74`, `record_portal_step`: the segment between two
+    /// finite client reports, and nothing at all when the client reported the same point again.
+    fn record_portal_step(&self, position: (f32, f32)) {
+        let Ok(mut portal) = self.portal.lock() else {
+            return;
+        };
+        portal.last_step =
+            (portal.position != position).then_some((portal.position, position));
+        portal.position = position;
+    }
+
+    /// Where the character entered: the first report is measured from here, not from nowhere.
+    ///
+    /// `ASURA/crates/asura-world/src/connection.rs:318-319`: `portal_position` starts at the standing
+    /// position the load put the agent on, so a step across a doorway at the entry point is a step.
+    fn start_portal_position(&self, position: (f32, f32)) {
+        if let Ok(mut portal) = self.portal.lock() {
+            portal.position = position;
+            portal.last_step = None;
+        }
+    }
+
+    /// Take the segment the doorway test consumes, if a report left one.
+    fn take_portal_step(&self) -> Option<((f32, f32), (f32, f32))> {
+        self.portal.lock().ok().and_then(|mut portal| portal.last_step.take())
+    }
+
+    /// A crossing decided from the player's **own step**: where the character stood before this report
+    /// and where it stands after it.
+    ///
+    /// `ASURA/crates/asura-world/src/travel.rs:319-388` (`portal_crossed`), ported whole: a crossing
+    /// already in flight owns the connection, the map's own arches decide whether the step crosses a
+    /// wall, an arch that names no destination does nothing and says so, and the receiving map's
+    /// arrival decides where the traveller stands. It ends in the same `begin_transfer` every other
+    /// trigger ends in, because the reference has one cycle and not one per trigger.
+    async fn cross_portal(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        crypt: &mut AuthCrypt,
+        sheet: &CharacterSheet,
+        from: (f32, f32),
+        to: (f32, f32),
+    ) {
+        if let Ok(moved) = self.moved.lock()
+            && *moved
+        {
+            return;
+        }
+        let from_map = self.map_id();
+        let Some(crossed) = self.portals.crossed(from_map, from, to) else {
+            return;
+        };
+        let Some(to_map) = crossed.to_map else {
+            self.say(
+                LogLevel::Info,
+                format!(
+                    "Gameplay connection from {peer}: the character crossed a doorway of map {from_map} from ({:.0}, {:.0}) to ({:.0}, {:.0}); no destination is recorded for that doorway.",
+                    from.0, from.1, to.0, to.1
+                ),
+            );
+            return;
+        };
+        // The receiving map decides where the traveller stands: an arrival it states for this map is a
+        // position and a facing; without one the destination falls back to its own spawn point.
+        let arrival = self
+            .arrivals
+            .iter()
+            .find(|arrival| arrival.map_id == to_map && arrival.from_map == from_map)
+            .copied();
+        let landing = arrival.map(|arrival| (arrival.x, arrival.y));
+        self.say(
+            LogLevel::Info,
+            format!(
+                "Gameplay connection from {peer}: the character crossed the doorway of map {from_map} at ({:.0}, {:.0}) -> ({:.0}, {:.0}): crossing to {to_map}{}",
+                from.0,
+                from.1,
+                to.0,
+                to.1,
+                match arrival {
+                    Some(arrival) => format!(
+                        " (arrival at ({:.1}, {:.1}) facing {:.2})",
+                        arrival.x,
+                        arrival.y,
+                        arrival.angle.unwrap_or(0.0)
+                    ),
+                    None => " (no arrival stated; the destination's spawn point answers)".to_string(),
+                }
+            ),
+        );
+        let Some(destination) = self.maps.iter().find(|map| map.id == to_map).cloned() else {
+            self.say(
+                LogLevel::Info,
+                format!(
+                    "Gameplay connection from {peer}: instance {to_map} cannot be served by this world; the crossing is refused."
+                ),
+            );
+            return;
+        };
+        self.begin_transfer(io, peer, crypt, sheet, &destination, landing)
+            .await;
+    }
+
     /// `GAME_CMSG_PARTY_TRAVEL` (`0x80B1`, nine bytes): the client asks for an instance from the
     /// world map.
     ///
@@ -1479,7 +1661,7 @@ impl WorldSession {
             );
             return;
         };
-        self.begin_transfer(io, peer, crypt, sheet, &destination).await;
+        self.begin_transfer(io, peer, crypt, sheet, &destination, None).await;
     }
 
     /// The frames a travel puts on the wire, in the working implementation's own order
@@ -1494,6 +1676,7 @@ impl WorldSession {
         crypt: &mut AuthCrypt,
         sheet: &CharacterSheet,
         destination: &crate::world::MapEntry,
+        landing: Option<(f32, f32)>,
     ) {
         // A travel already in flight owns this connection: the client is about to reconnect, and a
         // second redirect would send it two.
@@ -1549,6 +1732,14 @@ impl WorldSession {
                 district,
                 language,
                 player_token,
+                // The landing a crossing hands over; every other trigger states none, which clears
+                // the saved position rather than keeping it (travel.rs:396-400, 446-468).
+                landing: landing.map(|(x, y)| crate::maps::travels::Landing {
+                    x,
+                    y,
+                    plane: 0,
+                    from_map: self.map_id(),
+                }),
             };
             match travels.record(&travel) {
                 Ok(()) => {
@@ -1736,7 +1927,7 @@ impl WorldSession {
             );
             return;
         }
-        self.begin_transfer(io, peer, crypt, sheet, &destination).await;
+        self.begin_transfer(io, peer, crypt, sheet, &destination, None).await;
     }
 
     /// `GAME_CMSG_SEND_CHAT_MESSAGE` (`0x8064`): the client speaks.
@@ -2065,6 +2256,10 @@ impl WorldSession {
                 reply.len()
             ),
         );
+        // The step this report moved the character along: the doorway test is the wall the step
+        // crosses, not the position a tick may already have advanced
+        // (`ASURA/crates/asura-world/src/agent.rs:1038-1041`, `record_portal_step`).
+        self.record_portal_step(position);
         if !reply.is_empty() {
             // Everyone else is told what this report made the agent do, before the walker itself is
             // (`ASURA/crates/asura-world/src/agent.rs:1041-1042`: `instance.broadcast`, then `send`).
@@ -2176,10 +2371,16 @@ impl WorldSession {
                 }
             ),
         );
+        // A correction the server accepted is a movement the reports lagged behind; it crosses a
+        // doorway the same way a walk does (`ASURA/crates/asura-world/src/agent.rs:1175-1179`). A point
+        // that is not finite leaves no segment at all.
+        if position.0.is_finite() && position.1.is_finite() {
+            self.record_portal_step(position);
+        } else if let Ok(mut portal) = self.portal.lock() {
+            portal.last_step = None;
+        }
         if !reply.is_empty() {
             let reply: Vec<Vec<u8>> = reply.into_iter().map(|(_, frame)| frame).collect();
-            // Every client is told where the stop put this agent, before the walker itself is
-            // (`ASURA/crates/asura-world/src/agent.rs:1171-1174`).
             if let Ok(peers) = self.peers.lock() {
                 peers.broadcast(self.player_id(), self.map_id(), self.district(), &reply);
             }
@@ -2368,14 +2569,17 @@ impl WorldSession {
                                         self.player_id(),
                                         (point.0, point.1),
                                         point.2,
-                                        // Our spawn rows carry no angle yet, so the facing is the neutral
-                                        // +y; the working implementation's create message carries the
-                                        // spawn point's own vector (measured: -0.995, -0.104 on one
-                                        // body). A spawn angle column is the gap, and it is in the audit.
-                                        (0.0, 1.0),
+                                        // A doorway crossing hands over its arrival's facing; every
+                                        // other entry faces the neutral +y, because a spawn row
+                                        // states no angle (the working implementation's create
+                                        // message carries the spawn point's own vector - measured:
+                                        // -0.995, -0.104 on one body - and a spawn angle column is
+                                        // the gap, named in the audit).
+                                        self.claimed_facing(map).unwrap_or((0.0, 1.0)),
                                         self.settings.agent_speed,
                                     ));
                                 }
+                                self.start_portal_position((point.0, point.1));
                                 vec![instance_packets::instance_load_spawn_point(
                                     map.file_id,
                                     point.0,
@@ -2693,12 +2897,23 @@ impl WorldSession {
                     }
                     CLIENT_MOVE_TO_COORD_WITH_DIR => {
                         self.answer_position_update(io, peer, &message, crypt).await;
+                        // The step the report moved the agent along, checked against the map's own
+                        // walls (`ASURA/crates/asura-world/src/dispatch.rs:44-54`).
+                        if let Some((from, to)) = self.take_portal_step() {
+                            self.cross_portal(io, peer, crypt, sheet, from, to).await;
+                        }
                     }
                     CLIENT_CANCEL_MOVEMENT => {
                         self.answer_cancel_movement(io, peer, crypt).await;
                     }
                     CLIENT_LAST_POS_BEFORE_MOVE_CANCELED => {
                         self.answer_last_position(io, peer, &message, crypt).await;
+                        // A correction the server accepted is a movement the reports lagged behind, so
+                        // it is checked for a doorway the same way a walk is
+                        // (`ASURA/crates/asura-world/src/dispatch.rs:60-68`).
+                        if let Some((from, to)) = self.take_portal_step() {
+                            self.cross_portal(io, peer, crypt, sheet, from, to).await;
+                        }
                     }
                     // The client's own in-game travel request. `ASURA/crates/asura-world/src/travel.rs`
                     // answers it with the same cycle `/tp` ends in: a map this world hosts goes to
@@ -2873,11 +3088,37 @@ impl WorldSession {
         }
     }
 
-    /// One point of a map's own spawn list, scattered by the world's setting (R13).
+    /// The facing a claimed doorway crossing handed over, when this map is the one it named.
     ///
-    /// The game's rule: every entry takes a random point of that map's list, lands up to `spawn_scatter`
-    /// units around it, and faces the point's angle. The scatter is a setting, never a constant.
+    /// `ASURA/crates/asura-world/src/travel.rs:359-362` and `portals::arrival_at`: the receiving map's
+    /// arrival states where a character arriving from a given map stands and which way it faces.
+    fn claimed_facing(&self, map: &crate::world::MapEntry) -> Option<(f32, f32)> {
+        match self.landing.lock() {
+            Ok(claimed) => claimed
+                .filter(|claimed| claimed.map_id == map.id)
+                .map(|claimed| claimed.facing),
+            Err(_) => None,
+        }
+    }
+
+    /// One point of a map's own spawn list, scattered by the world's setting (R13) - or, when the
+    /// travel this connection claimed was a doorway crossing, the landing that doorway states (R21).
+    ///
+    /// The game's rule: every entry takes a random point of that map's list, lands up to
+    /// `spawn_scatter` units around it, and faces the point's angle. The scatter is a setting, never a
+    /// constant. A crossing states its own point and its own facing, which the receiving map owns
+    /// (`ASURA/crates/asura-world/src/travel.rs:319-338`, `portals::arrival`).
     fn entry_point(&self, map: &crate::world::MapEntry) -> Option<(f32, f32, u16)> {
+        if let Ok(claimed) = self.landing.lock()
+            && let Some(claimed) = *claimed
+            && claimed.map_id == map.id
+        {
+            return Some((
+                claimed.landing.x,
+                claimed.landing.y,
+                claimed.landing.plane.max(0) as u16,
+            ));
+        }
         let points: Vec<crate::maps::MapSpawn> = self
             .spawns
             .iter()
@@ -3340,9 +3581,38 @@ mod tests {
         })
     }
 
+    /// `ASURA/crates/asura-world/src/player.rs:60-74`: the doorway test consumes the segment between two
+    /// finite reports, once, and a point reported twice is not a step at all. A simulation tick between
+    /// the reports must not shorten it, which is why the segment is kept beside the agent.
     #[test]
-    fn a_travel_request_names_the_instance_in_its_first_two_bytes() {
-        // The client's own frame, as the working implementation's log records it: `B1 80 | 94 00 | 02 |
+    fn a_reported_step_is_the_segment_between_two_reports_and_is_consumed_once() {
+        let world = world();
+        let session = WorldSession::new(Log::new(), &world);
+        session.start_portal_position((7277.4, 5417.9));
+        session.record_portal_step((7277.4, 5417.9));
+        assert!(
+            session.take_portal_step().is_none(),
+            "a report of the point the character entered at is not a step"
+        );
+        session.record_portal_step((7184.3, 5307.3));
+        assert_eq!(
+            session.take_portal_step(),
+            Some(((7277.4, 5417.9), (7184.3, 5307.3))),
+            "the step is the pair of reports"
+        );
+        assert!(
+            session.take_portal_step().is_none(),
+            "a step is consumed once, so a second message cannot cross the same wall"
+        );
+        session.record_portal_step((7184.3, 5307.3));
+        assert!(
+            session.take_portal_step().is_none(),
+            "a report of the same point is not a step"
+        );
+    }
+
+    #[test]
+    fn a_travel_request_names_the_instance_in_its_first_two_bytes() {        // The client's own frame, as the working implementation's log records it: `B1 80 | 94 00 | 02 |
         // 00 00 | 0...` - the header `0x80B1`, then the instance. This tree read it as `0x00B1` (the
         // server's own party message) and parsed five fields the working implementation does not read.
         let mut message = vec![0xB1, 0x80];
@@ -4147,6 +4417,7 @@ Logger.root = 6,Console
                 district: 3,
                 language: 2,
                 player_token: 0x1234,
+                landing: None,
             })
             .expect("the travel is recorded");
 
@@ -4541,6 +4812,7 @@ Logger.root = 6,Console
                 district: 1,
                 language: 0,
                 player_token: 0x2345,
+                landing: None,
             })
             .expect("the travel is recorded");
 

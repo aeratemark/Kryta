@@ -23,6 +23,11 @@ pub mod cartography;
 #[path = "InstanceTable.rs"]
 pub mod instance_table;
 
+#[path = "Portals.rs"]
+pub mod portals;
+
+pub use portals::{Arch, Crossed, Portals};
+
 pub use travel_targets::{TRAVEL_TARGETS, TravelTarget};
 pub use travels::{DatabaseTravels, Travel};
 
@@ -61,9 +66,26 @@ pub struct Arrival {
     pub y: f32,
     /// Which plane it is on.
     pub plane: i16,
+    /// The facing, in radians, when the map states one
+    /// (`ASURA/crates/asura-world/src/portals.rs:129-148`, `Arrival::angle`).
+    pub angle: Option<f32>,
 }
 
-const SELECT_ARRIVALS: &str = "SELECT \"map_id\"::bigint, \"from_map\"::bigint, \"x\", \"y\", \"plane\"::bigint FROM \"map_arrival\" ORDER BY \"map_id\", \"from_map\"";
+impl Arrival {
+    /// The direction vector the agent is created facing: `(cos, sin)`, or the default `(1, 0)`.
+    ///
+    /// `ASURA/crates/asura-world/src/portals.rs:140-147`, `Arrival::direction`.
+    pub fn direction(&self) -> (f32, f32) {
+        match self.angle {
+            Some(angle) => (angle.cos(), angle.sin()),
+            None => (1.0, 0.0),
+        }
+    }
+}
+
+const SELECT_ARRIVALS: &str = "SELECT \"map_id\"::bigint, \"from_map\"::bigint, \"x\", \"y\", \"plane\"::bigint, \"angle\" FROM \"map_arrival\" ORDER BY \"map_id\", \"from_map\"";
+
+const SELECT_ARCHES: &str = "SELECT \"map_id\"::bigint, \"idx\"::bigint, \"to_map\"::bigint, \"from_x\", \"from_y\", \"to_x\", \"to_y\" FROM \"map_arch\" ORDER BY \"map_id\", \"idx\"";
 
 const SELECT_MAPS: &str = "SELECT \"id\"::bigint, \"type\"::bigint, \"file_id\"::bigint, \"name\", \"party_cap\"::bigint, \"instance_value\"::bigint FROM \"map\" ORDER BY \"id\"";
 
@@ -136,6 +158,39 @@ impl DatabaseMaps {
                         .try_get::<_, f32>("y")
                         .map_err(|error| format!("column y: {error}"))?,
                     plane: read_number(row, "plane")? as i16,
+                    angle: row
+                        .try_get::<_, Option<f32>>("angle")
+                        .map_err(|error| format!("column angle: {error}"))?,
+                })
+            })
+            .collect()
+    }
+
+    /// Every doorway wall, for the crossing a step decides
+    /// (`ASURA/crates/asura-world/src/portals.rs:79-120`, `Arch`).
+    pub fn arches(&self) -> Result<Vec<Arch>, String> {
+        self.query(SELECT_ARCHES)?
+            .iter()
+            .map(|row| {
+                Ok(Arch {
+                    from_map: read_number(row, "map_id")? as u32,
+                    idx: read_number(row, "idx")? as u32,
+                    to_map: row
+                        .try_get::<_, Option<i64>>("to_map")
+                        .map_err(|error| format!("column to_map: {error}"))?
+                        .map(|value| value as u32),
+                    from: (
+                        row.try_get::<_, f32>("from_x")
+                            .map_err(|error| format!("column from_x: {error}"))?,
+                        row.try_get::<_, f32>("from_y")
+                            .map_err(|error| format!("column from_y: {error}"))?,
+                    ),
+                    to: (
+                        row.try_get::<_, f32>("to_x")
+                            .map_err(|error| format!("column to_x: {error}"))?,
+                        row.try_get::<_, f32>("to_y")
+                            .map_err(|error| format!("column to_y: {error}"))?,
+                    ),
                 })
             })
             .collect()

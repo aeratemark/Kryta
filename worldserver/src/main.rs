@@ -371,6 +371,43 @@ fn run(args: &[String]) -> Result<(), String> {
         ),
     );
 
+    // A map's doorways, which is what a step is judged against
+    // (`game/Maps/Portals.rs`, `ASURA/crates/asura-world/src/portals.rs`). The rows are the world's
+    // content (`data/sql/base/db_world/0008-map-doorways.sql`), read once like the maps themselves; a
+    // world with no rows has no doorway, and every step crosses nothing.
+    if let Some(pool) = world_pool.as_ref() {
+        let store = game::maps::DatabaseMaps::new(
+            std::sync::Arc::clone(pool),
+            log.clone(),
+        );
+        match store.arches() {
+            Ok(arches) => {
+                let portals = game::maps::Portals::new(
+                    arches,
+                    world.settings().point_box_half_extent,
+                );
+                log.out(
+                    LogLevel::Info,
+                    "server.worldserver",
+                    format!(
+                        "Doorways: {} arch(es) on {} map(s); a point doorway's box has a half side of {:.0} (World.PointBoxHalfExtent).",
+                        portals.arches(),
+                        portals.maps_with_doorways(),
+                        portals.extent()
+                    ),
+                );
+                world.set_portals(portals);
+            }
+            Err(error) => log.out(
+                LogLevel::Warn,
+                "server.worldserver",
+                format!(
+                    "No doorway rows: {error}. Every step crosses nothing until the map_arch table is readable."
+                ),
+            ),
+        }
+    }
+
     // The instance table (`data/sql/base/db_world/0003-instances.sql`): the copies a session opens
     // are rows, and a fresh world disposes what an earlier run left - nobody is inside it.
     if let Some(pool) = world_pool.as_ref() {

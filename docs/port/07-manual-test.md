@@ -71,16 +71,17 @@ being served.
 | 6 | the outpost loads | `Ascalon City (pre-Searing) (148) is loading - 7 message(s), 337 bytes`, then on the client's asks: `the ping pair`, `the inventory and the map's record`, `the character stands at X, Y (plane 0) on map 148`, `the player and the load's last message`, `map 148 is loaded - the character '...' is in it`; a character that predates the unlock rows gets `the character has no unlock rows yet, so map 148 - the world's first outpost - is unlocked for it (R12)`, and a travel to a map it has not unlocked closes the connection with the refusal's log line (R12) |
 | 7 | stand still in the outpost | a `0x001E` tick every `World.SimulationTickMs` milliseconds (105 by default; visible with `Network.Trace` off as nothing, on as trace lines; the status line's `up` time climbing) |
 | 8 | click a point across the outpost, then hold a movement key | the click is answered from map 148's own graph - the finder's first waypoint in `0x0029`, so the character walks a path rather than through a wall - and the key's offset is followed through adjacent cells (`0x803D` -> `0x0029`); the world keeps ticking and the status line's `up` climbs |
-| 9 | drag an item in the inventory | `the item's new place answered with 1 message(s), 11 bytes`; the item stays where you put it |
-| 10 | equip an item | the same placement answer, into the equipped bag's slot for that kind of item |
-| 11 | destroy an item | `the item's removal answered with 1 message(s), 8 bytes`; the item is gone |
-| 12 | say something on the all channel (`!hello`) | `... spoke "hello" on channel 3` and `a spoken line answered with 2 message(s), 24 bytes`; the client's chat box is the judge of whether the line renders - the bytes are ASURA's, and ASURA's own notes say no chat text has ever reached a screen in either server |
-| 13 | type `/maps`, then `/stuck`, then `/tp ascalon` | `/maps` prints `Teleport targets (2 aliases, every one with a map config):` and its two rows and sends nothing; `/stuck` is answered with `the agent's position` (16 bytes, `0x002C`); `/tp ascalon` says `You are already here.` because the character is in map 148 |
-| 14 | type `/tp kamadan` | `Kamadan, Jewel of Istan (449) is not hosted by this world; the teleport is refused.` - the alias is the reference's, and this world has no row for that map |
-| 15 | open a second client, or log a second character in, and stand in the outpost | each client is told about the other: the first logs `N other player(s) introduced` and the second draws the first's body; when the second leaves, the first is told the player and its agent are gone |
-| 16 | travel from the world map | `the redirect answered with 8 message(s), 114 bytes` and `the client is told to dial 127.0.0.1:6112 with token 0x...`; the client reconnects and loads the map it asked for |
-| 17 | reopen the world map | the district count answer again (step 3) |
-| 18 | leave the client | `Gameplay connection ... closed.` and, after the hold, `Instance on map 148, district 1, was empty for 900 s and is disposed (R37, R40)` |
+| 9 | walk into the walled arch at the edge of Ascalon City (the doorway that leads to Lakeside County) | `the character crossed the doorway of map 148 at (x, y) -> (x, y): crossing to 146 (arrival at (7629.7, 5843.2) facing 0.57)`, then `instance 146 cannot be served by this world; the crossing is refused` - the wall is real, and map 146 has no row yet |
+| 10 | drag an item in the inventory | `the item's new place answered with 1 message(s), 11 bytes`; the item stays where you put it |
+| 11 | equip an item | the same placement answer, into the equipped bag's slot for that kind of item |
+| 12 | destroy an item | `the item's removal answered with 1 message(s), 8 bytes`; the item is gone |
+| 13 | say something on the all channel (`!hello`) | `... spoke "hello" on channel 3` and `a spoken line answered with 2 message(s), 24 bytes`; the client's chat box is the judge of whether the line renders - the bytes are ASURA's, and ASURA's own notes say no chat text has ever reached a screen in either server |
+| 14 | type `/maps`, then `/stuck`, then `/tp ascalon` | `/maps` prints `Teleport targets (2 aliases, every one with a map config):` and its two rows and sends nothing; `/stuck` is answered with `the agent's position` (16 bytes, `0x002C`); `/tp ascalon` says `You are already here.` because the character is in map 148 |
+| 15 | type `/tp kamadan` | `Kamadan, Jewel of Istan (449) is not hosted by this world; the teleport is refused.` - the alias is the reference's, and this world has no row for that map |
+| 16 | open a second client, or log a second character in, and stand in the outpost | each client is told about the other: the first logs `N other player(s) introduced` and the second draws the first's body; when the second leaves, the first is told the player and its agent are gone |
+| 17 | travel from the world map | `the redirect answered with 8 message(s), 114 bytes` and `the client is told to dial 127.0.0.1:6112 with token 0x...`; the client reconnects and loads the map it asked for |
+| 18 | reopen the world map | the district count answer again (step 3) |
+| 19 | leave the client | `Gameplay connection ... closed.` and, after the hold, `Instance on map 148, district 1, was empty for 900 s and is disposed (R37, R40)` |
 
 ## What is not expected to work yet, and why
 
@@ -105,7 +106,7 @@ The world half of this journey is also played automatically against the *program
 players, clicks a point twenty units away and reads the walk it is answered with (`0x0029`, the
 finder's own first waypoint - skipped when `GwDat` names no archive), drags, equips and destroys an
 item, speaks a line and types the chat commands, sends the travel
-request and reads the redirect's eight frames - the same wire steps 5 to 15 do with a client.
+request and reads the redirect's eight frames - the same wire steps 5 to 16 do with a client.
 The login half is `cargo test -p authserver --test end_to_end -- --ignored --nocapture`, which starts
 the real `authserver` and performs the client's file check, version message, key exchange and portal
 login, reading the character list it answers with - then the district list (`0x800B`, one district in

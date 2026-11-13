@@ -718,7 +718,7 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             eprintln!("skipped the walk step: no client archive at {archive}");
         }
 
-        // The item operations the manual test's steps 9 to 11 do, against the program: a drag, an
+        // The item operations the manual test's steps 10 to 12 do, against the program: a drag, an
         // equip and a destroy. Each one is a row in the character database and an answer to the
         // client; the items are the ones the confirm wrote, read back through the same repository.
         let tables = game::creation::Tables::load(

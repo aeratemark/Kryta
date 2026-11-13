@@ -80,6 +80,14 @@ pub struct WorldConfig {
     /// at 0 over the same walk (`docs/reference/instance-initialization.md`, "The explorable"). The
     /// faithful value is one setting away, so the setting is ASURA's own three modes: `0`, `1`, `auto`.
     pub travel_explorable: TravelExplorable,
+    /// Half the side of a point doorway's box, in map units (`ASURA/config/Server/portals.json`,
+    /// `point_box_half_extent`).
+    ///
+    /// A doorway stated as a wall does not need it: a wall is crossed when the step passes through the
+    /// segment. A point doorway - the older shape - is crossed when the step intersects an edge of this
+    /// box, and an extent of 0 or less disables point doorways entirely
+    /// (`ASURA/crates/asura-world/src/portals.rs:31-64`, `point_half_extent`, `box_crossed`).
+    pub point_box_half_extent: f32,
     /// The address a travelling client is told to reconnect to, as `host:port`.
     ///
     /// The working implementation publishes one (`--public`, `ASURA/crates/asura-world/src/main.rs:73`);
@@ -110,6 +118,7 @@ impl Default for WorldConfig {
             appearance: 0x0310_0000,
             max_allowed_correction: 250.0,
             travel_explorable: TravelExplorable::Zero,
+            point_box_half_extent: 250.0,
             public_address: "127.0.0.1:6112".to_string(),
         }
     }
@@ -211,6 +220,8 @@ impl WorldConfig {
         let (travel_explorable, _) = config
             .value_string("World.TravelExplorable", "0")
             .map_err(|error| error.to_string())?;
+        settings.point_box_half_extent =
+            number(config, "PointBoxHalfExtent", settings.point_box_half_extent)?;
         settings.travel_explorable = TravelExplorable::parse(&travel_explorable)
             .ok_or_else(|| {
                 format!(
@@ -239,8 +250,9 @@ impl WorldConfig {
             settings.public_address,
         ));
         notes.push(format!(
-            "World: a travel's is_explorable: {}.",
+            "World: a travel's is_explorable: {}; a point doorway's box has a half side of {:.0}.",
             settings.travel_explorable.mode(),
+            settings.point_box_half_extent,
         ));
         notes.push(format!(
             "World: a player agent is created with {} health, {} energy, {:.1} energy a second and a walking speed of {:.0}; a character with no appearance of its own is drawn as 0x{:08X}.",

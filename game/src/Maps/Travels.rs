@@ -21,14 +21,17 @@ use common::logging::{Log, LogLevel};
 use database::database::{DatabaseWorkerPool, Param};
 
 const INSERT_TRAVEL: &str = "INSERT INTO \"travel\" (\"account\", \"world\", \"map_id\", \"district\", \
-                             \"language\", \"player_token\") VALUES ($1, $2, $3, $4, $5, $6)";
+                             \"language\", \"player_token\", \"landing_x\", \"landing_y\", \
+                             \"landing_plane\", \"landing_from\") VALUES ($1, $2, $3, $4, $5, $6, \
+                             NULLIF($7::text, '')::real, NULLIF($8::text, '')::real, \
+                             NULLIF($9::text, '')::bigint, NULLIF($10::text, '')::bigint)";
 
 const CLAIM_TRAVEL: &str = "DELETE FROM \"travel\" WHERE \"world\" = $1 AND \"account\" = $2 AND \
                             \"player_token\" = $3 RETURNING \"account\", \"map_id\", \"district\", \
-                            \"language\"";
+                            \"language\", \"landing_x\", \"landing_y\", \"landing_plane\", \"landing_from\"";
 
 /// One hand-off: the login's promise about where a client is going.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Travel {
     /// The account, in the wire's uuid text form, the form `characters.account_uuid` holds.
     pub account: [u8; 16],
@@ -43,6 +46,23 @@ pub struct Travel {
     pub language: u32,
     /// The number the login drew for this travel, carried back in the version message.
     pub player_token: u32,
+    /// Where the destination puts the arriving character, when the trigger knew: a doorway crossing
+    /// hands over the doorway's own landing point, and every other travel states none
+    /// (`ASURA/crates/asura-world/src/travel.rs:446-468`).
+    pub landing: Option<Landing>,
+}
+
+/// Where a crossing puts the arriving character, and which map it came from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Landing {
+    /// The point the destination states for a character arriving from `from_map` (R21).
+    pub x: f32,
+    /// The point's other axis.
+    pub y: f32,
+    /// Which plane it is on.
+    pub plane: i16,
+    /// The map the character crossed from.
+    pub from_map: u32,
 }
 
 /// The login database's `travel` table, as both programs use it.
@@ -74,6 +94,32 @@ impl DatabaseTravels {
                     Param::Integer(i64::from(travel.district)),
                     Param::Integer(i64::from(travel.language)),
                     Param::Integer(i64::from(travel.player_token)),
+                    // A landing is four columns or none: the statement casts these text forms, and an
+                    // empty text is the NULL that says this travel states no landing.
+                    Param::Text(
+                        travel
+                            .landing
+                            .map(|landing| landing.x.to_string())
+                            .unwrap_or_default(),
+                    ),
+                    Param::Text(
+                        travel
+                            .landing
+                            .map(|landing| landing.y.to_string())
+                            .unwrap_or_default(),
+                    ),
+                    Param::Text(
+                        travel
+                            .landing
+                            .map(|landing| landing.plane.to_string())
+                            .unwrap_or_default(),
+                    ),
+                    Param::Text(
+                        travel
+                            .landing
+                            .map(|landing| landing.from_map.to_string())
+                            .unwrap_or_default(),
+                    ),
                 ],
             ),
             Err(_) => {
@@ -144,6 +190,26 @@ impl DatabaseTravels {
             return Ok(None);
         };
         let account_text: String = row.get(0);
+        // A landing is written as four columns or as none of them, so the position's two halves decide
+        // whether there is one at all; a row that states only half is not a landing.
+        let landing = match (
+            row.get::<usize, Option<f32>>(4),
+            row.get::<usize, Option<f32>>(5),
+        ) {
+            (Some(x), Some(y)) => Some(Landing {
+                x,
+                y,
+                plane: row
+                    .get::<usize, Option<i64>>(6)
+                    .map(|plane| plane as i16)
+                    .unwrap_or(0),
+                from_map: row
+                    .get::<usize, Option<i64>>(7)
+                    .map(|map| map as u32)
+                    .unwrap_or(0),
+            }),
+            _ => None,
+        };
         Ok(Some(Travel {
             account: crate::characters::uuid_bytes(&account_text)
                 .map_err(|error| format!("the claimed travel's account cannot be read: {error}"))?,
@@ -152,6 +218,7 @@ impl DatabaseTravels {
             district: row.get::<usize, i64>(2) as u32,
             language: row.get::<usize, i64>(3) as u32,
             player_token,
+            landing,
         }))
     }
 }

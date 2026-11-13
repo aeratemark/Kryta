@@ -1158,6 +1158,9 @@ impl AuthSession {
                     district: request.district,
                     language: request.language,
                     player_token,
+                    // The login never states a landing: only a doorway crossing knows where the
+                    // receiving map puts the character (travel.rs:446-468).
+                    landing: None,
                 };
                 match travels.record(&travel) {
                     Ok(()) => self.say(
