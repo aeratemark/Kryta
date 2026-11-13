@@ -362,9 +362,14 @@ road.
    two-trapezoid graph (one up into the neighbouring trapezoid, ending at the destination; and two
    points in one trapezoid being a single waypoint), and the split walk being the BSP's answer rather
    than a containment test - a point past a trapezoid's edge still lands in a leaf and still walks,
-   exactly as the reference does. **Left**: `PathGraphs` (`load`, `from_dump`, `bind`, `import`,
-   `walk`, `walk_direction`, `walk_any_plane`), `import_graph`, `find_path_blob`, and all of
-   `pathfind/directional.rs` (320 lines).
+   exactly as the reference does; and lines **1484-1700** - `PathGraphs` and `PathGraphsInner` with
+   `from_dump`, `bind`, `empty`, `imported`, `maps`, `walk`, `walk_any_plane` and `with_finder`. A
+   test loads a graph from a real `ASURAPG1` dump, binds it to one of two maps, and walks: the bound
+   map answers `Found`, the unbound one `NoGraph`, and `walk_any_plane` finds a destination on an
+   unspecified plane. **Left**: `PathGraphs::load` and `PathGraphs::import` (lines 1507-1592, which
+   read a graph out of a `Gw.dat` through the importer), `walk_direction` (1639) and the whole of
+   `pathfind/directional.rs` (320 lines), then `import_graph` and `find_path_blob` (1703-1794) with the
+   importer in `map_data.rs` (step 4 below).
 4. **The importer** in `map_data.rs` last, only so this machine can produce a dump from its own
    `Gw.dat`; the world's start-up then loads a dump the way ASURA does.
 

@@ -1328,6 +1328,163 @@ impl BuildHelper<'_> {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// ASURA/crates/asura-world/src/pathfind.rs, lines 1484-1700 and 1624-1699: the graphs a world serves.
+// `load` and `import` (lines 1507-1592), which read a graph out of a `Gw.dat` through the importer,
+// and `walk_direction` (1639), which needs `directional.rs`, are the remaining pieces.
+// ---------------------------------------------------------------------------------------------
+
+use crate::world::MapEntry;
+
+/// The graphs a world serves: one per `Gw.dat` blob id, and one finder per map.
+pub struct PathGraphs(std::sync::Arc<PathGraphsInner>);
+
+/// What [`PathGraphs`] holds, behind the one `Arc` a world clones.
+#[derive(Default)]
+pub struct PathGraphsInner {
+    /// One graph per blob id, behind a lock because a demand-loaded map adds its graph after startup.
+    /// Reads clone the `Arc` out and drop the lock, so a search never holds it.
+    data: std::sync::Mutex<std::collections::HashMap<u32, std::sync::Arc<PathStaticData>>>,
+    /// map id -> the blob id its graph is stored under, for the maps this world can path in.
+    pub bound: std::sync::Mutex<std::collections::HashMap<i32, u32>>,
+    /// One finder per map, behind one lock. The finder keeps scratch arrays between searches, so
+    /// sharing it is the point.
+    pub finders: std::sync::Mutex<std::collections::HashMap<i32, PathContext>>,
+}
+
+impl Default for PathGraphs {
+    fn default() -> Self {
+        PathGraphs::empty()
+    }
+}
+
+impl PathGraphs {
+    /// Load the graphs from a dump written by the dumper, so no `Gw.dat` is needed at runtime.
+    ///
+    /// Nothing is bound yet: call [`PathGraphs::bind`] with the maps this world serves.
+    pub fn from_dump(path: &str) -> std::io::Result<PathGraphs> {
+        let bytes = std::fs::read(path)?;
+        let dumped = crate::terrain::graph_dump::decode(&bytes)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+        let mut data = std::collections::HashMap::new();
+        for graph in dumped {
+            data.insert(graph.map_file_id, std::sync::Arc::new(graph.data));
+        }
+        Ok(PathGraphs(std::sync::Arc::new(PathGraphsInner {
+            data: std::sync::Mutex::new(data),
+            bound: std::sync::Mutex::new(std::collections::HashMap::new()),
+            finders: std::sync::Mutex::new(std::collections::HashMap::new()),
+        })))
+    }
+
+    /// Bind every map whose blob is among the loaded graphs. Returns how many were bound.
+    pub fn bind(&self, maps: &[MapEntry]) -> usize {
+        let data = self.0.data.lock().unwrap_or_else(|err| err.into_inner());
+        let mut bound = self.0.bound.lock().unwrap_or_else(|err| err.into_inner());
+        let mut count = 0;
+        for map in maps {
+            if data.contains_key(&map.file_id) {
+                bound.insert(map.id as i32, map.file_id);
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// A world with no graphs: every walk is refused with [`Walk::NoGraph`].
+    pub fn empty() -> PathGraphs {
+        PathGraphs(std::sync::Arc::new(PathGraphsInner::default()))
+    }
+
+    /// How many graphs are loaded - from an archive or a dump - whether or not a map is bound.
+    pub fn imported(&self) -> usize {
+        self.0
+            .data
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .len()
+    }
+
+    /// The maps this world can path in, for a startup line and for tests.
+    pub fn maps(&self) -> Vec<i32> {
+        let mut maps: Vec<i32> = self
+            .0
+            .bound
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .keys()
+            .copied()
+            .collect();
+        maps.sort_unstable();
+        maps
+    }
+
+    /// Ask the finder for a walk from `from` to `to` on `map_id`.
+    pub fn walk(&self, map_id: i32, from: Pos, to: Pos) -> Walk {
+        match self.with_finder(map_id, |finder| {
+            let mut waypoints = Vec::new();
+            if finder.path_finding(from, to, &mut waypoints) {
+                Walk::Found(waypoints)
+            } else {
+                Walk::NoPath
+            }
+        }) {
+            Some(walk) => walk,
+            None => Walk::NoGraph,
+        }
+    }
+
+    /// Find a route to a point on an unspecified plane. Manual movement uses `walk_direction`: choosing
+    /// a destination plane globally can send a player off a bridge to reach that point.
+    pub fn walk_any_plane(&self, map_id: i32, from: Pos, to: (f32, f32)) -> Walk {
+        match self.with_finder(map_id, |finder| {
+            let Some(plane) = finder.plane_at(Vec2f { x: to.0, y: to.1 }) else {
+                return Walk::NoPath;
+            };
+            let mut waypoints = Vec::new();
+            let destination = Pos {
+                x: to.0,
+                y: to.1,
+                plane,
+            };
+            if finder.path_finding(from, destination, &mut waypoints) {
+                Walk::Found(waypoints)
+            } else {
+                Walk::NoPath
+            }
+        }) {
+            Some(walk) => walk,
+            None => Walk::NoGraph,
+        }
+    }
+
+    /// Run `use_it` against the finder for `map_id`, or `None` when this world has no graph for it.
+    fn with_finder<R>(&self, map_id: i32, use_it: impl FnOnce(&mut PathContext) -> R) -> Option<R> {
+        let file_id = self
+            .0
+            .bound
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .get(&map_id)
+            .copied();
+        let data = file_id.and_then(|file_id| {
+            self.0
+                .data
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .get(&file_id)
+                .map(std::sync::Arc::clone)
+        });
+        let data = data?;
+
+        let mut finders = self.0.finders.lock().unwrap_or_else(|err| err.into_inner());
+        let finder = finders
+            .entry(map_id)
+            .or_insert_with(|| PathContext::new(data));
+        Some(use_it(finder))
+    }
+}
+
 /// What the finder said about a walk.
 ///
 /// `ASURA/crates/asura-world/src/agent.rs:570`.
@@ -1492,6 +1649,57 @@ mod tests {
         let mut waypoints = Vec::new();
         assert_eq!(context.find_trapezoid(pos(5.0, 99.0)), Some(1));
         assert!(context.path_finding(pos(5.0, 99.0), pos(5.0, 2.0), &mut waypoints));
+    }
+
+    /// A dump written by `graph_dump::encode`, loaded by `PathGraphs::from_dump`, bound to a map, and
+    /// walked: the round trip ASURA's own server does instead of reading a 3.6 GB archive. A map that
+    /// is not bound answers `NoGraph`, which is the only thing that should ever answer it.
+    #[test]
+    fn a_graph_loaded_from_a_dump_walks_and_an_unbound_map_has_no_graph() {
+        let data = (*two_stacked_traps()).clone();
+        let bytes = crate::terrain::graph_dump::encode(&[crate::terrain::graph_dump::DumpedGraph {
+            map_id: 148,
+            map_file_id: 0x1B97D,
+            data,
+        }]);
+        let path = std::env::temp_dir().join("kryta-path-graph-test.dump");
+        std::fs::write(&path, &bytes).expect("write the dump");
+        let graphs = PathGraphs::from_dump(&path.to_string_lossy()).expect("load the dump");
+        assert_eq!(graphs.imported(), 1, "one graph is loaded");
+        assert!(graphs.maps().is_empty(), "nothing is bound yet");
+
+        let maps = vec![
+            MapEntry {
+                id: 148,
+                kind: 0,
+                file_id: 0x1B97D,
+                name: "Ascalon City (pre-Searing)".to_string(),
+                instance_value: Some(0xBB14_F539),
+            },
+            MapEntry {
+                id: 146,
+                kind: 1,
+                file_id: 0x1B97E,
+                name: "Lakeside County".to_string(),
+                instance_value: None,
+            },
+        ];
+        assert_eq!(graphs.bind(&maps), 1, "only the map whose blob is loaded binds");
+        assert_eq!(graphs.maps(), vec![148]);
+
+        assert!(
+            matches!(graphs.walk(148, pos(5.0, 2.0), pos(5.0, 8.0)), Walk::Found(_)),
+            "the bound map walks"
+        );
+        assert!(
+            matches!(graphs.walk(146, pos(5.0, 2.0), pos(5.0, 8.0)), Walk::NoGraph),
+            "a map with no graph answers NoGraph"
+        );
+        assert!(
+            matches!(graphs.walk_any_plane(148, pos(5.0, 2.0), (5.0, 8.0)), Walk::Found(_)),
+            "a destination on an unspecified plane is found too"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     /// `PathHeapPush`/`PathHeapPop` pop the cheapest node first, and keep doing it as the heap shrinks -
