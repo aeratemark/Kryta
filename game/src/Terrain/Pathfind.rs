@@ -796,6 +796,43 @@ impl PathContext {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// ASURA/crates/asura-world/src/pathfind.rs, lines 921-940: the corridor the waypoint builder follows,
+// declared here so `PathFinding` (line 783) and `PathCreateWaypoints` (line 891) arrive together with
+// the helper they hand themselves to. `BuildHelper`'s own `impl` (line 941 on) is the next piece.
+// ---------------------------------------------------------------------------------------------
+
+/// `PathFindBound` (`GmPaths.c:552`): one side of the corridor being followed, and the step it began at.
+#[derive(Debug, Clone, Copy)]
+struct Bound {
+    /// The point on this side.
+    point: FindPoint,
+    /// The step of the corridor it began at.
+    step_id: usize,
+    /// The direction out of this side.
+    vec: Vec2f,
+}
+
+/// `PathBuildHelper` (`GmPaths.c:558`).
+struct BuildHelper<'c> {
+    /// The finder whose steps and waypoints are being walked.
+    context: &'c mut PathContext,
+    /// The corridor's left side.
+    left_bound: Bound,
+    /// The corridor's right side.
+    right_bound: Bound,
+    /// Where the corridor stands.
+    curr_start_point: FindPoint,
+    /// The plane the corridor is on.
+    current_plane: u16,
+    /// The last point emitted, for the direction check.
+    last_pos: Pos,
+    /// Where the walk is going.
+    dst_point: FindPoint,
+    /// The waypoints being written.
+    waypoints: &'c mut Vec<Waypoint>,
+}
+
 /// What the finder said about a walk.
 ///
 /// `ASURA/crates/asura-world/src/agent.rs:570`.
