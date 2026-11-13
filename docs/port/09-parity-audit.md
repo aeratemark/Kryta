@@ -259,7 +259,10 @@ setting that selects one.
    stored bytes, announced 2,925,267, decoded to 2,925,267 that begin `ffna` and a type byte of 3, then
    **24 records** of `(id u32, size u32, bytes)` that walk to exactly the blob's length. The path chunk
    is `0x20000008` - stage 2, `ChunkId::Path` - at offset 1,956,355, **849,201 bytes**, the largest
-   record in the container after the terrain's.
+   record in the container after the terrain's, and its own header is the reference's: the first four
+   bytes read **`0xEEFE704C`** (`PATH_DATA_SIGNATURE`) and the next four **12** (`PATH_DATA_VERSION`),
+   followed by `15 00 00 00`. So the parse has a verified entry point and a verified identity check
+   before a single trapezoid is read.
 2. **The items block goes without `0x015E`** (the low-detail item), and so does ASURA's: the message is
    observed in a capture and emitted by neither implementation, so it is not this tree's to invent.
 3. **The instance table is ported thin**: ASURA's batch shape goes on the wire, and its content is the
