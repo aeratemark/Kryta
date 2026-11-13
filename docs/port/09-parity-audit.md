@@ -23,7 +23,12 @@ defect of Rule 0) - **missing** (ASURA has it, this tree sends or handles nothin
 | rows whose `size`, `name` and field list differ | - | **0** of the 742 compared |
 
 The table is copied whole and it agrees: 782 rows, the same headers, the same declared sizes, the
-same names, the same field kinds and lengths. Forty of the 782 rows are written with an evidence
+same names, the same field kinds and lengths. **That sentence was false until round 20**: this tree
+carried 683 game rows against ASURA's 682, and the extra was `0x00B1` read as a client-to-server row
+named `GAME_CMSG_PARTY_TRAVEL` - the very mistake the code comments record ("this tree listened for
+`0x00B1`, which is the *server's* party message, until 2026-11-12"). A header-for-header comparison of
+the two tables found it; the row is gone, one session test that had been written around it now sends
+the client's real frame (`B1 80`, nine bytes), and the two tables now agree exactly. Forty of the 782 rows are written with an evidence
 string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`, `0x0067`, `0x006F`,
 `0x007C`, `0x007D`, `0x008A`, `0x008B`, `0x008C`, `0x008D`, `0x009C`, `0x00A7`, `0x00B5`, `0x00CF`,
 `0x00D0`, `0x00EF`, `0x0107`, `0x0115`, `0x011B`, `0x011C`, `0x011F`, `0x012E`, `0x012F`, `0x015B`,
