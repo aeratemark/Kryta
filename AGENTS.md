@@ -3,7 +3,45 @@
 Binding rules for any agent working in this repository. Read this file before the first edit of
 a session.
 
-The one sentence: **AzerothCore's server, in Rust, serving Guild Wars.**
+## Rule 0 - the prime directive: the protocol and its behaviour are a 1:1 port of ASURA
+
+This rule outranks every other rule and every other sentence in this repository. It is not
+negotiable and it is not buried: it is the first thing a session reads.
+
+**`C:\Users\Apo\Documents\GitHub\ASURA` is the authority for the protocol and for everything the
+client can see or do. Every message, every field, every length, every ordering, every sequence, every
+step of every handler is copied from it, 1:1. Not interpreted. Not reasoned about. Not improved. Not
+"fixed" until it works. Not re-derived from a capture when ASURA already carries it.**
+
+Concretely, and binding:
+
+1. **Before writing any code that faces the client, open the ASURA file that does the same thing and
+   port it:** the same messages, in the same order, with the same values, the same conditions and the
+   same refusals. Cite the ASURA file and line in the code, in the comment above the port.
+2. **No invention.** A number, a frame, an order, a tolerance, a default, a state machine: if it is not
+   in ASURA or in a capture, it is not written. Stop and ask.
+3. **No inference.** "It must be roughly this" and "this should work" are not sources. A capture is a
+   source, ASURA's code is a source, `docs/game-rules.md` is a source. A belief is not.
+4. **No fixing in place.** A port that misbehaves is compared, line by line and frame by frame, with
+   the ASURA code it came from. The difference is found and removed; nothing is invented to paper over
+   it.
+5. **A missing counterpart is a stop, not a guess.** Where ASURA has no code for something, this tree
+   says so and asks the owner. It does not write its own version first and reconcile later.
+6. **A port is whole.** A subject arrives with every part ASURA gives it - every frame, every handler,
+   every branch, the settings it reads, the data it carries - not with the slice a first run happened
+   to need. A subject that is only partly ported is declared *ported thin* in
+   `docs/port/09-parity-audit.md`, in the same commit that makes it so.
+7. **The audit is the ledger of this rule.** `docs/port/09-parity-audit.md` holds every message and
+   every subject with a verdict - ported, ported thin, ours, missing. Anything marked **ours** is a
+   defect of this rule and is removed by porting the ASURA code, not by improving ours. The audit is
+   updated in the same commit as any change to what it lists.
+
+A session that has not read `docs/port/09-parity-audit.md` is not ready to write code that faces the
+client.
+
+## The one sentence
+
+**AzerothCore's server, in Rust, serving Guild Wars.**
 
 A new session starts here, then reads `docs/port/01-structure.md`: what runs today, what proves it, and
 what the next piece is. Every claim there is a statement of today, updated in the same commit as the
@@ -18,8 +56,9 @@ Guild Wars in place of Azeroth.
 |---|---|
 | the design authority | `C:\Users\Apo\Documents\GitHub\WowWarband`, `github.com/mod-playerbots/azerothcore-wotlk` at `30a36ec4d`. Where a file goes, what a program starts, how a layer is arranged, what a service owns: this tree answers it. Its measured structure is `docs/port/01-structure.md`. |
 | the game | Guild Wars. Tyria's client, protocol, nouns and content replace Azeroth's. |
-| consulted per question | `C:\Users\Apo\Documents\GitHub\ASURA` at `ca9f532`, a previous server for this client, declared failed. Opened only when one specific in-game fact is needed - what this client sends, expects or does. Never for design, structure, process or planning. Its documents describe its own function; they are not rules here. |
+| consulted per question | `C:\Users\Apo\Documents\GitHub\ASURA` at `ca9f532`, a previous server for this client. **Under Rule 0 it is the authority for the protocol and for everything the client can see or do**: every message, field, length, ordering and handler step is ported from it 1:1, and it is opened before any client-facing code is written. What it is *not* the authority for is this tree's structure - where a file goes, what a program starts, how a layer is arranged - which stays the reference's. Its documents describe its own function; they are not rules here. |
 | how the game works, described | **`docs/game-rules.md`** - the owner's game-rules ledger: 58 asserted rules and 220 evidenced facts, by subject (travel, districts and instances; party, heroes and henchmen; items and commerce; quests and missions; characters, skills and movement; chat; death and morale; guilds; aggro and monster AI; titles; combat numbers; merchants). Recovered from ASURA's history and kept here because it is the description this port is measured against. Read the subject before porting it; `docs/port/06-world-plan.md` maps each subject to the noun that owns it. |
+| the ledger of Rule 0 | **`docs/port/09-parity-audit.md`** - every message in both directions and every subject in ASURA's tree, with what this tree has, where, and a verdict: ported, ported thin, ours, missing. Read it before writing anything that faces the client, and update it in the same commit as any change to what it lists. |
 
 When the reference and another source disagree about design, the reference wins. When the question
 is what the client sends or expects, the client wins, and the captures in `recordings/` are where that
