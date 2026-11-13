@@ -247,12 +247,14 @@ setting that selects one.
 1. **The movement family is ported and the graph it walks on is not.** The five frames and their
    `_live` forms, `AgentState`, `densify`, the cadence, the tolerance and the four handlers are
    `ASURA`'s; the tick carries elapsed time. The **archive is ported** (`game/Pack/`): the index
-   (`Gwdat.rs`) turns a file id into an entry - this machine's `Gw.dat` holds 156,315 of them - and the
+   (`Gwdat.rs`) turns a file id into an entry - this machine's `Gw.dat` holds 156,315 of them - the
    decoder (`FaCompress.rs`) turns a compressed entry into bytes, proved against three real map blobs
-   that decode to exactly the size they announce and start with the RIFF signature `ffna`. What is
-   still missing is everything above them - the map blob's parse (`map_data.rs`), the path tables
-   (`path_tables.rs`) and the finder (`pathfind.rs`) - so every walk is answered exactly as the working
-   implementation answers a map it holds no graph for: `NoGraph`, and nothing on the wire.
+   that decode to exactly the size they announce and start with the RIFF signature `ffna`, and the
+   reference's table-driven arithmetic (`Terrain/PathTables.rs`: `PathReciproc` and `PathSqrt`, 256
+   entries each, checked entry for entry) is in, because the search's costs come out of it. What is
+   still missing is the map blob's parse (`map_data.rs`) and the finder (`pathfind.rs`), so every walk
+   is answered exactly as the working implementation answers a map it holds no graph for: `NoGraph`, and
+   nothing on the wire.
 2. **The items block goes without `0x015E`** (the low-detail item), and so does ASURA's: the message is
    observed in a capture and emitted by neither implementation, so it is not this tree's to invent.
 3. **The instance table is ported thin**: ASURA's batch shape goes on the wire, and its content is the
@@ -267,9 +269,9 @@ setting that selects one.
 ## 8. The order this audit imposes
 
 1. The map's path graph, which is what the ported movement family asks: `map_data.rs` (the blob's own
-   parse), then `path_tables.rs` and `pathfind.rs` out of ASURA, on top of the archive that is now
-   ported. Until they land a walk is refused with `NoGraph` - the working implementation's own answer
-   for a map with no graph - and nothing else about movement is outstanding.
+   parse) and then `pathfind.rs`, on top of the archive and the arithmetic that are now ported. Until
+   they land a walk is refused with `NoGraph` - the working implementation's own answer for a map with
+   no graph - and nothing else about movement is outstanding.
 2. The instance table's content: an `instance_value` on every map row the world hosts.
 3. The settings uploads, decoded rather than acknowledged - the last client message family that is
    answered with a status and no data.

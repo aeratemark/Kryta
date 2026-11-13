@@ -13,4 +13,8 @@
 #[path = "Pathfind.rs"]
 pub mod pathfind;
 
+#[path = "PathTables.rs"]
+pub mod path_tables;
+
+pub use path_tables::{path_reciproc, path_sqrt};
 pub use pathfind::{Graphs, Pos, Walk, Waypoint};
