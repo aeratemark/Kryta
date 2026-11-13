@@ -535,6 +535,20 @@ Two crates beside it carry rules the login and the world both use:
 | `asura-rules/src/lib.rs` | 283 | `game/Maps/Placement.rs` | ported whole; its one datum is 7a's decision |
 | `asura-auth/src/lib.rs` + `travel.rs` | 933 + 339 | `authserver/src/Server/` | ported: the 15 auth messages, the file check, the portal login, the travel record |
 
+**The catalogue, measured on this machine.** `cargo test -p game --lib every_hosted_map -- --ignored --nocapture`
+imports all 144 graphs out of `Gw.dat` and asks every hosted map with a spawn point to walk from one of its
+own points to a nearby one: **136 of 138 walk**, none answers `NoGraph`, and the two that refuse are
+`119` (Augury Rock mission) and `642` (Eye of the North outpost). Both are `unplaced` records whose
+`spawns.json` states no plane, so the row says plane 0 while the point lies on plane 21 and 22
+(`trapezoid_at` finds it there) - and ASURA reads the same 0 (`map_spawns.rs:36-38`,
+`#[serde(default)]`), so it refuses at that point too. A spawn file that omits its plane is a pack
+defect, not a rule to invent around.
+
+**An entry's facing is `(1, 0)` when its point states no angle.** `map_spawns.rs:44-53`: a point with no
+`angle` keeps `(1, 0)`, which is the vector `GAME_SMSG_WORLD_CREATE_AGENT` carries. This tree faced the
+neutral `+y` until round 18; both the spawn's own direction and the agent's create message now use the
+point's stated angle, or `(1, 0)`.
+
 **What is not ported, and why - all three are stops, not gaps:**
 
 - **NPCs and monsters.** ASURA creates exactly one agent per connection - the player's own

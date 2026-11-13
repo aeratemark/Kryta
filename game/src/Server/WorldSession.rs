@@ -2596,7 +2596,8 @@ impl WorldSession {
                                         point.2,
                                         // A doorway crossing hands its arrival's facing over, and
                                         // every other entry faces the direction its spawn point
-                                        // states (`Standing::at_spawn`, `agent.rs:460-476`).
+                                        // states (`Standing::at_spawn`, `agent.rs:460-476`; a point
+                                        // with no angle keeps `(1, 0)`, `map_spawns.rs:44-53`).
                                         point.3,
                                         self.settings.agent_speed,
                                     ));
@@ -2642,6 +2643,9 @@ impl WorldSession {
                             .map(|point| (point.0, point.1))
                             .unwrap_or((0.0, 0.0));
                         let plane = entry.map(|point| point.2).unwrap_or(0);
+                        // The entry point's own facing (its spawn point's angle, or a doorway arrival's),
+                        // and `(1, 0)` when it states none - `map_spawns.rs:44-53`.
+                        let direction = entry.map(|point| point.3).unwrap_or((1.0, 0.0));
                         // The look the client builds the model from: the character's own bits, or the
                         // world's default when its row carries none (an all-zero word is
                         // `Profession_None`, which the client cannot draw).
@@ -2804,11 +2808,10 @@ impl WorldSession {
                                 agent_type: agent_packets::AGENT_TYPE_LIVING,
                                 position,
                                 plane,
-                                // Our spawn rows carry no facing yet: the reference's own create
-                                // message carries a unit vector (measured: -0.995, -0.104 on one
-                                // body), and an agent with no direction is not a thing the client
-                                // draws, so the neutral +y stands in until the angle is a column.
-                                direction: (0.0, 1.0),
+                                // The direction the entry point states - the spawn point's own angle, or
+                                // a doorway arrival's, or `(1, 0)` when the row states neither
+                                // (`ASURA/crates/asura-world/src/map_spawns.rs:44-53`).
+                                direction,
                                 speed_base: self.settings.agent_speed,
                                 player_team_token: PLAYER_TEAM_TOKEN,
                             },

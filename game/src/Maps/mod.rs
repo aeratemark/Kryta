@@ -57,12 +57,13 @@ pub struct MapSpawn {
 }
 
 impl MapSpawn {
-    /// The direction vector the agent is created facing: `(cos, sin)`, or the neutral `+y`, which is
-    /// what a row that states no angle keeps.
+    /// The direction vector the agent is created facing: the angle as `(cos, sin)`, which is the
+    /// unit-vector form `GAME_SMSG_WORLD_CREATE_AGENT` carries. A point with no angle keeps `(1, 0)`,
+    /// which is what `ASURA/crates/asura-world/src/map_spawns.rs:44-53` answers.
     pub fn direction(&self) -> (f32, f32) {
         match self.angle {
             Some(angle) => (angle.cos(), angle.sin()),
-            None => (0.0, 1.0),
+            None => (1.0, 0.0),
         }
     }
 }

@@ -454,6 +454,177 @@ mod tests {
         assert_eq!(destination_only.label(), "map 4", "an unnamed map names its id");
     }
 
+    /// The catalogue's own test: every map this world hosts, walked from one of its own spawn points.
+    ///
+    /// This is what "the catalogue is wired" means in practice - a row with a type and an archive file,
+    /// a spawn point to stand on (R13), and a path graph the finder answers from. It needs the world
+    /// database and this machine's `Gw.dat`, so it is `#[ignore]`d; run it with
+    /// `cargo test -p game --lib every_hosted_map -- --ignored --nocapture`.
+    ///
+    /// A map is counted as walkable when **any** of its own spawn points reaches any of a few nearby
+    /// candidate points: a spawn outside the geometry, or a blob that does not import, is a real answer
+    /// (`NoGraph`/`NoPath`) and not a test failure - the tally is the statement.
+    #[test]
+    #[ignore = "needs the world database and a local Gw.dat"]
+    fn every_hosted_map_walks_from_one_of_its_own_spawn_points() {
+        use common::configuration::{Config, Policy};
+        use database::database::{read_settings, DatabaseKind};
+
+        let log = Log::new();
+        let Some(config) =
+            Config::load_json("../worldserver/worldserver.json", false, Policy::default()).ok()
+        else {
+            panic!("the world program's own configuration reads");
+        };
+        let settings = read_settings(&config, DatabaseKind::World).expect("the world settings");
+        let mut pool = database::database::DatabaseWorkerPool::open(DatabaseKind::World, &settings, &log)
+            .expect("the world pool opens");
+        pool.ping().expect("the world database answers");
+        let repository = crate::maps::DatabaseMaps::new(
+            std::sync::Arc::new(std::sync::Mutex::new(pool)),
+            log.clone(),
+        );
+        let (records, spawns) = repository.load().expect("the map tables read");
+        let arch_list = repository.arches().expect("the arch rows read");
+        let mut world = World::new(2);
+        world.set_maps(records, spawns);
+        world.set_portals(crate::maps::Portals::new(arch_list, 250.0));
+
+        let (archive, _) = config
+            .value_string("GwDat", "Gw.dat")
+            .expect("GwDat is a string");
+        let hostable: Vec<MapEntry> = world
+            .maps()
+            .iter()
+            .filter(|map| map.is_hostable())
+            .cloned()
+            .collect();
+        let graphs = crate::terrain::pathfind::PathGraphs::load(&archive, &hostable)
+            .expect("the archive opens");
+
+        let mut walkable = 0;
+        let mut no_graph = Vec::new();
+        let mut refused = Vec::new();
+        for map in &hostable {
+            let points: Vec<crate::maps::MapSpawn> = world
+                .spawns_of(map.id)
+                .into_iter()
+                .filter(|spawn| spawn.plane >= 0)
+                .collect();
+            if points.is_empty() {
+                continue;
+            }
+            let mut found = false;
+            'outer: for point in &points {
+                let from = crate::terrain::Pos {
+                    x: point.x,
+                    y: point.y,
+                    plane: point.plane.max(0) as u16,
+                };
+                let mut candidates: Vec<crate::terrain::Pos> = points
+                    .iter()
+                    .filter(|other| other.x != point.x || other.y != point.y)
+                    .map(|other| crate::terrain::Pos {
+                        x: other.x,
+                        y: other.y,
+                        plane: other.plane.max(0) as u16,
+                    })
+                    .collect();
+                for (dx, dy) in [
+                    (10.0f32, 0.0f32),
+                    (0.0, 10.0),
+                    (-10.0, 0.0),
+                    (0.0, -10.0),
+                    (200.0, 0.0),
+                    (0.0, 200.0),
+                ] {
+                    candidates.push(crate::terrain::Pos {
+                        x: point.x + dx,
+                        y: point.y + dy,
+                        plane: from.plane,
+                    });
+                }
+                for to in candidates {
+                    match graphs.walk(map.id as i32, from, to) {
+                        crate::terrain::Walk::Found(waypoints) if !waypoints.is_empty() => {
+                            found = true;
+                            break 'outer;
+                        }
+                        crate::terrain::Walk::NoGraph => {
+                            no_graph.push(map.id);
+                            break 'outer;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if found {
+                walkable += 1;
+            } else if !no_graph.contains(&map.id) {
+                refused.push(map.id);
+            }
+        }
+        // Why a map refused: does its own spawn point land in a trapezoid at all? That separates "the
+        // point is outside the geometry" from "the finder refused a route", which are different faults.
+        let mut reasons: Vec<String> = Vec::new();
+        if !refused.is_empty()
+            && let Ok(mut archive) = crate::pack::GwDat::open(&archive)
+        {
+            for id in &refused {
+                    let Some(map) = hostable.iter().find(|map| map.id == *id) else {
+                        continue;
+                    };
+                    let reason = match archive.file(map.file_id) {
+                        Ok(Some(blob)) => match crate::terrain::map_data::PathStaticData::import(&blob) {
+                            Ok(data) => {
+                                let mut lands = None;
+                                for plane in 0..data.planes.len().min(256) {
+                                    let point = world.spawns_of(*id).first().map(|s| (s.x, s.y));
+                                    if let Some((x, y)) = point
+                                        && data
+                                            .trapezoid_at(crate::terrain::Vec2f { x, y }, plane as u16)
+                                            .is_some()
+                                    {
+                                        lands = Some(plane);
+                                        break;
+                                    }
+                                }
+                                format!(
+                                    "{} plane(s), {} trapezoid(s), spawn lands on plane {lands:?}",
+                                    data.planes.len(),
+                                    data.traps_count
+                                )
+                            }
+                            Err(err) => format!("the blob is refused: {err}"),
+                        },
+                        Ok(None) => "no such entry in the archive".to_string(),
+                        Err(err) => format!("the entry cannot be read: {err}"),
+                    };
+                reasons.push(format!("map {id}: {reason}"));
+            }
+        }
+        let with_spawns = hostable
+            .iter()
+            .filter(|map| !world.spawns_of(map.id).is_empty())
+            .count();
+        eprintln!(
+            "catalogue: {walkable} of {with_spawns} hosted map(s) with spawn points walk from one of their own points; {} answered NoGraph, {} refused every candidate ({refused:?})",
+            no_graph.len(),
+            refused.len()
+        );
+        for reason in &reasons {
+            eprintln!("  {reason}");
+        }
+        assert!(
+            walkable + no_graph.len() + refused.len() >= with_spawns,
+            "every map is accounted for"
+        );
+        assert!(
+            walkable * 10 >= with_spawns * 9,
+            "at least nine in ten hosted maps walk: {walkable} of {with_spawns} (NoGraph: {no_graph:?}, refused: {refused:?})"
+        );
+    }
+
     /// What the world program does at start-up: the graphs are imported for the maps it hosts, and a
     /// walk asked through the world is answered from them - map 148 from its own spawn point to a point
     /// beside it, and a map the archive holds no graph for with `NoGraph`.
