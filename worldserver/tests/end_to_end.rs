@@ -1120,3 +1120,252 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         std::panic::resume_unwind(panic);
     }
 }
+
+/// A map that arrived with the catalogue import loads through the same protocol map 148 does.
+///
+/// The catalogue is content - 265 rows, 145 of them hosted - and 148 is the one map the schema seeded by
+/// hand. This test takes a second one, **163 The Barradin Estate** (file id 380713, two spawn points of
+/// its own), and loads it the way a client does: a character created through the creation screen, R12's
+/// unlock written for the destination as a scripted travel would, a travel record for the login to have
+/// written, and the connection that presents it. What it pins is that the row's own file id reaches
+/// `0x0196` and that the point the world scatters is one of that map's own (R13).
+#[test]
+#[ignore = "needs the databases the world program's configuration names"]
+fn a_second_outpost_loads_with_its_own_file_id_and_a_point_of_its_own_list() {
+    const MAP: u32 = 163;
+    let name = "E2E Kryta Two";
+    let token: u32 = 0x4242;
+    let (mut child, lines, port) = start_world();
+    println!("the world program is listening on port {port}");
+    let (characters, world_pool, login) = open_pools();
+
+    let account = [0x99u8; 16];
+    let account_text = game::characters::uuid_text(&account);
+    let (character, _written) = create_character(port, account, name);
+    let uuid_text = game::characters::uuid_text(&character);
+
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // What the world's own row says about the destination: the archive file and the points.
+        let (file_id, spawn_points): (i64, Vec<(f64, f64)>) = {
+            let mut pool = world_pool.lock().unwrap();
+            let row = pool
+                .query_with(
+                    "SELECT \"file_id\"::bigint FROM \"map\" WHERE \"id\" = $1::bigint::int",
+                    &[&(MAP as i64)],
+                )
+                .expect("the map row reads")
+                .into_iter()
+                .next()
+                .expect("map 163 is in the catalogue");
+            let file_id: i64 = row.get(0);
+            let points = pool
+                .query_with(
+                    "SELECT \"x\"::text::float8, \"y\"::text::float8 FROM \"map_spawn\" \
+                     WHERE \"map_id\" = $1::bigint::int ORDER BY \"idx\"",
+                    &[&(MAP as i64)],
+                )
+                .expect("the spawn rows read")
+                .iter()
+                .map(|row| (row.get::<usize, f64>(0), row.get::<usize, f64>(1)))
+                .collect();
+            (file_id, points)
+        };
+        assert!(
+            spawn_points.len() >= 2,
+            "map {MAP} states its own points: {spawn_points:?}"
+        );
+
+        // R12: a character starts with one unlock. The unlock a scripted travel grants at arrival is
+        // written here, because a second outpost is not reachable any other way yet.
+        let repository = game::characters::DatabaseCharacters::new(Arc::clone(&characters), Log::new());
+        assert!(
+            repository.unlock_map(&uuid_text, MAP).expect("the unlock writes"),
+            "the unlock row is written"
+        );
+
+        // The hand-off the login writes when it answers a map request, and the connection that
+        // presents it: map 163, district 1, language 0.
+        game::maps::DatabaseTravels::new(Arc::clone(&login), Log::new())
+            .record(&game::maps::Travel {
+                account,
+                world: 2,
+                map_id: MAP,
+                district: 1,
+                language: 0,
+                player_token: token,
+                landing: None,
+            })
+            .expect("the travel is recorded");
+
+        let version = GameVersion {
+            version: 39167,
+            h0008: 1,
+            map_token: 2,
+            map_id: MAP,
+            player_token: token,
+            account,
+            character,
+            h0038: 0,
+            h003c: 0,
+        };
+        let (mut stream, mut reading, mut sending) = open_connection(port, version);
+
+        // The load's head, read by size rather than by the table's walker: the `0x01A0` row states a
+        // `NestedStruct` of sixteen-byte units (`Tables.rs`, the row is ASURA's own) while the frame
+        // carries `u8` count and six-byte pairs, so a walker cannot split it. The pairs come from the
+        // same builder the world used.
+        let table_batches = {
+            let mut pool = world_pool.lock().unwrap();
+            let row = pool
+                .query_with(
+                    "SELECT count(*)::bigint FROM \"map\" WHERE \"instance_value\" IS NOT NULL",
+                    &[],
+                )
+                .expect("the catalogue counts")
+                .into_iter()
+                .next()
+                .expect("one row");
+            let pairs: i64 = row.get(0);
+            (pairs as usize).div_ceil(15)
+        };
+        let table_bytes = {
+            let mut pool = world_pool.lock().unwrap();
+            let rows = pool
+                .query_with(
+                    "SELECT \"id\"::bigint, \"instance_value\"::bigint FROM \"map\" \
+                     WHERE \"instance_value\" IS NOT NULL ORDER BY \"id\"",
+                    &[],
+                )
+                .expect("the pairs read");
+            let pairs: Vec<(u16, u32)> = rows
+                .iter()
+                .filter_map(|row| {
+                    let id: i64 = row.get(0);
+                    let value: i64 = row.get(1);
+                    u16::try_from(id).ok().map(|id| (id, value as u32))
+                })
+                .collect();
+            pairs
+                .chunks(15)
+                .map(instance_packets::instance_table)
+                .map(|frame| frame.len())
+                .sum::<usize>()
+        };
+        // The block the program says it sent is the block that arrives: it logs the size before it
+        // writes, so reading that many bytes is exact - and it is the program's own statement, not
+        // this test's arithmetic.
+        let announced = wait_for(&lines, "is loading - ", Duration::from_secs(30));
+        let block_bytes: usize = announced
+            .split(" message(s), ")
+            .nth(1)
+            .and_then(|rest| rest.split(" bytes").next())
+            .and_then(|count| count.trim().parse().ok())
+            .unwrap_or_else(|| panic!("the load's size is in its log line: {announced}"));
+        println!(
+            "the load of map {MAP}: {block_bytes} byte(s), {table_batches} table batch(es), {} of them the table",
+            table_bytes
+        );
+        let mut block = read_exact(&mut stream, block_bytes);
+        reading.apply(&mut block);
+        let name_size = instance_packets::instance_load_player_name(name).len();
+        let record_at = instance_packets::instance_load_head().len()
+            + instance_packets::instance_player_data_start().len()
+            + name_size;
+        assert_eq!(
+            &block[..2],
+            &[0x7C, 0x01],
+            "the outpost's load head, not the creation instance's"
+        );
+        assert_eq!(
+            &block[record_at..record_at + 2],
+            &[0x9A, 0x01],
+            "the instance's record follows the character's name"
+        );
+        assert_eq!(
+            u16::from_le_bytes([block[record_at + 6], block[record_at + 7]]),
+            MAP as u16,
+            "the instance's record names the map the travel did"
+        );
+        assert_eq!(
+            block[record_at + 8],
+            1,
+            "and the explorable byte the reference hardcodes"
+        );
+        // The instance table closes the block: `u8` count and six bytes a pair, fifteen to a batch.
+        let table_start = block_bytes - table_bytes;
+        assert_eq!(
+            &block[table_start..table_start + 2],
+            &[0xA0, 0x01],
+            "the instance table follows the grid"
+        );
+        assert_eq!(block[table_start + 2], 15, "a batch holds fifteen pairs");
+        // The pairs are in map-id order, so the first is the lowest record that states a value.
+        assert_eq!(
+            u16::from_le_bytes([block[table_start + 3], block[table_start + 4]]),
+            4,
+            "the first pair is the lowest map id with an instance value"
+        );
+
+        // The ping pair the measured load follows the head block with.
+        let mut ping = read_exact(&mut stream, 8);
+        reading.apply(&mut ping);
+        assert_eq!(&ping[..2], &[0x0C, 0x00], "the ping request");
+        assert_eq!(&ping[2..4], &[0x0D, 0x00], "and the reply the measured load pairs it with");
+        assert_eq!(
+            u32::from_le_bytes([ping[4], ping[5], ping[6], ping[7]]),
+            20,
+            "the reply carries the world ping value (World.PingValue)"
+        );
+
+        // The entry point: this map's own archive file, and a point of its own list (R13).
+        let mut ask = vec![0x88, 0x80];
+        sending.apply(&mut ask);
+        stream.write_all(&ask).expect("the spawn ask");
+        let mut spawn = read_exact(&mut stream, 26);
+        reading.apply(&mut spawn);
+        assert_eq!(&spawn[..2], &[0x96, 0x01], "the entry position");
+        assert_eq!(
+            i64::from(u32::from_le_bytes([spawn[2], spawn[3], spawn[4], spawn[5]])),
+            file_id,
+            "map {MAP}'s own archive file, from its catalogue row"
+        );
+        let x = f32::from_le_bytes([spawn[6], spawn[7], spawn[8], spawn[9]]) as f64;
+        let y = f32::from_le_bytes([spawn[10], spawn[11], spawn[12], spawn[13]]) as f64;
+        let near = spawn_points
+            .iter()
+            .any(|(px, py)| (x - px).abs() <= 250.0 && (y - py).abs() <= 250.0);
+        assert!(
+            near,
+            "the point ({x}, {y}) is one of map {MAP}'s own, scattered (R13): {spawn_points:?}"
+        );
+        println!("map {MAP}: {name} stands at ({x}, {y})");
+    }));
+
+    // Cleanup: the character, its unlocks, and the travel row if the claim never happened.
+    {
+        let mut pool = characters.lock().unwrap();
+        for statement in [
+            "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1",
+            "DELETE FROM \"character_unlock\" WHERE \"character_uuid\" = $1",
+            "DELETE FROM \"characters\" WHERE \"uuid\" = $1",
+        ] {
+            let _ = pool.query_with(statement, &[&uuid_text]);
+        }
+    }
+    if let Ok(mut pool) = login.lock() {
+        let _ = pool.query_with(
+            "DELETE FROM \"travel\" WHERE \"account\" = $1",
+            &[&account_text],
+        );
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    // What the program said while this ran: the lines after its READY, which is where a refusal is.
+    while let Ok(line) = lines.try_recv() {
+        println!("world> {line}");
+    }
+
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
