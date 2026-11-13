@@ -495,8 +495,8 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         );
         assert_eq!(
             &block[name_at + name_size..name_at + name_size + 16],
-            instance_packets::instance_load_info(1, 148, 0, 1, 0, 0).as_slice(),
-            "the instance's record: map 148, an outpost, district 1"
+            instance_packets::instance_load_info(1, 148, 1, 1, 0, 0).as_slice(),
+            "the instance's record: map 148, the explorable byte 1 the reference hardcodes, district 1"
         );
         // And the grid: the announcement, then one slice of the compressed bands - every band empty,
         // which is what a character that has explored nothing has.
