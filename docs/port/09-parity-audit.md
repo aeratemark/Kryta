@@ -348,10 +348,13 @@ road.
    is built on, `PathStaticData::trapezoid_at` (the `PathFindTrapezoid` split walk, `GmPaths.c:11`) and
    `trapezoids()`. Tests green: the heap's cost order, `precise_cross`'s near-parallel rule, the split
    walk down a plane's nodes to its leaf, and the pre-existing shim's. Trapezoid predicates are exercised
-   by real graphs, not by invented ones. **Left**: lines **558-1794** - `add_node`, `visit_trap`,
-   `visit_above`, `visit_bellow`, `visit_portal`, `path_finding`, `Bound`, `BuildHelper`, `PathGraphs`
-   (`load`, `from_dump`, `bind`, `import`, `walk`, `walk_direction`, `walk_any_plane`), `import_graph`,
-   `find_path_blob` - and all of `pathfind/directional.rs` (320 lines).
+   by real graphs, not by invented ones; then lines **559-777** - the search's single expansion:
+   `add_node`, `visit_trap` (the 0.01 estimate nudge kept), `visit_above`, `visit_bellow`, `visit_portal`
+   (the pair's mirror asserted, the `0x4` flag refused, the corner choice by `left`, and the entry point
+   from `pick_next_point`). **Left**: lines **779-1794** - `path_finding` itself, `Bound`,
+   `BuildHelper`, `PathGraphs` (`load`, `from_dump`, `bind`, `import`, `walk`, `walk_direction`,
+   `walk_any_plane`), `import_graph`, `find_path_blob` - and all of `pathfind/directional.rs` (320
+   lines).
 4. **The importer** in `map_data.rs` last, only so this machine can produce a dump from its own
    `Gw.dat`; the world's start-up then loads a dump the way ASURA does.
 

@@ -568,6 +568,232 @@ impl PathContext {
         let count = u16::try_from(self.data.planes.len()).ok()?;
         (0..count).find(|plane| self.data.trapezoid_at(point, *plane).is_some())
     }
+
+    // -----------------------------------------------------------------------------------------
+    // ASURA/crates/asura-world/src/pathfind.rs, lines 559-777: one expansion of the search - the
+    // node it queues, the neighbour it costs through a crossing, and the three ways a neighbour is
+    // reached (above, bellow, through a portal). `PathFinding` itself (line 779 on) is next.
+    // -----------------------------------------------------------------------------------------
+
+    /// `PathAddNode`: record the cost of reaching `trap` and queue it.
+    fn add_node(
+        &mut self,
+        parent: Option<u32>,
+        trap: u32,
+        pos: Pos,
+        current_cost: f32,
+        estimated_cost: f32,
+    ) {
+        let node = &mut self.nodes[trap as usize];
+        node.closed = false;
+        node.cost_to_node = current_cost;
+        node.point.pos = pos;
+        node.point.trap = trap;
+        node.next = parent;
+        heap_push(
+            &mut self.prioq,
+            HeapNode {
+                cost: estimated_cost,
+                trap_id: trap,
+            },
+        );
+    }
+
+    /// `PathVisitTrap`: cost a neighbour reached through a crossing point.
+    fn visit_trap(
+        &mut self,
+        curr_node: u32,
+        dst_pos: Vec2f,
+        neighbour: u32,
+        cross_pos: Pos,
+        max_cost: f32,
+    ) {
+        let current = self.nodes[curr_node as usize];
+        let distance = vec2f_dist(current.point.pos.v2(), cross_pos.v2());
+        let cost_to_trap = current.cost_to_node + distance;
+
+        if max_cost <= cost_to_trap {
+            return;
+        }
+
+        let trap = self.trap(neighbour);
+
+        let bottom_point = Vec2f {
+            x: clampf(dst_pos.x, trap.xbl, trap.xbr),
+            y: trap.yb,
+        };
+        let estimated_dest_bottom = vec2f_dist(bottom_point, dst_pos);
+
+        let top_point = Vec2f {
+            x: clampf(dst_pos.x, trap.xtl, trap.xtr),
+            y: trap.yt,
+        };
+        let estimated_dest_top = vec2f_dist(top_point, dst_pos);
+
+        let mut best_estimate = estimated_dest_bottom.min(estimated_dest_top);
+        if trap.yb <= dst_pos.y && dst_pos.y <= trap.yt {
+            // The reference subtracts `0.009999999776482582`, the double nearest the float 0.01.
+            best_estimate -= 0.01;
+        }
+
+        let estimated_cost = cost_to_trap + best_estimate;
+        self.add_node(
+            Some(curr_node),
+            neighbour,
+            cross_pos,
+            cost_to_trap,
+            estimated_cost,
+        );
+    }
+
+    /// `PathVisitAbove`.
+    fn visit_above(&mut self, curr_node: u32, dst_pos: Vec2f, neighbour: u32, max_cost: f32) {
+        let trap = self.trap(self.nodes[curr_node as usize].point.trap);
+        let next = self.trap(neighbour);
+        let xl = next.xbl.max(trap.xtl);
+        let xr = next.xbr.min(trap.xtr);
+        let src = self.nodes[curr_node as usize].point.pos;
+        let crossing = find_point_on_next_trap(xl, xr, next.yb, src.v2(), dst_pos);
+        self.visit_trap(
+            curr_node,
+            dst_pos,
+            neighbour,
+            Pos {
+                x: crossing.x,
+                y: crossing.y,
+                plane: src.plane,
+            },
+            max_cost,
+        );
+    }
+
+    /// `PathVisitBellow`.
+    fn visit_bellow(&mut self, curr_node: u32, dst_pos: Vec2f, neighbour: u32, max_cost: f32) {
+        let trap = self.trap(self.nodes[curr_node as usize].point.trap);
+        let next = self.trap(neighbour);
+        let xl = next.xtl.max(trap.xbl);
+        let xr = next.xtr.min(trap.xbr);
+        let src = self.nodes[curr_node as usize].point.pos;
+        let crossing = find_point_on_next_trap(xl, xr, next.yt, src.v2(), dst_pos);
+        self.visit_trap(
+            curr_node,
+            dst_pos,
+            neighbour,
+            Pos {
+                x: crossing.x,
+                y: crossing.y,
+                plane: src.plane,
+            },
+            max_cost,
+        );
+    }
+
+    /// `PathVisitPortalLeft` (and, with `left` false, `PathVisitPortalRight`): the trapezoids on the far
+    /// side of a portal, entered where the walk's line crosses the portal's own edge.
+    fn visit_portal(
+        &mut self,
+        curr_node: u32,
+        dst_pos: Vec2f,
+        portal_id: u16,
+        left: bool,
+        max_cost: f32,
+    ) {
+        let src = self.nodes[curr_node as usize].point.pos;
+        let Some(portal) = self.portal(src.plane, usize::from(portal_id)) else {
+            return;
+        };
+        // The reference dereferences `portal->pair` and asserts it is the mirror; a portal without one is
+        // a crash there, so refusing here is the closest thing to parity that does not abort.
+        let Some(pair) = portal.pair else {
+            return;
+        };
+        let Some(pair_portal) = self.portal(pair.0, pair.1) else {
+            return;
+        };
+        debug_assert_eq!(pair_portal.portal_plane_id, portal.neighbor_plane_id);
+        debug_assert_eq!(pair_portal.neighbor_plane_id, portal.portal_plane_id);
+
+        if (portal.flags & 0x4) != 0 {
+            return;
+        }
+
+        let traps = self.portal_pair_traps(&pair_portal);
+        let curr_trap = self.trap(self.nodes[curr_node as usize].point.trap);
+
+        for portal_trap in traps {
+            if self.nodes[portal_trap as usize].closed {
+                continue;
+            }
+            let trap = self.trap(portal_trap);
+
+            // The top point is the higher of the two trapezoids' top edges on the side the portal is on;
+            // the bottom point is the lower of the two bottom edges. `left` picks which corner.
+            let (top, bottom) = if left {
+                let top = if trap.yt <= curr_trap.yt {
+                    Vec2f {
+                        x: trap.xtr,
+                        y: trap.yt,
+                    }
+                } else {
+                    Vec2f {
+                        x: curr_trap.xtl,
+                        y: curr_trap.yt,
+                    }
+                };
+                let bottom = if curr_trap.yb <= trap.yb {
+                    Vec2f {
+                        x: trap.xbr,
+                        y: trap.yb,
+                    }
+                } else {
+                    Vec2f {
+                        x: curr_trap.xbl,
+                        y: curr_trap.yb,
+                    }
+                };
+                (top, bottom)
+            } else {
+                let top = if trap.yt <= curr_trap.yt {
+                    Vec2f {
+                        x: trap.xtl,
+                        y: trap.yt,
+                    }
+                } else {
+                    Vec2f {
+                        x: curr_trap.xtr,
+                        y: curr_trap.yt,
+                    }
+                };
+                let bottom = if curr_trap.yb <= trap.yb {
+                    Vec2f {
+                        x: trap.xbl,
+                        y: trap.yb,
+                    }
+                } else {
+                    Vec2f {
+                        x: curr_trap.xbr,
+                        y: curr_trap.yb,
+                    }
+                };
+                (top, bottom)
+            };
+
+            if bottom.y <= top.y {
+                let crossing = pick_next_point(top, bottom, src.v2(), dst_pos);
+                self.visit_trap(
+                    curr_node,
+                    dst_pos,
+                    portal_trap,
+                    Pos {
+                        x: crossing.x,
+                        y: crossing.y,
+                        plane: pair_portal.portal_plane_id,
+                    },
+                    max_cost,
+                );
+            }
+        }
+    }
 }
 
 /// What the finder said about a walk.
