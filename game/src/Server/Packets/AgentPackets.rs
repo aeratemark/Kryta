@@ -25,6 +25,16 @@ pub const AGENT_UPDATE_MORALE: u16 = 0x009C;
 pub const AGENT_INITIAL_EFFECTS: u16 = 0x00F0;
 /// `GAME_SMSG_WORLD_UPDATE_CONTROLLED_AGENT` (`0x0022`): which agent this client drives.
 pub const WORLD_UPDATE_CONTROLLED_AGENT: u16 = 0x0022;
+/// `GAME_SMSG_AGENT_UPDATE_DIRECTION` (`0x0025`): an agent's facing, as a unit vector.
+pub const AGENT_UPDATE_DIRECTION: u16 = 0x0025;
+/// `GAME_SMSG_AGENT_STOP_MOVING` (`0x0028`): the agent is no longer walking.
+pub const AGENT_STOP_MOVING: u16 = 0x0028;
+/// `GAME_SMSG_AGENT_MOVE_TO_POINT` (`0x0029`): the agent is walking to a destination.
+pub const AGENT_MOVE_TO_POINT: u16 = 0x0029;
+/// `GAME_SMSG_AGENT_UPDATE_SPEED` (`0x002B`): the agent's movement type and speed factor.
+pub const AGENT_UPDATE_SPEED: u16 = 0x002B;
+/// `GAME_SMSG_AGENT_UPDATE_POSITION` (`0x002C`): where an agent is, sent to everyone else.
+pub const AGENT_UPDATE_POSITION: u16 = 0x002C;
 
 /// The property an agent's energy is reported through.
 ///
@@ -204,6 +214,127 @@ pub fn world_update_controlled_agent(agent: u32, constant: u32) -> Vec<u8> {
     body.extend_from_slice(&agent.to_le_bytes());
     body.extend_from_slice(&constant.to_le_bytes());
     frame(WORLD_UPDATE_CONTROLLED_AGENT, &body)
+}
+
+/// `GAME_SMSG_AGENT_UPDATE_DIRECTION` (`0x0025`): 15 bytes - the agent, a unit vector, a facing byte.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1391`, `agent_update_direction`.
+pub fn agent_update_direction(agent: u32, direction: (f32, f32), facing: u8) -> (u16, Vec<u8>) {
+    let mut body = Vec::with_capacity(13);
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&direction.0.to_le_bytes());
+    body.extend_from_slice(&direction.1.to_le_bytes());
+    body.push(facing);
+    (AGENT_UPDATE_DIRECTION, frame(AGENT_UPDATE_DIRECTION, &body))
+}
+
+/// `GAME_SMSG_AGENT_UPDATE_SPEED` (`0x002B`): 11 bytes - the agent, a speed factor, a facing byte.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1405`, `agent_update_speed`. The factor is the
+/// movement type's own: 0.66 for 4-6, 0.75 for 7-8, 1.0 otherwise (`agent.rs:234`).
+pub fn agent_update_speed(agent: u32, speed: f32, facing: u8) -> (u16, Vec<u8>) {
+    let mut body = Vec::with_capacity(9);
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&speed.to_le_bytes());
+    body.push(facing);
+    (AGENT_UPDATE_SPEED, frame(AGENT_UPDATE_SPEED, &body))
+}
+
+/// `GAME_SMSG_AGENT_STOP_MOVING` (`0x0028`): 6 bytes - the agent alone.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1475`, `agent_stop_moving`.
+pub fn agent_stop_moving(agent: u32) -> (u16, Vec<u8>) {
+    (
+        AGENT_STOP_MOVING,
+        frame(AGENT_STOP_MOVING, &agent.to_le_bytes()),
+    )
+}
+
+/// `GAME_SMSG_AGENT_MOVE_TO_POINT` (`0x0029`) in the two-byte-header form: 18 bytes - the agent, the
+/// destination, the destination's plane and the plane it is walking from.
+///
+/// `GameSrv_MoveAgentToPoint`; `ASURA/crates/asura-protocol/src/game/mod.rs:1375`,
+/// `agent_move_to_point`. Its `_live` form widens the last two fields to dwords and carries the
+/// waypoint's trap id instead; the working implementation defines that form and sends this one
+/// (`agent.rs:256`, `:271`, `:829`, `instance.rs:376`).
+pub fn agent_move_to_point(
+    agent: u32,
+    destination: (f32, f32),
+    plane: u16,
+    current_plane: u16,
+) -> (u16, Vec<u8>) {
+    let mut body = Vec::with_capacity(16);
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&destination.0.to_le_bytes());
+    body.extend_from_slice(&destination.1.to_le_bytes());
+    body.extend_from_slice(&plane.to_le_bytes());
+    body.extend_from_slice(&current_plane.to_le_bytes());
+    (AGENT_MOVE_TO_POINT, frame(AGENT_MOVE_TO_POINT, &body))
+}
+
+/// `GAME_SMSG_AGENT_MOVE_TO_POINT`, the live form: 24 bytes, `29 00 00 00 | agent | x | y | trap |
+/// plane`.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1422`, `agent_move_to_point_live`. Measured from the
+/// live capture: the upper two bytes of the four-byte game header are zero, then the agent, the
+/// position, the destination waypoint's trap id (zero when the point is not on a trap) and the plane
+/// as a dword. The working implementation defines it and does not send it; so does this tree.
+pub fn agent_move_to_point_live(
+    agent: u32,
+    destination: (f32, f32),
+    trap_id: u32,
+    plane: u32,
+) -> (u16, Vec<u8>) {
+    let mut body = Vec::with_capacity(22);
+    body.extend_from_slice(&0u16.to_le_bytes());
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&destination.0.to_le_bytes());
+    body.extend_from_slice(&destination.1.to_le_bytes());
+    body.extend_from_slice(&trap_id.to_le_bytes());
+    body.extend_from_slice(&plane.to_le_bytes());
+    (AGENT_MOVE_TO_POINT, frame(AGENT_MOVE_TO_POINT, &body))
+}
+
+/// `GAME_SMSG_AGENT_UPDATE_DIRECTION`, the live form: 20 bytes, `25 00 00 00 | agent | dx | dy | 1`.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1441`, `agent_update_direction_live`.
+pub fn agent_update_direction_live(agent: u32, direction: (f32, f32)) -> (u16, Vec<u8>) {
+    let mut body = Vec::with_capacity(18);
+    body.extend_from_slice(&0u16.to_le_bytes());
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&direction.0.to_le_bytes());
+    body.extend_from_slice(&direction.1.to_le_bytes());
+    body.extend_from_slice(&1u32.to_le_bytes());
+    (AGENT_UPDATE_DIRECTION, frame(AGENT_UPDATE_DIRECTION, &body))
+}
+
+/// `GAME_SMSG_AGENT_UPDATE_SPEED`, the live form: 16 bytes, `2b 00 00 00 | agent | 1.0 | mode`.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1454`, `agent_update_speed_live`. The capture shows
+/// 1.0 in every instance, mode 1 when a walk starts and mode 9 when it is cancelled.
+pub fn agent_update_speed_live(agent: u32, speed: f32, mode: u32) -> (u16, Vec<u8>) {
+    let mut body = Vec::with_capacity(14);
+    body.extend_from_slice(&0u16.to_le_bytes());
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&speed.to_le_bytes());
+    body.extend_from_slice(&mode.to_le_bytes());
+    (AGENT_UPDATE_SPEED, frame(AGENT_UPDATE_SPEED, &body))
+}
+
+/// `GAME_SMSG_AGENT_UPDATE_POSITION` (`0x002C`): 16 bytes - the agent, where it is, and the plane.
+///
+/// `GameSrv_BroadcastAgentPosition`; `ASURA/crates/asura-protocol/src/game/mod.rs:1481`,
+/// `agent_update_position`. Sent to everyone *else*: the client that reported the position already
+/// knows it. The working implementation also records that a wrong `0x002C` disconnected the client
+/// with `007` once and teleported it into a wall once, which is why its own walks are answered by
+/// sending nothing when the path is refused.
+pub fn agent_update_position(agent: u32, position: (f32, f32), plane: u16) -> (u16, Vec<u8>) {
+    let mut body = Vec::with_capacity(14);
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&position.0.to_le_bytes());
+    body.extend_from_slice(&position.1.to_le_bytes());
+    body.extend_from_slice(&plane.to_le_bytes());
+    (AGENT_UPDATE_POSITION, frame(AGENT_UPDATE_POSITION, &body))
 }
 
 #[cfg(test)]

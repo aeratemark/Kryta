@@ -89,10 +89,12 @@ const CLIENT_ITEM_DESTROY: u16 = 0x8069;
 /// `GAME_CMSG_EQUIP_ITEM` (`0x8030`): the item to wear.
 const CLIENT_EQUIP_ITEM: u16 = 0x8030;
 
-/// The client's movement reports: `0x803D` carries the direction as well, the others a point.
+/// The client's movement reports: `0x803D` carries the direction as well, `0x803E` the point a walk is
+/// asked for, `0x8047` the stopping point of a cancel, and `0x8028` the cancel itself.
 const CLIENT_MOVE_TO_COORD_WITH_DIR: u16 = 0x803D;
 const CLIENT_MOVE_TO_COORD: u16 = 0x803E;
 const CLIENT_LAST_POS_BEFORE_MOVE_CANCELED: u16 = 0x8047;
+const CLIENT_CANCEL_MOVEMENT: u16 = 0x8028;
 
 /// The client's in-game travel request - `PARTY_TRAVEL`, `0x00B1`, nine bytes (E220, E28).
 const CLIENT_PARTY_TRAVEL: u16 = 0x00B1;
@@ -163,6 +165,9 @@ pub struct WorldSession {
     spawns: Vec<crate::maps::MapSpawn>,
     /// The numbers this world runs by: the spawn scatter and the rest.
     settings: crate::world::world_config::WorldConfig,
+    /// The map's walkable graph, which a walk request is answered from. Empty until the archive reader
+    /// lands, and every lookup then answers \Walk::NoGraph\ (\ASURA/crates/asura-world/src/pathfind.rs\).
+    graphs: crate::terrain::Graphs,
     /// The character database, when the program opened one: a creation screen's confirm writes a row
     /// there. A session without it can draw the screen but cannot finish it.
     characters: Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
@@ -197,6 +202,7 @@ impl WorldSession {
             maps: world.maps().to_vec(),
             spawns: world.spawns().to_vec(),
             settings: world.settings().clone(),
+            graphs: world.graphs().clone(),
             characters: None,
             login: None,
             districts: world.districts(),
@@ -1086,6 +1092,281 @@ impl WorldSession {
             .unwrap_or(fallback)
     }
 
+    /// `GAME_CMSG_MOVE_TO_COORD` (`0x803E`): the agent is asked to walk to a point.
+    ///
+    /// `ASURA/crates/asura-world/src/agent.rs:710` (`handle_move_to_coord`), ported whole: the finder
+    /// is asked for a path from where the agent stands; an empty path sends **nothing** (the
+    /// reference's own `if (0 < agent->waypoints.len)`), and a refusal also sends nothing, because the
+    /// one message that could answer it - `0x002C` with the server's own copy - disconnected a client
+    /// with `007` once and teleported it into a wall once (`agent.rs:864-871`). A path that is found is
+    /// densified to the live cadence (`densify`, `agent.rs:646`) and answered with `0x0029`, which
+    /// every other client in the map is told as well.
+    async fn answer_move_to_coord(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        message: &[u8],
+        crypt: &mut AuthCrypt,
+    ) {
+        let body = &message[2..];
+        if body.len() < 12 {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: a walk request is {} bytes and its point needs 16; it cannot be read.",
+                    message.len()
+                ),
+            );
+            return;
+        }
+        let destination = (
+            f32::from_le_bytes([body[0], body[1], body[2], body[3]]),
+            f32::from_le_bytes([body[4], body[5], body[6], body[7]]),
+        );
+        let plane = u32::from_le_bytes([body[8], body[9], body[10], body[11]]) as u16;
+        let to = crate::terrain::Pos {
+            x: destination.0,
+            y: destination.1,
+            plane,
+        };
+        let Some((agent_id, from, planes)) = self.with_agent(|agent| {
+            (agent.agent_id, agent.here(), agent.plane)
+        }) else {
+            return;
+        };
+        let walked = self.graphs.walk(self.map_id(), from, to);
+        match walked {
+            crate::terrain::Walk::Found(waypoints) => {
+                let waypoints = crate::agents::densify(waypoints, from, crate::agents::LIVE_CADENCE_STEP);
+                let begun = self.with_agent(|agent| {
+                    let speed = (agent.move_type != 1 || agent.move_speed != 1.0)
+                        .then(|| agent_packets::agent_update_speed(agent_id, 1.0, 1));
+                    agent.move_type = 1;
+                    agent.move_speed = 1.0;
+                    let first = agent.begin_walk(waypoints)?;
+                    Some((
+                        agent_packets::agent_move_to_point(
+                            agent_id,
+                            (first.pos.x, first.pos.y),
+                            first.pos.plane,
+                            agent.plane,
+                        ),
+                        speed,
+                    ))
+                });
+                if let Some((walk, speed)) = begun.flatten() {
+                    let mut reply: Vec<Vec<u8>> = speed.into_iter().map(|(_, f)| f).collect();
+                    reply.push(walk.1);
+                    self.send(io, peer, crypt, &reply, "the walk").await;
+                }
+            }
+            crate::terrain::Walk::NoPath | crate::terrain::Walk::NoGraph => {
+                self.with_agent(|agent| agent.cancel_movement());
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Gameplay connection from {peer}: agent {agent_id} cannot walk from ({:.1}, {:.1}) plane {} to ({:.1}, {:.1}) plane {plane}: standing still, and nothing is sent.",
+                        from.x, from.y, planes, destination.0, destination.1
+                    ),
+                );
+            }
+        }
+    }
+
+    /// `GAME_CMSG_POSITION_UPDATE` (`0x803D`): where the client is, and the offset it is walking in.
+    ///
+    /// `ASURA/crates/asura-world/src/agent.rs:887` (`handle_position_update`), ported whole: the report
+    /// is adopted under its elapsed-time budget, a manual walk follows the offset through the map's
+    /// connected cells (`walk_direction`), and the answer is the direction, the movement type and the
+    /// destination - the live capture's own order (`agent.rs:1000-1029`). A report that is not finite,
+    /// or whose type is outside 1-8, is dropped exactly as it is there (`agent.rs:923-929`).
+    async fn answer_position_update(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        message: &[u8],
+        crypt: &mut AuthCrypt,
+    ) {
+        let body = &message[2..];
+        if body.len() < 24 {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: a position report is {} bytes and needs 26; it cannot be read.",
+                    message.len()
+                ),
+            );
+            return;
+        }
+        let position = (
+            f32::from_le_bytes([body[0], body[1], body[2], body[3]]),
+            f32::from_le_bytes([body[4], body[5], body[6], body[7]]),
+        );
+        let plane = u32::from_le_bytes([body[8], body[9], body[10], body[11]]) as u16;
+        let offset = (
+            f32::from_le_bytes([body[12], body[13], body[14], body[15]]),
+            f32::from_le_bytes([body[16], body[17], body[18], body[19]]),
+        );
+        let move_type = u32::from_le_bytes([body[20], body[21], body[22], body[23]]) as u8;
+        if ![position.0, position.1, offset.0, offset.1]
+            .iter()
+            .all(|value| value.is_finite())
+            || !(1..=8).contains(&move_type)
+        {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let Some((adopted, walk_was_running, reply)) = self.with_agent(|agent| {
+            let walk_was_running = 0.0 < agent.motion.speed;
+            let adopted = agent.adopt_report(position, plane, now);
+            let reply = if adopted != crate::agents::Adopted::Refused {
+                let from = agent.here();
+                let walked = self.graphs.walk_direction(self.map_id(), from, offset);
+                let waypoints = match walked {
+                    crate::terrain::Walk::Found(waypoints) => waypoints,
+                    crate::terrain::Walk::NoPath | crate::terrain::Walk::NoGraph => Vec::new(),
+                };
+                let norm = (offset.0 * offset.0 + offset.1 * offset.1).sqrt();
+                let direction = if norm > 0.0 {
+                    (offset.0 / norm, offset.1 / norm)
+                } else {
+                    (0.0, 0.0)
+                };
+                agent.begin_manual_walk(waypoints, direction, move_type)
+            } else {
+                Vec::new()
+            };
+            (adopted, walk_was_running, reply)
+        }) else {
+            return;
+        };
+        let reply: Vec<Vec<u8>> = reply.into_iter().map(|(_, frame)| frame).collect();
+        self.say(
+            LogLevel::Debug,
+            format!(
+                "Gameplay connection from {peer}: a position report ({:.1}, {:.1}) plane {plane}: {adopted:?}, server walk running={walk_was_running}, {} message(s) answered.",
+                position.0,
+                position.1,
+                reply.len()
+            ),
+        );
+        if !reply.is_empty() {
+            self.send(io, peer, crypt, &reply, "the walk the report asked for")
+                .await;
+        }
+    }
+
+    /// `GAME_CMSG_CANCEL_MOVEMENT` (`0x8028`): the client stopped walking.
+    ///
+    /// `ASURA/crates/asura-world/src/agent.rs:1062` (`handle_cancel_movement`): the agent's own walk is
+    /// cancelled - destination to where it stands, speed to zero - and every client is told it stopped
+    /// with `0x0028`. Cancelling is the load-bearing half: without it the server keeps advancing its
+    /// copy along the abandoned path and answers the next click from a position the client left behind.
+    async fn answer_cancel_movement(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        crypt: &mut AuthCrypt,
+    ) {
+        let Some((stop, was_walking)) = self.with_agent(|agent| {
+            let was_walking = 0.0 < agent.motion.speed;
+            agent.cancel_movement();
+            (agent_packets::agent_stop_moving(agent.agent_id), was_walking)
+        }) else {
+            return;
+        };
+        self.say(
+            LogLevel::Debug,
+            format!(
+                "Gameplay connection from {peer}: the client cancelled walking{}.",
+                if was_walking {
+                    " and a server-side walk was running: cancelled"
+                } else {
+                    ""
+                }
+            ),
+        );
+        self.send(io, peer, crypt, &[stop.1], "the stop").await;
+    }
+
+    /// `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` (`0x8047`): the stopping point a cancel carries.
+    ///
+    /// `ASURA/crates/asura-world/src/agent.rs:1117` (`handle_last_position`), ported whole: a
+    /// correction within the world's `MaxAllowedCorrection` and on the same plane is taken, and the
+    /// answer is the movement type 9 followed by a destination at that point; a refused correction
+    /// sends **nothing at all**, because the only position it could name is the server's own stale
+    /// guess, and the client obeys that message - measured live as one refusal ordering a client 196.7
+    /// units backwards (`agent.rs:1108-1116`). The server's own copy stops walking either way.
+    async fn answer_last_position(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        message: &[u8],
+        crypt: &mut AuthCrypt,
+    ) {
+        let body = &message[2..];
+        if body.len() < 12 {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: a stopping point is {} bytes and needs 16; it cannot be read.",
+                    message.len()
+                ),
+            );
+            return;
+        }
+        let position = (
+            f32::from_le_bytes([body[0], body[1], body[2], body[3]]),
+            f32::from_le_bytes([body[4], body[5], body[6], body[7]]),
+        );
+        let plane = u32::from_le_bytes([body[8], body[9], body[10], body[11]]) as u16;
+        let ceiling = self.settings.max_allowed_correction;
+        let Some((taken, reply)) = self.with_agent(|agent| {
+            let taken = agent.adopt_correction(position, plane, ceiling);
+            let reply = if taken {
+                agent.stop_manual_walk()
+            } else {
+                agent.stand_still();
+                Vec::new()
+            };
+            (taken, reply)
+        }) else {
+            return;
+        };
+        self.say(
+            LogLevel::Debug,
+            format!(
+                "Gameplay connection from {peer}: a stopping point ({:.1}, {:.1}) plane {plane} against a ceiling of {ceiling:.1}: {}.",
+                position.0,
+                position.1,
+                if taken {
+                    "taken - type 9 and a destination at that point"
+                } else {
+                    "refused - the agent stops and nothing is sent"
+                }
+            ),
+        );
+        if !reply.is_empty() {
+            let reply: Vec<Vec<u8>> = reply.into_iter().map(|(_, frame)| frame).collect();
+            self.send(io, peer, crypt, &reply, "the stopping point").await;
+        }
+    }
+
+    /// Run something against this session's own agent, when it has one.
+    fn with_agent<T>(&self, work: impl FnOnce(&mut crate::agents::Agent) -> T) -> Option<T> {
+        let mut agent = self.agent.lock().ok()?;
+        let agent = agent.as_mut()?;
+        Some(work(agent))
+    }
+
+    /// The map this connection is in, as the graph lookup wants it.
+    fn map_id(&self) -> u32 {
+        match self.entered.lock() {
+            Ok(entered) => entered.map(|(map_id, _)| map_id).unwrap_or(0),
+            Err(_) => 0,
+        }
+    }
+
     /// The rest of a map's load: the ping pair, the inventory and the map's record, where the
     /// character stands, its own body, and the end of the load.
     ///
@@ -1180,10 +1461,16 @@ impl WorldSession {
                                     ),
                                 );
                                 if let Ok(mut agent) = self.agent.lock() {
-                                    *agent = Some(crate::agents::Agent::at(
+                                    *agent = Some(crate::agents::Agent::new(
                                         CREATION_AGENT,
-                                        point.0,
-                                        point.1,
+                                        (point.0, point.1),
+                                        point.2,
+                                        // Our spawn rows carry no angle yet, so the facing is the neutral
+                                        // +y; the working implementation's create message carries the
+                                        // spawn point's own vector (measured: -0.995, -0.104 on one
+                                        // body). A spawn angle column is the gap, and it is in the audit.
+                                        (0.0, 1.0),
+                                        self.settings.agent_speed,
                                     ));
                                 }
                                 vec![instance_packets::instance_load_spawn_point(
@@ -1474,25 +1761,21 @@ impl WorldSession {
                             ),
                         );
                     }
-                    // Where the client says it went. The client has already moved itself; the world
-                    // keeps the point, which is the player's own agent's state.
-                    CLIENT_MOVE_TO_COORD_WITH_DIR
-                    | CLIENT_MOVE_TO_COORD
-                    | CLIENT_LAST_POS_BEFORE_MOVE_CANCELED => {
-                        if let Some((x, y)) = movement_point(&message) {
-                            if let Ok(mut agent) = self.agent.lock()
-                                && let Some(agent) = agent.as_mut()
-                            {
-                                agent.moved_to(x, y);
-                            }
-                            self.log.out(
-                                LogLevel::Debug,
-                                "network.trace",
-                                format!(
-                                    "trace {peer} game in  a movement: {x:.2}, {y:.2}"
-                                ),
-                            );
-                        }
+                    // The client's movement. Four messages, four handlers, ported from the working
+                    // implementation's own (`ASURA/crates/asura-world/src/agent.rs`): `0x803E` asks for
+                    // a walk, `0x803D` reports where the client is and the direction it is walking in,
+                    // `0x8028` cancels, and `0x8047` is the stopping point a cancel carries.
+                    CLIENT_MOVE_TO_COORD => {
+                        self.answer_move_to_coord(io, peer, &message, crypt).await;
+                    }
+                    CLIENT_MOVE_TO_COORD_WITH_DIR => {
+                        self.answer_position_update(io, peer, &message, crypt).await;
+                    }
+                    CLIENT_CANCEL_MOVEMENT => {
+                        self.answer_cancel_movement(io, peer, crypt).await;
+                    }
+                    CLIENT_LAST_POS_BEFORE_MOVE_CANCELED => {
+                        self.answer_last_position(io, peer, &message, crypt).await;
                     }
                     // The client's own in-game travel request. The redirect that answers it is not
                     // captured on this build, so the connection stays where it is and the request is
@@ -1657,10 +1940,27 @@ impl WorldSession {
                         let now = std::time::Instant::now();
                         let elapsed = now.duration_since(last_tick);
                         last_tick = now;
-                        let frame = misc_packets::world_simulation_tick(
+                        // The instance's own clock advances every agent by the same elapsed time, and
+                        // announces the waypoint a walk crosses - every client is drawing that agent
+                        // from the last destination it was told (`ASURA/crates/asura-world/src/instance.rs:369-386`).
+                        let crossed = self.with_agent(|agent| {
+                            let crossed = agent.advance(elapsed.as_secs_f32());
+                            crossed.map(|waypoint| {
+                                agent_packets::agent_move_to_point(
+                                    agent.agent_id,
+                                    (waypoint.pos.x, waypoint.pos.y),
+                                    waypoint.pos.plane,
+                                    agent.plane,
+                                )
+                            })
+                        });
+                        let mut frames = vec![misc_packets::world_simulation_tick(
                             u32::try_from(elapsed.as_millis()).unwrap_or(u32::MAX),
-                        );
-                        self.send(io, peer, crypt, &[frame], "a tick").await;
+                        )];
+                        if let Some(Some(walk)) = crossed {
+                            frames.push(walk.1);
+                        }
+                        self.send(io, peer, crypt, &frames, "a tick").await;
                     }
                 }
                 Ok(shared::network::socket::ReadOutcome::Closed) => return,
@@ -2041,18 +2341,6 @@ fn item_move(message: &[u8]) -> Option<(u32, u16, u8)> {
 }
 
 /// The x and y a movement message carries: a `Vect2` right after the header.
-///
-/// Source: the client's own movement rows in this tree's table - `0x803D`, `0x803E` and `0x8047`,
-/// each `MsgHeader Vect2 ...`, so x is at 2 and y at 6.
-fn movement_point(message: &[u8]) -> Option<(f32, f32)> {
-    let x = message.get(2..6)?;
-    let y = message.get(6..10)?;
-    Some((
-        f32::from_le_bytes([x[0], x[1], x[2], x[3]]),
-        f32::from_le_bytes([y[0], y[1], y[2], y[3]]),
-    ))
-}
-
 /// What a client's `0x00B1` travel asks for: the map, the territory, the district, the language and
 /// the flag - the nine-byte frame `docs/game-rules.md` E220 measured and E28 splits.
 fn client_travel(message: &[u8]) -> Option<(u16, u8, u16, u8, u8)> {
@@ -2180,15 +2468,6 @@ mod tests {
         message.push(1);
         assert_eq!(client_travel(&message), Some((148, 0xFE, 0, 0, 1)));
         assert_eq!(client_travel(&message[..8]), None, "short messages are not read");
-    }
-
-    #[test]
-    fn a_movement_point_is_the_vect2_at_the_head() {
-        let mut message = vec![0x3D, 0x80];
-        message.extend_from_slice(&9541.87f32.to_le_bytes());
-        message.extend_from_slice(&4796.46f32.to_le_bytes());
-        message.extend_from_slice(&[0u8; 16]);
-        assert_eq!(movement_point(&message), Some((9541.87, 4796.46)));
     }
 
     /// The templates a test's world runs with, built from the creation content's own definitions: what

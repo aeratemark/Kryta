@@ -95,6 +95,10 @@
       "value": 288,
       "doc": "How fast a player agent walks, in units a second: the create message carries it and the client walks the model at it."
     },
+    "MaxAllowedCorrection": {
+      "value": 250,
+      "doc": "How far, in game units, a client may place itself when it cancels a walk (0x8047) and still be believed. A correction farther than this from where the server thought the agent stood is ignored: the agent stops where the server believes it is and nothing goes on the wire, so the client is never ordered backwards. The reference's MAXIMUM_ALLOWED_CORRECTION (GmAgent.c:547-563); the working implementation runs it at 250 (ASURA/config/Server/movement.json)."
+    },
     "Appearance": {
       "value": 51380224,
       "doc": "The packed appearance word a character with no bits of its own is drawn with - 51380224 is 0x03100000, profession 1 (Warrior) with hair style 3, everything else zero. An all-zero word is Profession_None, which the client cannot build a model from."

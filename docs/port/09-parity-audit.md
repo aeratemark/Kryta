@@ -82,12 +82,12 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x8009` | `GAME_CMSG_PING_REPLY` | `dispatch.rs:119`, discarded | - | **missing** |
 | `0x800C` | `GAME_CMSG_HEARTBEAT` | `dispatch.rs:122`, discarded | - | **missing** |
 | `0x800D` | `GAME_CMSG_PING_REQUEST` | `connection::handle_ping_request` | echoed back | **ours**: the answer is not the ping reply's |
-| `0x8028` | `GAME_CMSG_CANCEL_MOVEMENT` | `agent.rs:1062` | - | **missing** |
+| `0x8028` | `GAME_CMSG_CANCEL_MOVEMENT` | `agent.rs:1062` | `answer_cancel_movement` | ported |
 | `0x802C` | `GAME_CMSG_DROP_ITEM` (7 bytes) | `item::handle_drop_item` | listened for on `0x8069` | **ours**: wrong header |
 | `0x8030` | `GAME_CMSG_EQUIP_ITEM` | `item::handle_equip_item` | handled | ported thin |
-| `0x803D` | `GAME_CMSG_POSITION_UPDATE` (26) | `agent.rs:887` | read, point stored, nothing sent | **ours** |
-| `0x803E` | `GAME_CMSG_MOVE_TO_COORD` (14) | `agent.rs:710` | read, point stored, nothing sent | **ours** |
-| `0x8047` | `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` | `agent.rs:1117` | read, nothing | **ours** |
+| `0x803D` | `GAME_CMSG_POSITION_UPDATE` (26) | `agent.rs:887` | `answer_position_update` | ported |
+| `0x803E` | `GAME_CMSG_MOVE_TO_COORD` (14) | `agent.rs:710` | `answer_move_to_coord` | ported (the graph it asks is missing) |
+| `0x8047` | `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` | `agent.rs:1117` | `answer_last_position` | ported |
 | `0x804F` | `GAME_CMSG_UNEQUIP_ITEM` (6) | `dispatch.rs:114` | - | **missing** |
 | `0x8060` | `GAME_CMSG_CHAR_CREATION_CHANGE_PROF` (4) | `creation.rs:275` | handled | ported |
 | `0x8064` | `GAME_CMSG_SEND_CHAT_MESSAGE` (286) | `chat::handle_chat_message` | - | **missing** |
@@ -100,7 +100,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x8091` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_ITEMS` (4) | `item.rs:448` | handled | ported thin |
 | `0x80B1` | `GAME_CMSG_PARTY_TRAVEL` (9) | `travel::handle_party_travel` | listened for on `0x00B1` | **ours**: wrong header, no answer |
 
-**Score: 20 ported or ported thin (11 auth + 9 game), 6 ours, 10 missing.**
+**Score: 24 ported or ported thin (11 auth + 13 game), 3 ours, 9 missing.**
 
 ## 4. Server -> client: the 87 messages ASURA emits
 
@@ -133,11 +133,11 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x0020` | create agent (99) | `world_create_agent`, `CreateAgent` | same | ported |
 | `0x0021` | remove agent | `world_remove_agent` | - | **missing** |
 | `0x0022` | controlled agent | `world_update_controlled_agent` | same | ported |
-| `0x0025` | agent update direction (15) | `agent_update_direction` / `_live` | - | **missing** |
-| `0x0028` | agent stop moving | `agent_stop_moving` | - | **missing** |
-| `0x0029` | agent move to point (18) | `agent_move_to_point` / `_live` | - | **missing** |
-| `0x002B` | agent update speed (11) | `agent_update_speed` / `_live` | - | **missing** |
-| `0x002C` | agent update position (16) | `agent_update_position` | - | **missing** |
+| `0x0025` | agent update direction (15) | `agent_update_direction` / `_live` | `agent_packets::agent_update_direction`, both forms | ported |
+| `0x0028` | agent stop moving | `agent_stop_moving` | `agent_packets::agent_stop_moving` | ported |
+| `0x0029` | agent move to point (18) | `agent_move_to_point` / `_live` | `agent_packets::agent_move_to_point`, both forms | ported |
+| `0x002B` | agent update speed (11) | `agent_update_speed` / `_live` | `agent_packets::agent_update_speed`, both forms | ported |
+| `0x002C` | agent update position (16) | `agent_update_position` | `agent_packets::agent_update_position` | ported |
 | `0x0030` | character update info (94) | `character_update_info(name)` | fixed words, no name | ported thin |
 | `0x0037` | attribute points | `agent_update_attribute_points` | same | ported |
 | `0x003A` | attributes (202) | `agent_update_attributes` | same | ported |
@@ -198,7 +198,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x01D3` | party create | `party_create` | same | ported |
 | `0x01D4` | party member stream end | `party_member_stream_end` | same | ported |
 
-**Score: 62 ported or ported thin, 17 missing, 0 ours among the emitted set.**
+**Score: 67 ported or ported thin, 12 missing, 0 ours among the emitted set.**
 
 ### 4.3 Builders ASURA has that no message above covers
 
@@ -230,25 +230,26 @@ setting that selects one.
 | | count |
 |---|---|
 | messages ASURA handles (client -> server) | 36 |
-| ... this tree handles as ASURA does | **20** (11 auth, 9 game) |
-| ... this tree handles, but not as ASURA does | **6** |
+| ... this tree handles as ASURA does | **24** (11 auth, 13 game) |
+| ... this tree handles, but not as ASURA does | **3** |
 | ... of those, on the wrong header | 2 (`0x80B1` listened for as `0x00B1`; `0x802C` as `0x8069`) |
-| ... of those, read and dropped | 3 (`0x803D`, `0x803E`, `0x8047`) |
 | ... of those, answered differently | 1 (`0x800D`: echoed instead of answered with the ping reply) |
-| ... this tree does not handle | **10** |
+| ... this tree does not handle | **9** |
 | messages ASURA emits (server -> client) | 87 |
-| ... this tree emits | **70** (8 auth, 62 game) |
-| ... this tree does not emit | **17** |
+| ... this tree emits | **75** (8 auth, 67 game) |
+| ... this tree does not emit | **12** |
 | messages this tree emits that ASURA does not have | 1: the district-count answer on the auth connection |
 | sequences ported whole | 6 of 9 |
 | the packet table | identical, 782 rows (682 game + 100 auth) |
 
 ## 7. The defects, in the order the client feels them
 
-1. **Movement is not a port.** Five frames (`0x0025`, `0x0028`, `0x0029`, `0x002B`, `0x002C`) and
-   both `_live` forms are missing, and the three client reports are read and dropped. The client walks;
-   the world says nothing; the tick was a counter until 2026-11-12. This is the largest single break
-   and the one the owner has seen.
+1. **The movement family is ported and the graph it walks on is not.** The five frames and their
+   `_live` forms, `AgentState`, `densify`, the cadence, the tolerance and the four handlers are
+   `ASURA`'s, ported on 2026-11-12; the tick carries elapsed time. What is still missing is the map's
+   path graph (`gwdat.rs`, `fa_compress.rs`, `map_data.rs`, `path_tables.rs`, `pathfind.rs`), so every
+   walk is answered exactly as the working implementation answers a map it holds no graph for:
+   `NoGraph`, and nothing on the wire.
 2. **The party travel is on the wrong header** (`0x00B1` instead of `0x80B1`), so the message the
    client sends when it uses the world map is not recognised at all, and nothing is answered.
 3. **The drop item is on the wrong header** (`0x8069` instead of `0x802C`).
@@ -263,10 +264,10 @@ setting that selects one.
 
 ## 8. The order this audit imposes
 
-1. The movement family, both forms: `0x0025`, `0x0028`, `0x0029`, `0x002B`, `0x002C`,
-   `agent_move_to_point_live`, `agent_update_direction_live`, `agent_update_speed_live`,
-   `agent_stop_moving`, `agent_update_position`, and the handlers behind them (`handle_move_to_coord`,
-   `handle_position_update`, `handle_cancel_movement`, `handle_last_position`).
+1. The map's path graph, which is what the ported movement family asks: `gwdat.rs`,
+   `fa_compress.rs`, `map_data.rs`, `path_tables.rs` and `pathfind.rs` out of ASURA. Until it lands a
+   walk is refused with `NoGraph` - the working implementation's own answer for a map with no graph -
+   and nothing else about movement is outstanding.
 2. The two wrong headers and the six absent client messages.
 3. The travel sequence and the introduction/farewell pair.
 4. Chat, whole.

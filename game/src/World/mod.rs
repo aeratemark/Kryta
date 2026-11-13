@@ -65,6 +65,11 @@ pub struct World {
     /// The item templates the world database holds, read once at start-up: what a load resolves a
     /// character's held items against.
     templates: Vec<crate::data_stores::ItemDefinition>,
+    /// The map's walkable graph, which a walk request is answered from
+    /// (ASURA/crates/asura-world/src/pathfind.rs). Empty until the archive reader lands, and every
+    /// lookup then answers Walk::NoGraph, which is the working implementation's own answer for a map
+    /// it holds no graph for.
+    graphs: crate::terrain::Graphs,
 }
 
 impl World {
@@ -79,6 +84,7 @@ impl World {
             settings: world_config::WorldConfig::default(),
             districts: Arc::new(Mutex::new(crate::districts::Districts::new())),
             templates: Vec::new(),
+            graphs: crate::terrain::Graphs::new(),
         }
     }
 
@@ -97,6 +103,16 @@ impl World {
     /// The item templates this world runs with.
     pub fn templates(&self) -> &[crate::data_stores::ItemDefinition] {
         &self.templates
+    }
+
+    /// The map's walkable graph, as a walk request is answered from.
+    ///
+    /// `ASURA/crates/asura-world/src/pathfind.rs`, `World::graphs`: one finder per map, held for the
+    /// life of the program. This world holds none until the archive reader lands, so every lookup
+    /// answers `Walk::NoGraph` - the working implementation's own answer for a map it holds no graph
+    /// for.
+    pub fn graphs(&self) -> &crate::terrain::Graphs {
+        &self.graphs
     }
 
     /// Set the item templates, after the program read them from its world database.

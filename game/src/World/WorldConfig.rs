@@ -56,6 +56,14 @@ pub struct WorldConfig {
     /// states the fallback: profession 1 (Warrior) and hair style 3, which is `0x03100000`
     /// (`ASURA/config/World/Vanilla/character_defaults.json`, `appearance`).
     pub appearance: u32,
+    /// How far a client may place itself when it cancels a walk and still be believed, in game units.
+    ///
+    /// The reference's `MAXIMUM_ALLOWED_CORRECTION` (`GmAgent.c:547-563`), through the working
+    /// implementation's own setting (`ASURA/config/Server/movement.json`, `max_allowed_correction`). A
+    /// correction farther than this from where the server thought the agent stood is ignored: the agent
+    /// stops where the server believes it is and nothing goes on the wire, so the client is never
+    /// ordered backwards.
+    pub max_allowed_correction: f32,
 }
 
 impl Default for WorldConfig {
@@ -76,6 +84,7 @@ impl Default for WorldConfig {
             agent_energy_regen: 0.0,
             agent_speed: 288.0,
             appearance: 0x0310_0000,
+            max_allowed_correction: 250.0,
         }
     }
 }
@@ -116,6 +125,8 @@ impl WorldConfig {
         settings.agent_energy_regen = number(config, "AgentEnergyRegen", settings.agent_energy_regen)?;
         settings.agent_speed = number(config, "AgentSpeed", settings.agent_speed)?;
         settings.appearance = small(config, "Appearance", settings.appearance)?;
+        settings.max_allowed_correction =
+            number(config, "MaxAllowedCorrection", settings.max_allowed_correction)?;
 
         notes.push(format!(
             "World: a district holds {} player(s) (R5), a party is capped at {} (R15), a character lands within {:.0} units of its spawn point (R13), an explorable is held {} s for a network disconnect (R37), the compass range is {:.0} (R34), ticking is {} every {} ms, the instance table is swept every {} ms, the mission button is {} (R56).",
