@@ -794,6 +794,152 @@ impl PathContext {
             }
         }
     }
+
+    // -----------------------------------------------------------------------------------------
+    // ASURA/crates/asura-world/src/pathfind.rs, lines 779-918: `PathFinding` (the A* itself) and
+    // `PathCreateWaypoints`, which hands the chain to the corridor walk ported above.
+    // -----------------------------------------------------------------------------------------
+
+    /// `PathFinding` (`GmPaths.c:944`): the A* itself.
+    ///
+    /// Returns whether a walk exists; `waypoints` receives the reduced path, which is one waypoint
+    /// naming the destination when both positions are in the same trapezoid.
+    pub fn path_finding(&mut self, src: Pos, dst: Pos, waypoints: &mut Vec<Waypoint>) -> bool {
+        // 10,000 is the ingame constant.
+        const MAX_COST: f32 = 10_000.0;
+
+        let Some(src_trap) = self.find_trapezoid(src) else {
+            return false;
+        };
+        let Some(dst_trap) = self.find_trapezoid(dst) else {
+            return false;
+        };
+
+        if src_trap == dst_trap {
+            waypoints.push(Waypoint {
+                pos: dst,
+                trap_id: src_trap,
+            });
+            return true;
+        }
+
+        self.prioq.clear();
+        self.nodes = vec![FindNode::default(); self.data.traps_count as usize];
+        self.steps.clear();
+
+        let mut closest_trap: Option<u32> = None;
+        let mut closest_distance = f32::INFINITY;
+
+        self.add_node(None, src_trap, src, 0.0, f32::INFINITY);
+
+        while let Some(top) = heap_pop(&mut self.prioq) {
+            let curr_node = top.trap_id;
+            self.nodes[curr_node as usize].closed = true;
+
+            let curr_trap = self.trap(curr_node);
+            if curr_node == dst_trap {
+                reverse_path_find_node(&mut self.nodes, curr_node);
+                self.create_waypoints(
+                    FindPoint {
+                        pos: src,
+                        trap: src_trap,
+                    },
+                    FindPoint {
+                        pos: dst,
+                        trap: dst_trap,
+                    },
+                    waypoints,
+                );
+                return true;
+            }
+
+            let distance = dist_to_trap(dst, &curr_trap);
+            if distance < closest_distance {
+                closest_distance = distance;
+                closest_trap = Some(curr_node);
+            }
+
+            for id in [
+                self.neighbour(curr_node, curr_trap.top_left),
+                self.neighbour(curr_node, curr_trap.top_right),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !self.nodes[id as usize].closed {
+                    self.visit_above(curr_node, dst.v2(), id, MAX_COST);
+                }
+            }
+            for id in [
+                self.neighbour(curr_node, curr_trap.bottom_left),
+                self.neighbour(curr_node, curr_trap.bottom_right),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !self.nodes[id as usize].closed {
+                    self.visit_bellow(curr_node, dst.v2(), id, MAX_COST);
+                }
+            }
+
+            if curr_trap.portal_left != u16::MAX {
+                self.visit_portal(curr_node, dst.v2(), curr_trap.portal_left, true, MAX_COST);
+            }
+            if curr_trap.portal_right != u16::MAX {
+                self.visit_portal(curr_node, dst.v2(), curr_trap.portal_right, false, MAX_COST);
+            }
+        }
+
+        // Nothing reached the destination's trapezoid: the reference still builds a path to the closest
+        // trapezoid it did reach, if the destination is inside that one, and reports failure either way.
+        if let Some(trap) = closest_trap {
+            if is_point_in_trap(dst, &self.trap(trap)) {
+                let closest = FindPoint { pos: dst, trap };
+                reverse_path_find_node(&mut self.nodes, trap);
+                self.create_waypoints(
+                    FindPoint {
+                        pos: src,
+                        trap: src_trap,
+                    },
+                    closest,
+                    waypoints,
+                );
+            }
+        }
+
+        false
+    }
+
+    /// `PathCreateWaypoints` (`GmPaths.c:822`): walk the chain of trapezoids the search chose and reduce
+    /// it to waypoints.
+    fn create_waypoints(
+        &mut self,
+        src_point: FindPoint,
+        dst_point: FindPoint,
+        waypoints: &mut Vec<Waypoint>,
+    ) {
+        self.steps.clear();
+
+        let mut helper = BuildHelper {
+            context: self,
+            left_bound: Bound {
+                point: src_point,
+                step_id: 0,
+                vec: Vec2f::default(),
+            },
+            right_bound: Bound {
+                point: src_point,
+                step_id: 0,
+                vec: Vec2f::default(),
+            },
+            curr_start_point: src_point,
+            current_plane: src_point.pos.plane,
+            last_pos: Pos::default(),
+            dst_point,
+            waypoints,
+        };
+        helper.run(src_point.trap);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1241,6 +1387,113 @@ mod tests {
             Walk::NoGraph
         ));
     }
+    /// Two stacked trapezoids, one plane: the lower from y 0 to 5, the upper from 5 to 10, x 0 to 10,
+    /// each naming the other as its top/bottom neighbour, and a y-node at y = 5 whose two halves are
+    /// their leaves. That is the smallest graph the reference's own structures can describe.
+    fn two_stacked_traps() -> std::sync::Arc<PathStaticData> {
+        use crate::terrain::map_data::{NodeRef, Plane, SinkNode, YNode};
+        let lower = Trapezoid {
+            trap_id: 0,
+            top_left: Some(1),
+            top_right: Some(1),
+            yt: 5.0,
+            yb: 0.0,
+            xtl: 0.0,
+            xtr: 10.0,
+            xbl: 0.0,
+            xbr: 10.0,
+            portal_left: u16::MAX,
+            portal_right: u16::MAX,
+            ..Trapezoid::default()
+        };
+        let upper = Trapezoid {
+            trap_id: 1,
+            bottom_left: Some(0),
+            bottom_right: Some(0),
+            yt: 10.0,
+            yb: 5.0,
+            xtl: 0.0,
+            xtr: 10.0,
+            xbl: 0.0,
+            xbr: 10.0,
+            portal_left: u16::MAX,
+            portal_right: u16::MAX,
+            ..Trapezoid::default()
+        };
+        let plane = Plane {
+            plane_id: 0,
+            trapezoids: vec![lower, upper],
+            ynodes: vec![YNode {
+                pos: Vec2f { x: 0.0, y: 5.0 },
+                above: Some(NodeRef::Sink(1)),
+                bellow: Some(NodeRef::Sink(0)),
+            }],
+            sink_nodes: vec![SinkNode { trap: 0 }, SinkNode { trap: 1 }],
+            root_node: Some(NodeRef::Y(0)),
+            ..Plane::default()
+        };
+        std::sync::Arc::new(PathStaticData {
+            planes: vec![plane],
+            traps_count: 2,
+        })
+    }
+
+    fn pos(x: f32, y: f32) -> Pos {
+        Pos { x, y, plane: 0 }
+    }
+
+    /// The A* walks from one trapezoid to the one above it: `PathFinding` answers true and the last
+    /// waypoint is the destination, in the trapezoid it stands in.
+    #[test]
+    fn a_walk_between_two_trapezoids_is_found_and_ends_at_the_destination() {
+        let mut context = PathContext::new(two_stacked_traps());
+        let src = pos(5.0, 2.0);
+        let dst = pos(5.0, 8.0);
+        assert_eq!(context.find_trapezoid(src), Some(0), "the start is in the lower one");
+        assert_eq!(context.find_trapezoid(dst), Some(1), "the destination in the upper");
+        let mut waypoints = Vec::new();
+        let found = context.path_finding(src, dst, &mut waypoints);
+        assert!(found, "the walk exists");
+        assert!(!waypoints.is_empty(), "and it has waypoints");
+        let last = waypoints.last().expect("a waypoint");
+        assert_eq!(last.pos, dst, "the last waypoint is the destination");
+        assert_eq!(last.trap_id, 1, "in the trapezoid it stands in");
+    }
+
+    /// Two positions in the **same** trapezoid are one waypoint naming the destination, and the search
+    /// does not run at all.
+    #[test]
+    fn a_walk_inside_one_trapezoid_is_a_single_waypoint() {
+        let mut context = PathContext::new(two_stacked_traps());
+        let src = pos(2.0, 2.0);
+        let dst = pos(8.0, 3.0);
+        let mut waypoints = Vec::new();
+        assert!(context.path_finding(src, dst, &mut waypoints));
+        assert_eq!(waypoints.len(), 1);
+        assert_eq!(waypoints[0].pos, dst);
+        assert_eq!(waypoints[0].trap_id, 0);
+    }
+
+    /// A graph with no plane at all answers `None` from the split walk, so the search refuses the walk
+    /// rather than inventing a path - and a point outside a trapezoid's own edges is **not** that case:
+    /// the split walk is the BSP's answer, not a containment test, so the reference still walks to the
+    /// leaf it lands in.
+    #[test]
+    fn a_position_on_no_plane_finds_no_walk() {
+        let mut context = PathContext::new(std::sync::Arc::new(PathStaticData::default()));
+        let mut waypoints = Vec::new();
+        assert!(!context.path_finding(pos(5.0, 99.0), pos(5.0, 2.0), &mut waypoints));
+        assert!(waypoints.is_empty());
+        assert!(!context.path_finding(pos(5.0, 2.0), pos(5.0, 99.0), &mut waypoints));
+        assert!(waypoints.is_empty());
+
+        // And on the two-trapezoid graph, a point above both still lands in a leaf, so it walks.
+        let mut context = PathContext::new(two_stacked_traps());
+        let mut waypoints = Vec::new();
+        assert_eq!(context.find_trapezoid(pos(5.0, 99.0)), Some(1));
+        assert!(context.path_finding(pos(5.0, 99.0), pos(5.0, 2.0), &mut waypoints));
+    }
+
     /// `PathHeapPush`/`PathHeapPop` pop the cheapest node first, and keep doing it as the heap shrinks -
     /// the order is the order the search visits trapezoids in, which is why the reference's own
     /// sift-down is kept rather than a tidy one.

@@ -354,11 +354,17 @@ road.
    from `pick_next_point`); then lines **921-1286** - `Bound`, `BuildHelper` and **its whole `impl`**:
    `run` (the corridor loop, the down-edge swap kept, MAX_LOOP asserted), `add_waypoint_and_reduce`
    (including the parallel-step case the reference leaves undefined, answered the way the one measured
-   walk is answered), `add_waypoint`, `process_next`, `add_last`, `portal_adjacent`. **Left**:
-   `PathFinding` (line 783) and `PathCreateWaypoints` (line 891) - the pieces that call this helper -
-   then `PathGraphs` (`load`, `from_dump`, `bind`, `import`, `walk`, `walk_direction`,
-   `walk_any_plane`), `import_graph`, `find_path_blob`, and all of `pathfind/directional.rs` (320
-   lines).
+   walk is answered), `add_waypoint`, `process_next`, `add_last`, `portal_adjacent`; and lines
+   **779-918** - `PathFinding` (the A* loop: the same-trapezoid shortcut, the 10,000 cost ceiling, the
+   four neighbour visits, the two portal visits, the closest-trapezoid fallback that still builds a
+   path and still reports failure) and `PathCreateWaypoints`, which hands the chain to the corridor
+   walk. **The finder's core is ported and proved**: six tests green, including two real walks over a
+   two-trapezoid graph (one up into the neighbouring trapezoid, ending at the destination; and two
+   points in one trapezoid being a single waypoint), and the split walk being the BSP's answer rather
+   than a containment test - a point past a trapezoid's edge still lands in a leaf and still walks,
+   exactly as the reference does. **Left**: `PathGraphs` (`load`, `from_dump`, `bind`, `import`,
+   `walk`, `walk_direction`, `walk_any_plane`), `import_graph`, `find_path_blob`, and all of
+   `pathfind/directional.rs` (320 lines).
 4. **The importer** in `map_data.rs` last, only so this machine can produce a dump from its own
    `Gw.dat`; the world's start-up then loads a dump the way ASURA does.
 
