@@ -13,7 +13,10 @@
 #[path = "Repository.rs"]
 pub mod repository;
 
-pub use repository::{DatabaseCharacters, HeldItem};
+pub use repository::{
+    BACKPACK_MODEL, DatabaseCharacters, EQUIPPED_ITEMS_MODEL, HeldItem, LAST_CARRYING_MODEL,
+    MoveOutcome, Refused,
+};
 
 use std::fmt;
 

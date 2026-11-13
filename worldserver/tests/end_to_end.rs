@@ -558,7 +558,7 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         );
         let mut expected_items = game::creation::load_item_stream(&inventory, 0);
         expected_items.push(game::server::packets::misc_packets::hard_mode_unlocked(1));
-        expected_items.push(game::server::packets::character_packets::character_update_info());
+        expected_items.push(game::server::packets::character_packets::character_update_info(""));
         expected_items.push(game::server::packets::misc_packets::map_update_current(148, 0));
         expected_items.push(instance_packets::ready_for_map_spawn(0));
         expected_items.push(instance_packets::instance_manifest_phase(0));
@@ -700,23 +700,73 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         .expect("the character's items are readable");
         assert!(!held.is_empty(), "the load had items to operate on");
 
-        // 9. A drag: where the item goes is the row, and the client is told the same placement.
+        // 9. A drag: the row moves when the placement is one the character may have, and the client is
+        // told the same placement back (`ASURA/crates/asura-world/src/item.rs:255-312`). The target is a
+        // free slot of the backpack - a move to where the item already is answers nothing at all, which
+        // is ASURA's own `MoveOutcome::Unchanged`.
         let dragged = &held[0];
+        let backpack = game::creation::bags(&tables)
+            .iter()
+            .find(|bag| bag.model == game::characters::BACKPACK_MODEL)
+            .copied()
+            .expect("the content has a backpack");
+        let free = (0..backpack.slots)
+            .find(|slot| {
+                !held
+                    .iter()
+                    .any(|row| row.bag_id == backpack.id && row.slot == *slot)
+            })
+            .expect("the backpack has a free slot");
         let mut ask = vec![0u8; 9];
         ask[0..2].copy_from_slice(&0x8072u16.to_le_bytes());
         ask[2..6].copy_from_slice(&dragged.item_id.to_le_bytes());
-        ask[6..8].copy_from_slice(&dragged.bag_id.to_le_bytes());
-        ask[8] = dragged.slot;
+        ask[6..8].copy_from_slice(&backpack.id.to_le_bytes());
+        ask[8] = free;
         sending.apply(&mut ask);
         stream.write_all(&ask).expect("the drag");
         let mut placed = read_exact(&mut stream, 11);
         reading.apply(&mut placed);
         assert_eq!(&placed[..2], &[0x3E, 0x01], "the placement: {}", shared::network::socket::hex(&placed));
         assert_eq!(&placed[4..8], &dragged.item_id.to_le_bytes(), "the item");
-        assert_eq!(&placed[8..10], &dragged.bag_id.to_le_bytes(), "the bag");
-        assert_eq!(placed[10], dragged.slot, "the slot");
+        assert_eq!(&placed[8..10], &backpack.id.to_le_bytes(), "the bag");
+        assert_eq!(placed[10], free, "the slot");
+        {
+            let after = game::characters::DatabaseCharacters::new(Arc::clone(&characters), Log::new())
+                .items_of(&uuid_text)
+                .expect("the character's items are readable");
+            let row = after
+                .iter()
+                .find(|row| row.item_id == dragged.item_id)
+                .expect("the dragged item is still the character's");
+            assert_eq!((row.bag_id, row.slot), (backpack.id, free), "the row is the state");
+        }
 
-        // 10. An equip: the item goes to the slot its kind is worn in, in the equipped bag.
+        // A move into an occupied slot is refused with where the item really is: the client has already
+        // moved it in its own model, so the answer puts it back where it sits.
+        let occupied = held
+            .iter()
+            .find(|row| row.bag_id == backpack.id && row.slot == 0 && row.item_id != dragged.item_id);
+        if let Some(blocker) = occupied {
+            let mut ask = vec![0u8; 9];
+            ask[0..2].copy_from_slice(&0x8072u16.to_le_bytes());
+            ask[2..6].copy_from_slice(&dragged.item_id.to_le_bytes());
+            ask[6..8].copy_from_slice(&backpack.id.to_le_bytes());
+            ask[8] = 0;
+            sending.apply(&mut ask);
+            stream.write_all(&ask).expect("the refused drag");
+            let mut back = read_exact(&mut stream, 11);
+            reading.apply(&mut back);
+            assert_eq!(&back[..2], &[0x3E, 0x01], "the refusal is a placement");
+            assert_eq!(&back[4..8], &dragged.item_id.to_le_bytes(), "the item");
+            assert_eq!(&back[8..10], &backpack.id.to_le_bytes(), "where it really is");
+            assert_eq!(back[10], free, "its own slot, not the occupied one");
+            assert_eq!(blocker.slot, 0, "the blocker still sits in slot 0");
+        }
+
+        // 10. An equip: the item goes to the slot its kind is worn in, in the equipped bag, and whatever
+        // was worn there comes off to the first free carrying slot
+        // (`ASURA/crates/asura-world/src/item.rs:314-436`). An item already in its own worn slot is
+        // `MoveOutcome::Unchanged` and answers nothing, so the one picked is somewhere else.
         let template_of = |item_id: u32| {
             let row = held.iter().find(|row| row.item_id == item_id);
             row.and_then(|row| {
@@ -726,25 +776,53 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
                     .cloned()
             })
         };
+        let equipped_bag = game::creation::equipped_bag(&tables).expect("the equipped bag");
         let wearable = held.iter().find_map(|row| {
             let template = template_of(row.item_id)?;
-            game::creation::equipped_slot(template.item_type)?;
+            let slot = game::creation::equipped_slot(template.item_type)?;
+            if row.bag_id == equipped_bag.id && row.slot == slot {
+                return None;
+            }
             Some((row.item_id, template.item_type))
         });
         if let Some((item_id, item_type)) = wearable {
             let worn_slot = game::creation::equipped_slot(item_type).expect("the kind is worn");
-            let equipped_bag = game::creation::equipped_bag(&tables).expect("the equipped bag");
+            // Whatever is worn there now is taken off first, and the client is told that placement
+            // before the item's own: the eviction comes first, exactly as ASURA sends it.
+            let occupant = held
+                .iter()
+                .find(|row| row.bag_id == equipped_bag.id && row.slot == worn_slot)
+                .map(|row| row.item_id);
             let mut ask = vec![0u8; 6];
             ask[0..2].copy_from_slice(&0x8030u16.to_le_bytes());
             ask[2..6].copy_from_slice(&item_id.to_le_bytes());
             sending.apply(&mut ask);
             stream.write_all(&ask).expect("the equip");
+            if let Some(occupant) = occupant
+                && occupant != item_id
+            {
+                let mut off = read_exact(&mut stream, 11);
+                reading.apply(&mut off);
+                assert_eq!(&off[..2], &[0x3E, 0x01], "the eviction's placement");
+                assert_eq!(&off[4..8], &occupant.to_le_bytes(), "the item taken off");
+            }
             let mut placed = read_exact(&mut stream, 11);
             reading.apply(&mut placed);
             assert_eq!(&placed[..2], &[0x3E, 0x01], "the placement");
             assert_eq!(&placed[4..8], &item_id.to_le_bytes(), "the item");
             assert_eq!(placed[8..10], equipped_bag.id.to_le_bytes(), "the equipped bag");
             assert_eq!(placed[10], worn_slot, "the slot its kind is worn in");
+            // And what the agent is drawn wearing is sent again, because that is the one thing the
+            // client cannot work out for itself.
+            let mut drawn = read_exact(&mut stream, 2 + 4 + 9 * 4);
+            reading.apply(&mut drawn);
+            assert_eq!(&drawn[..2], &[0x6E, 0x00], "the agent's worn items");
+            assert_eq!(&drawn[2..6], &1u32.to_le_bytes(), "the agent");
+            assert_eq!(
+                &drawn[6 + worn_slot as usize * 4..10 + worn_slot as usize * 4],
+                &item_id.to_le_bytes(),
+                "its slot names the item just worn"
+            );
         }
 
         // 11. A drop (`GAME_CMSG_DROP_ITEM`, `0x802C`: the item and a count byte): the stack is the

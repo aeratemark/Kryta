@@ -84,20 +84,20 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x800D` | `GAME_CMSG_PING_REQUEST` | `connection::handle_ping_request` | echoed back | **ours**: the answer is not the ping reply's |
 | `0x8028` | `GAME_CMSG_CANCEL_MOVEMENT` | `agent.rs:1062` | `answer_cancel_movement` | ported |
 | `0x802C` | `GAME_CMSG_DROP_ITEM` (7 bytes) | `item.rs:187`, `handle_drop_item` | `CLIENT_DROP_ITEM`: the stack is taken and nothing is sent | ported |
-| `0x8030` | `GAME_CMSG_EQUIP_ITEM` | `item::handle_equip_item` | handled | ported thin |
+| `0x8030` | `GAME_CMSG_EQUIP_ITEM` | `item.rs:314`, `equip_item` | `answer_equip_item` | ported |
 | `0x803D` | `GAME_CMSG_POSITION_UPDATE` (26) | `agent.rs:887` | `answer_position_update` | ported |
 | `0x803E` | `GAME_CMSG_MOVE_TO_COORD` (14) | `agent.rs:710` | `answer_move_to_coord` | ported (the graph it asks is missing) |
 | `0x8047` | `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` | `agent.rs:1117` | `answer_last_position` | ported |
 | `0x804F` | `GAME_CMSG_UNEQUIP_ITEM` (6) | `item.rs:555`, `handle_unequip_item` | `CLIENT_UNEQUIP_ITEM`: ASURA's answer, a log line and nothing on the wire | ported |
 | `0x8060` | `GAME_CMSG_CHAR_CREATION_CHANGE_PROF` (4) | `creation.rs:275` | handled | ported |
 | `0x8064` | `GAME_CMSG_SEND_CHAT_MESSAGE` (286) | `chat.rs:193`, `handle_chat_message` | `answer_chat_message` | ported |
-| `0x8072` | `GAME_CMSG_ITEM_MOVE` (9) | `item::handle_item_move` | handled | ported thin |
-| `0x8088` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_SPAWN` | `agent.rs:1219` | handled | ported thin |
+| `0x8072` | `GAME_CMSG_ITEM_MOVE` (9) | `item.rs:255`, `move_item` | `answer_item_move` | ported |
+| `0x8088` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_SPAWN` | `agent.rs:1219` | handled | ported thin: the first tick travels with the answer, as the reference's own log has it, and ASURA's ticker sends it separately |
 | `0x8089` | `GAME_CMSG_CHAR_CREATION_REQUEST_PLAYER` (2) | `creation.rs:190` | handled | ported |
 | `0x808A` | `GAME_CMSG_CHAR_CREATION_REQUEST_ARMORS` (2) | `creation.rs:259` | handled | ported |
 | `0x808B` | `GAME_CMSG_CHAR_CREATION_CONFIRM` (58) | `creation.rs:346` | handled | ported |
 | `0x8090` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_PLAYERS` (19) | `player.rs:430` | handled | ported |
-| `0x8091` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_ITEMS` (4) | `item.rs:448` | handled | ported thin |
+| `0x8091` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_ITEMS` (4) | `item.rs:448` | handled | ported: ASURA sends no `0x015E` either |
 | `0x80B1` | `GAME_CMSG_PARTY_TRAVEL` (9) | `travel.rs`, `handle_party_travel` | `answer_party_travel` and `begin_transfer` | ported |
 
 **Score: 31 ported or ported thin (11 auth + 20 game), 1 ours, 4 missing.**
@@ -138,7 +138,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x0029` | agent move to point (18) | `agent_move_to_point` / `_live` | `agent_packets::agent_move_to_point`, both forms | ported |
 | `0x002B` | agent update speed (11) | `agent_update_speed` / `_live` | `agent_packets::agent_update_speed`, both forms | ported |
 | `0x002C` | agent update position (16) | `agent_update_position` | `agent_packets::agent_update_position` | ported |
-| `0x0030` | character update info (94) | `character_update_info(name)` | fixed words, no name | ported thin |
+| `0x0030` | character update info (94) | `character_update_info(name)` | `character_packets::character_update_info("")` | ported |
 | `0x0037` | attribute points | `agent_update_attribute_points` | same | ported |
 | `0x003A` | attributes (202) | `agent_update_attributes` | same | ported |
 | `0x003C` | player flags | `player_update_flags` | same | ported |
@@ -161,8 +161,8 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x00B1` | a player's party | `player_update_party` | `party_packets::player_update_party` | ported |
 | `0x00B6` | unlocked professions | `player_update_unlocked_professions` | same | ported |
 | `0x00B7` | profession | `player_update_profession` | same | ported |
-| `0x00DA` | skillbar (79) | `skillbar_update` | eight empty slots only | ported thin |
-| `0x00DB` | unlocked skills (518) | `update_unlocked_skills` | always empty | ported thin |
+| `0x00DA` | skillbar (79) | `skillbar_update` | eight empty slots and eight zero masks, as ASURA sends them | ported |
+| `0x00DB` | unlocked skills (518) | `update_unlocked_skills` | empty, as ASURA sends it | ported |
 | `0x00E9` | the progress record (62) | `character_update_factions` | same | ported |
 | `0x00EA`-`0x00ED` | the four faction caps | `faction_max` | same | ported |
 | `0x00EF` | visibility flags | `char_visibility_flags` | same | ported |
@@ -178,7 +178,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x015A` | item set profession | `item_set_profession` | same | ported |
 | `0x015F` | create unnamed item (25) | `create_unnamed_item` | - | **missing** |
 | `0x0161` | create named item | `create_named_item` | same | ported |
-| `0x017C` | instance load head | `instance_load_head(pve, pvp)` | two unlock bytes are a constant | ported thin |
+| `0x017C` | instance load head | `instance_load_head(pve, pvp)` | `(0x3F, 0x3F)` - ASURA's own default | ported |
 | `0x017D` | the player's name | `instance_load_player_name` | same | ported |
 | `0x0186` | player-data start | `instance_player_data_start` | same | ported |
 | `0x0188` | creation success (1092) | `char_creation_success` | same | ported |
@@ -187,7 +187,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x018B` | creation error | `char_creation_error` | same | ported |
 | `0x018E` | the load is over | `instance_load_finish` | same | ported |
 | `0x0196` | the entry position (26) | `instance_load_spawn_point` | same | ported |
-| `0x0198` | manifest done | `instance_manifest_done(phase, map_id)` | three fixed words | ported thin |
+| `0x0198` | manifest done | `instance_manifest_done(phase, map_id)` | the 877 sentinel then the map, as ASURA sends them | ported |
 | `0x0199` | manifest phase | `instance_manifest_phase` | same | ported |
 | `0x019A` | instance load info | `instance_load_info` | same | ported |
 | `0x01A0` | the instance table (102) | `instance_table` | `instance_packets::instance_table` | ported thin: ASURA's shape, and the content is the maps whose rows state a value (one today) |
@@ -217,8 +217,8 @@ setting that selects one.
 | the greeting before the login | `session_info` then `heartbeat` | same | ported |
 | the login answer | one `character_info` per character, `account_settings`, `friend_stream_end`, `account_info`, `request_response` (`asura-auth/src/lib.rs:669-746`) | same five, same order | ported |
 | the creation conversation | `0x8089` -> the player-data block; `0x808A` -> the PvP half; `0x8060` -> removals, `0x00DB`, `0x00B7`, the new set; `0x808B` -> `0x0188` + `0x0099` (`creation.rs:190-519`) | same | ported |
-| the items ask | the stream, the bags and items, four weapon sets, the gold, four faction caps, the hard-mode flag, the character summary, the map, ready-for-spawn, the manifest (`item.rs:70`) | same, plus the reference's own `0x0196`-before-manifest order | ported thin: no `0x015E` |
-| the spawn ask | the entry point and the tick | the entry point and the tick | ported thin |
+| the items ask | the stream, the bags and items, four weapon sets, the gold, four faction caps, the hard-mode flag, the character summary, the map, ready-for-spawn, the manifest (`item.rs:70`) | same, plus the reference's own `0x0196`-before-manifest order | ported |
+| the spawn ask | the entry point (`agent.rs:1219`) | the entry point and the first tick, as the reference's own send log has it | ported thin |
 | the players ask | 34 frames, in one order (`player.rs:382-388` for the party) | the same 34, the same order | ported |
 | the travel | the redirect `0x01A6`, `0x0099` in its twelve-byte form, `0x00B0`, `0x00B1`, `0x005A`, `0x0021` (`travel.rs:480-518`) | the same eight, in the same order, out of `begin_transfer` | ported thin: no seat reservation and no doorway crossing |
 | a player joining a map others are in | `introduction` (`0x0059`, `0x00B0`, `0x00B1`, `0x0020`) and `farewell` (`0x005A`, `0x0021`) | nothing | **missing** |
@@ -250,19 +250,17 @@ setting that selects one.
    (`gwdat.rs`, `fa_compress.rs`, `map_data.rs`, `path_tables.rs`, `pathfind.rs`), so every walk is
    answered exactly as the working implementation answers a map it holds no graph for: `NoGraph`, and
    nothing on the wire.
-2. **`0x015F` (the unnamed item) is absent**, and the items block goes without `0x015E`. Its one caller
-   in ASURA is the introduction (`player.rs:527`), so it arrives with that pair rather than alone.
+2. **`0x015F` (the unnamed item) is absent**, and the items block goes without `0x015E` - as ASURA's
+   does. Its one caller in ASURA is the introduction (`player.rs:527`), so it arrives with that pair.
 3. **The instance table is ported thin**: ASURA's batch shape goes on the wire, and its content is the
    maps whose rows state an `instance_value` - one today (map 148). A client can resolve a destination
    only once that map's row carries its value.
-4. **The thin rows**: `0x0030` with no name, `0x00DA` and `0x00DB` always empty, `0x017C`'s two unlock
-   bytes as a constant, `0x0198`'s words carried rather than derived, and `0x009F`'s three properties.
-5. **The travel is ported thin**: the eight frames and the three triggers are ASURA's, but there is no
+4. **The travel is ported thin**: the eight frames and the three triggers are ASURA's, but there is no
    seat reservation and no doorway crossing (`portals.rs`), so a portal in the map does nothing.
-6. **`0x800D` is ours**: the ping is echoed instead of answered with the ping reply.
-7. **`introduction` and `farewell` are absent**: a player joining a map others are in is not announced,
+5. **`0x800D` is ours**: the ping is echoed instead of answered with the ping reply.
+6. **`introduction` and `farewell` are absent**: a player joining a map others are in is not announced,
    and one leaving is not withdrawn.
-8. **Four auth messages are absent** (`0x8000`, `0x8001`, `0x8002`, `0x8007`), and the two settings
+7. **Four auth messages are absent** (`0x8000`, `0x8001`, `0x8002`, `0x8007`), and the two settings
    uploads are acknowledged rather than stored.
 
 ## 8. The order this audit imposes
@@ -271,8 +269,7 @@ setting that selects one.
    `fa_compress.rs`, `map_data.rs`, `path_tables.rs` and `pathfind.rs` out of ASURA. Until it lands a
    walk is refused with `NoGraph` - the working implementation's own answer for a map with no graph -
    and nothing else about movement is outstanding.
-2. `0x015F`, with the introduction that calls it, and the items block's `0x015E`.
-3. The thin rows, each replaced by ASURA's own.
-4. The introduction and farewell pair.
-5. `0x800D` answered as ASURA answers it, then the four absent auth messages.
-6. The travel's own remaining half: the seat reservation and the doorway crossing.
+2. The introduction and farewell pair, with `0x015F` and the items block's `0x015E`.
+3. The instance table's content: an `instance_value` on every map row the world hosts.
+4. `0x800D` answered as ASURA answers it, then the four absent auth messages.
+5. The travel's own remaining half: the seat reservation and the doorway crossing.

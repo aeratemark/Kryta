@@ -182,9 +182,23 @@ pub fn faction_max(header: u16, cap: u32) -> Vec<u8> {
 /// 30 00 00 00 00 00 00 00 00 00 00 00 E8 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00`: an empty
 /// counted string (`00 00`) and the dwords 0, 0, 1000, 0, 0, 0. What the dword of 1000 names is not
 /// measured; a load repeats these values, so they are carried as the capture has them.
-pub fn character_update_info() -> Vec<u8> {
-    let mut body = vec![0u8; 2 + 24];
-    body[10..14].copy_from_slice(&1000u32.to_le_bytes());
+///
+/// The name is a parameter, as it is in the working implementation's builder: the reference sets it to
+/// empty, which is what this world passes, and the shape is `28 + 2n` because of the counted string
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs:775-788`).
+pub fn character_update_info(name: &str) -> Vec<u8> {
+    let units: Vec<u16> = name.encode_utf16().take(32).collect();
+    let mut body = Vec::with_capacity(2 + units.len() * 2 + 24);
+    body.extend_from_slice(&(units.len() as u16).to_le_bytes());
+    for unit in &units {
+        body.extend_from_slice(&unit.to_le_bytes());
+    }
+    body.extend_from_slice(&0u32.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes());
+    body.extend_from_slice(&1000u32.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes());
     frame(CHARACTER_UPDATE_INFO, &body)
 }
 

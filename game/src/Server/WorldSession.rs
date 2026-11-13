@@ -441,6 +441,262 @@ impl WorldSession {
         Some((bag.id, slot))
     }
 
+    /// The bags this world's content gives a character, or none when the world read no creation data.
+    fn bags(&self) -> Vec<crate::creation::Bag> {
+        self.creation
+            .as_ref()
+            .map(|tables| crate::creation::bags(tables).to_vec())
+            .unwrap_or_default()
+    }
+
+    /// The character database, when the program opened one.
+    fn characters(&self) -> Option<crate::characters::DatabaseCharacters> {
+        self.characters.as_ref().map(|pool| {
+            crate::characters::DatabaseCharacters::new(
+                std::sync::Arc::clone(pool),
+                self.log.clone(),
+            )
+        })
+    }
+
+    /// `GAME_CMSG_ITEM_MOVE` (`0x8072`): a drag in the inventory.
+    ///
+    /// Ported from `ASURA/crates/asura-world/src/item.rs:255-312`, whole: the row moves when the
+    /// client's placement is one it may have, a refused move is answered with where the item **really
+    /// is** - the client moved it in its own model before asking - and the agent's worn items are sent
+    /// again when the equipped set changed, because that is the one thing the client cannot work out for
+    /// itself.
+    async fn answer_item_move(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        message: &[u8],
+        crypt: &mut AuthCrypt,
+        sheet: &CharacterSheet,
+    ) {
+        let Some((item_id, bag_id, slot)) = item_move(message) else {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: an item move of {} bytes cannot be read.",
+                    message.len()
+                ),
+            );
+            return;
+        };
+        let Some(characters) = self.characters() else {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: an item move was asked for, and this world has no character database."
+                ),
+            );
+            return;
+        };
+        let uuid = crate::characters::uuid_text(&sheet.uuid);
+        let bags = self.bags();
+        let before = characters.equipped_item_ids(&uuid, &bags).unwrap_or([0u32; 9]);
+
+        let mut frames = Vec::new();
+        match characters.move_item(&uuid, item_id, bag_id, slot, &bags) {
+            Ok(crate::characters::MoveOutcome::At { bag_id, slot }) => {
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Gameplay connection from {peer}: item {item_id} moved to bag {bag_id} slot {slot}."
+                    ),
+                );
+                frames.push(item_packets::item_move_to_location(
+                    item_packets::ITEM_STREAM,
+                    item_id,
+                    bag_id,
+                    slot,
+                ));
+            }
+            Ok(crate::characters::MoveOutcome::Unchanged) => {}
+            Ok(crate::characters::MoveOutcome::Refused { place, reason }) => {
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Gameplay connection from {peer}: item {item_id} to bag {bag_id} slot {slot} refused: {reason:?}."
+                    ),
+                );
+                // The client moved it in its own model before asking, so put it back.
+                if let Some((bag, slot)) = place {
+                    frames.push(item_packets::item_move_to_location(
+                        item_packets::ITEM_STREAM,
+                        item_id,
+                        bag,
+                        slot,
+                    ));
+                }
+            }
+            Err(error) => self.say(
+                LogLevel::Warn,
+                format!("Gameplay connection from {peer}: the item move could not be written: {error}"),
+            ),
+        }
+        if characters.equipped_item_ids(&uuid, &bags).unwrap_or(before) != before {
+            frames.push(self.equipment_frame(&uuid, &bags, &characters));
+        }
+        if !frames.is_empty() {
+            self.send(io, peer, crypt, &frames, "the item's new place").await;
+        }
+    }
+
+    /// `GAME_CMSG_EQUIP_ITEM` (`0x8030`): wear an item, evicting whatever the equipped slot held.
+    ///
+    /// Ported from `ASURA/crates/asura-world/src/item.rs:314-436`, whole: the item must be the
+    /// character's, its kind must be one that is worn, the equipped bag must exist, whatever is in that
+    /// slot comes off to the first free carrying slot first (and with nowhere to put it, nothing is
+    /// worn), and the agent's worn items are sent again when the set changed.
+    async fn answer_equip_item(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        message: &[u8],
+        crypt: &mut AuthCrypt,
+        sheet: &CharacterSheet,
+    ) {
+        let Some(item_id) = message
+            .get(2..6)
+            .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        else {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: an equip of {} bytes cannot be read.",
+                    message.len()
+                ),
+            );
+            return;
+        };
+        let Some(characters) = self.characters() else {
+            self.say(
+                LogLevel::Warn,
+                format!(
+                    "Gameplay connection from {peer}: an equip was asked for, and this world has no character database."
+                ),
+            );
+            return;
+        };
+        let Some((bag_id, slot)) = self.equip_place(&characters, sheet, item_id) else {
+            return;
+        };
+        let uuid = crate::characters::uuid_text(&sheet.uuid);
+        let bags = self.bags();
+        let before = characters.equipped_item_ids(&uuid, &bags).unwrap_or([0u32; 9]);
+        let mut frames = Vec::new();
+
+        // Whatever is worn in that slot has to come off first, and there has to be somewhere to put it.
+        let occupant = characters
+            .items_of(&uuid)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|row| row.bag_id == bag_id && row.slot == slot && row.item_id != item_id);
+        if let Some(occupant) = occupant {
+            let Some((to_bag, to_slot)) = characters
+                .first_free_carrying_slot(&uuid, &bags)
+                .unwrap_or_default()
+            else {
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Gameplay connection from {peer}: no free carrying slot to take item {} off, so item {item_id} cannot be worn.",
+                        occupant.item_id
+                    ),
+                );
+                return;
+            };
+            match characters.move_item(&uuid, occupant.item_id, to_bag, to_slot, &bags) {
+                Ok(crate::characters::MoveOutcome::At { bag_id, slot }) => {
+                    self.say(
+                        LogLevel::Info,
+                        format!(
+                            "Gameplay connection from {peer}: item {} taken off to bag {bag_id} slot {slot}.",
+                            occupant.item_id
+                        ),
+                    );
+                    frames.push(item_packets::item_move_to_location(
+                        item_packets::ITEM_STREAM,
+                        occupant.item_id,
+                        bag_id,
+                        slot,
+                    ));
+                }
+                outcome => {
+                    self.say(
+                        LogLevel::Warn,
+                        format!(
+                            "Gameplay connection from {peer}: could not take item {} off to make room for {item_id}: {outcome:?}",
+                            occupant.item_id
+                        ),
+                    );
+                    return;
+                }
+            }
+        }
+
+        match characters.move_item(&uuid, item_id, bag_id, slot, &bags) {
+            Ok(crate::characters::MoveOutcome::At { bag_id, slot }) => {
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Gameplay connection from {peer}: item {item_id} worn in equipped slot {slot} of bag {bag_id}."
+                    ),
+                );
+                frames.push(item_packets::item_move_to_location(
+                    item_packets::ITEM_STREAM,
+                    item_id,
+                    bag_id,
+                    slot,
+                ));
+            }
+            Ok(crate::characters::MoveOutcome::Unchanged) => {}
+            Ok(crate::characters::MoveOutcome::Refused { place, reason }) => {
+                self.say(
+                    LogLevel::Info,
+                    format!(
+                        "Gameplay connection from {peer}: equipping item {item_id} refused: {reason:?}."
+                    ),
+                );
+                if let Some((bag, slot)) = place {
+                    frames.push(item_packets::item_move_to_location(
+                        item_packets::ITEM_STREAM,
+                        item_id,
+                        bag,
+                        slot,
+                    ));
+                }
+            }
+            Err(error) => self.say(
+                LogLevel::Warn,
+                format!("Gameplay connection from {peer}: the equip could not be written: {error}"),
+            ),
+        }
+
+        if characters.equipped_item_ids(&uuid, &bags).unwrap_or(before) != before {
+            frames.push(self.equipment_frame(&uuid, &bags, &characters));
+        }
+        if !frames.is_empty() {
+            self.send(io, peer, crypt, &frames, "the item's new place").await;
+        }
+    }
+
+    /// `UPDATE_AGENT_VISUAL_EQUIPMENT` for this character: the nine ids the agent is drawn wearing.
+    ///
+    /// `ASURA/crates/asura-world/src/item.rs:438-440`, `equipment_frame`. A character whose rows cannot
+    /// be read is drawn wearing nothing, which is what the load does with the same failure.
+    fn equipment_frame(
+        &self,
+        uuid: &str,
+        bags: &[crate::creation::Bag],
+        characters: &crate::characters::DatabaseCharacters,
+    ) -> Vec<u8> {
+        let equipped = characters.equipped_item_ids(uuid, bags).unwrap_or([0u32; 9]);
+        misc_packets::update_agent_visual_equipment(CREATION_AGENT, equipped)
+    }
+
     fn say(&self, level: LogLevel, text: impl Into<String>) {
         self.log.out(level, "server.worldserver", text);
     }
@@ -1918,7 +2174,7 @@ impl WorldSession {
                     instance_packets::CLIENT_LOAD_REQUEST_ITEMS => {
                         let mut frames = crate::creation::load_item_stream(&inventory, sheet.gold);
                         frames.push(misc_packets::hard_mode_unlocked(1));
-                        frames.push(character_packets::character_update_info());
+                        frames.push(character_packets::character_update_info(""));
                         frames.push(misc_packets::map_update_current(map.id as u16, 0));
                         frames.push(instance_packets::ready_for_map_spawn(0));
                         frames.push(instance_packets::instance_manifest_phase(0));
@@ -2182,60 +2438,11 @@ impl WorldSession {
                         );
                         loaded = true;
                     }
-                    // A drag in the inventory: where the item goes is a row, and the client is told
-                    // the same placement back. `0x8072` is the client's own `9` bytes - the item, the
-                    // bag and the slot - and `0x013E` is the placement the client already knows.
+                    // A drag in the inventory: where the item goes is a row, the rules are ASURA's, and
+                    // the client is told the placement back. `0x8072` is the client's own `9` bytes - the
+                    // item, the bag and the slot - and `0x013E` is the placement.
                     CLIENT_ITEM_MOVE => {
-                        match item_move(&message) {
-                            Some((item_id, bag_id, slot)) => {
-                                let characters = self.characters.as_ref().map(|pool| {
-                                    crate::characters::DatabaseCharacters::new(
-                                        std::sync::Arc::clone(pool),
-                                        self.log.clone(),
-                                    )
-                                });
-                                let stored = match characters {
-                                    Some(characters) => characters.move_item(
-                                        &crate::characters::uuid_text(&sheet.uuid),
-                                        item_id,
-                                        bag_id,
-                                        slot,
-                                    ),
-                                    None => Ok(false),
-                                };
-                                match stored {
-                                    Ok(true) => {
-                                        let frame = item_packets::item_move_to_location(
-                                            item_packets::ITEM_STREAM,
-                                            item_id,
-                                            bag_id,
-                                            slot,
-                                        );
-                                        self.send(io, peer, crypt, &[frame], "the item's new place")
-                                            .await;
-                                    }
-                                    Ok(false) => self.say(
-                                        LogLevel::Info,
-                                        format!(
-                                            "Gameplay connection from {peer}: item {item_id} is not the character's, so its move to bag {bag_id} slot {slot} is refused."
-                                        ),
-                                    ),
-                                    Err(error) => self.say(
-                                        LogLevel::Warn,
-                                        format!(
-                                            "Gameplay connection from {peer}: the item move could not be written: {error}"
-                                        ),
-                                    ),
-                                }
-                            }
-                            None => self.say(
-                                LogLevel::Warn,
-                                format!(
-                                    "Gameplay connection from {peer}: an item move of {} bytes cannot be read.",
-                                    message.len()
-                                ),
-                            ),
-                        }
+                        self.answer_item_move(io, peer, &message, crypt, sheet).await;
                     }
                     // `GAME_CMSG_PING_REPLY` (`0x8009`, 10 bytes) and `GAME_CMSG_HEARTBEAT` (`0x800C`,
                     // 2 bytes): the working implementation names both and discards both
@@ -2354,65 +2561,12 @@ impl WorldSession {
                             "Gameplay connection from {peer}: an unequip (0x804F) is not ported: it carries no item id and no capture shows what it means; dragging the item out of the equipped bag is the path that works."
                         ),
                     ),
-                    // The client wears one of its items: where it goes is the slot its kind is worn
-                    // in, in the bag the setting says is equipped, and the client is told the place.
+                    // The client wears one of its items: the slot its kind is worn in, in the equipped
+                    // bag, with whatever was worn there taken off to the first free carrying slot - and
+                    // the agent's worn items sent again, which is the one thing the client cannot work
+                    // out for itself (`ASURA/crates/asura-world/src/item.rs:314-436`).
                     CLIENT_EQUIP_ITEM => {
-                        let Some(item_id) = message
-                            .get(2..6)
-                            .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-                        else {
-                            self.say(
-                                LogLevel::Warn,
-                                format!(
-                                    "Gameplay connection from {peer}: an equip of {} bytes cannot be read.",
-                                    message.len()
-                                ),
-                            );
-                            continue;
-                        };
-                        let Some(characters) = self.characters.as_ref().map(|pool| {
-                            crate::characters::DatabaseCharacters::new(
-                                std::sync::Arc::clone(pool),
-                                self.log.clone(),
-                            )
-                        }) else {
-                            self.say(
-                                LogLevel::Warn,
-                                format!(
-                                    "Gameplay connection from {peer}: an equip was asked for, and this world has no character database."
-                                ),
-                            );
-                            continue;
-                        };
-                        let Some((bag_id, slot)) = self.equip_place(&characters, sheet, item_id)
-                        else {
-                            continue;
-                        };
-                        let uuid = crate::characters::uuid_text(&sheet.uuid);
-                        match characters.move_item(&uuid, item_id, bag_id, slot) {
-                            Ok(true) => {
-                                let frame = item_packets::item_move_to_location(
-                                    item_packets::ITEM_STREAM,
-                                    item_id,
-                                    bag_id,
-                                    slot,
-                                );
-                                self.send(io, peer, crypt, &[frame], "the item's new place")
-                                    .await;
-                            }
-                            Ok(false) => self.say(
-                                LogLevel::Warn,
-                                format!(
-                                    "Gameplay connection from {peer}: item {item_id} could not be moved to bag {bag_id} slot {slot}."
-                                ),
-                            ),
-                            Err(error) => self.say(
-                                LogLevel::Warn,
-                                format!(
-                                    "Gameplay connection from {peer}: the equip could not be written: {error}"
-                                ),
-                            ),
-                        }
+                        self.answer_equip_item(io, peer, &message, crypt, sheet).await;
                     }
                     other => {
                         self.log.out(
@@ -3367,7 +3521,7 @@ Logger.root = 6,Console
             .inventory(0, character_packets::DEFAULT_PROFESSION);
         let mut expected_items = crate::creation::load_item_stream(&inventory, 0);
         expected_items.push(misc_packets::hard_mode_unlocked(1));
-        expected_items.push(character_packets::character_update_info());
+        expected_items.push(character_packets::character_update_info(""));
         expected_items.push(misc_packets::map_update_current(148, 0));
         expected_items.push(instance_packets::ready_for_map_spawn(0));
         expected_items.push(instance_packets::instance_manifest_phase(0));
@@ -3697,7 +3851,7 @@ Logger.root = 6,Console
         client.write_all(&ask).unwrap();
         let mut expected_items = crate::creation::load_item_stream(&starting, 1234);
         expected_items.push(misc_packets::hard_mode_unlocked(1));
-        expected_items.push(character_packets::character_update_info());
+        expected_items.push(character_packets::character_update_info(""));
         expected_items.push(misc_packets::map_update_current(148, 0));
         expected_items.push(instance_packets::ready_for_map_spawn(0));
         expected_items.push(instance_packets::instance_manifest_phase(0));

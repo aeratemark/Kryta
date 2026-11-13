@@ -20,6 +20,55 @@ use database::database::{DatabaseWorkerPool, Param};
 use crate::characters::{uuid_bytes, Character, CharacterSettings};
 use crate::creation::Inventory;
 
+/// `BagModelId_EquippedItems` (`GmInventory.h`): the bag whose slots are the nine worn items.
+/// `ASURA/crates/asura-store/src/state/inventory.rs:176-177`.
+pub const EQUIPPED_ITEMS_MODEL: u8 = 21;
+
+/// `BagModelId_Backpack`: the first bag a carrying-slot search looks in.
+/// `ASURA/crates/asura-store/src/state/inventory.rs:179-180`.
+pub const BACKPACK_MODEL: u8 = 0;
+
+/// `BagModelId_Bag2`: the last bag that search looks in
+/// (`ASURA/crates/asura-store/src/state/inventory.rs:182-184`).
+pub const LAST_CARRYING_MODEL: u8 = 3;
+
+/// Why an item was not moved. `ASURA/crates/asura-store/src/state/inventory.rs:842-855`, minus its
+/// `NotInASlot`: an item row here always names the bag and slot it sits in, so that case cannot arise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refused {
+    /// No such item for this character.
+    NoSuchItem,
+    /// No such bag for this character.
+    NoSuchBag,
+    /// The slot is outside the bag: slots are `0..slot_count`.
+    OutOfRange,
+    /// Something else is in that slot. Equipping evicts; a move does not.
+    Occupied,
+}
+
+/// What an attempt to put an item somewhere did.
+/// `ASURA/crates/asura-store/src/state/inventory.rs:857-882`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MoveOutcome {
+    /// It is now at `(bag_id, slot)`.
+    At {
+        /// Where it now sits.
+        bag_id: u16,
+        /// Which slot of that bag.
+        slot: u8,
+    },
+    /// It was already there; nothing was written.
+    Unchanged,
+    /// Nothing happened, and `place` is where the item actually is - a caller uses that to put the
+    /// client's own model back, because the client moves the item optimistically before it asks.
+    Refused {
+        /// Where the item really is, when the character still has it.
+        place: Option<(u16, u8)>,
+        /// Why the move did not happen.
+        reason: Refused,
+    },
+}
+
 /// The columns the list shows, in the order the list builds a character from them.
 const SELECT_CHARACTERS: &str = "SELECT \"uuid\", \"name\", \"appearance\", \"primary_profession\", \
 \"secondary_profession\", \"campaign\", \"level\", \"is_pvp\", \"helm_status\", \"last_outpost\" \
@@ -354,17 +403,59 @@ impl DatabaseCharacters {
             .collect()
     }
 
-    /// Move one of a character's items to a bag slot, and answer whether the row was the character's.
+    /// Move one of a character's items to a bag slot, with the rules a client can be held to.
     ///
-    /// The item's own row is the state: a drag that the client drew is this update, and the answer to
-    /// the client is the placement it already knows (`0x013E`).
+    /// Ported from `ASURA/crates/asura-store/src/state/inventory.rs:884-975`, `move_item`: the bag must
+    /// be one this character has, the slot must be inside it, and the slot must be free - and a move that
+    /// did not happen answers where the item **really is**, because the client has already moved it in
+    /// its own model (`docs/reference/client-protocol.md`, "a refused move is answered with
+    /// `ITEM_MOVE_TO_LOCATION` for where the item really is"). Equipping is a move into the
+    /// equipped-items bag, so it goes through here too.
+    ///
+    /// The bags are this tree's content (`game/src/creation/mod.rs`, `Bag`), not rows: their ids, models
+    /// and slot counts are the same for every character, so the list the caller holds is the list that
+    /// decides. ASURA keeps them as `t_bag` rows and asks the database; the rules are its own either way.
     pub fn move_item(
         &self,
         uuid: &str,
         item_id: u32,
         bag_id: u16,
         slot: u8,
-    ) -> Result<bool, String> {
+        bags: &[crate::creation::Bag],
+    ) -> Result<MoveOutcome, String> {
+        let held = self.items_of(uuid)?;
+        let Some(item) = held.iter().find(|row| row.item_id == item_id) else {
+            return Ok(MoveOutcome::Refused {
+                place: None,
+                reason: Refused::NoSuchItem,
+            });
+        };
+        let here = (item.bag_id, item.slot);
+        if here == (bag_id, slot) {
+            return Ok(MoveOutcome::Unchanged);
+        }
+        let Some(bag) = bags.iter().find(|bag| bag.id == bag_id) else {
+            return Ok(MoveOutcome::Refused {
+                place: Some(here),
+                reason: Refused::NoSuchBag,
+            });
+        };
+        if slot >= bag.slots {
+            return Ok(MoveOutcome::Refused {
+                place: Some(here),
+                reason: Refused::OutOfRange,
+            });
+        }
+        if held
+            .iter()
+            .any(|row| row.bag_id == bag_id && row.slot == slot && row.item_id != item_id)
+        {
+            return Ok(MoveOutcome::Refused {
+                place: Some(here),
+                reason: Refused::Occupied,
+            });
+        }
+
         let reply = match self.pool.lock() {
             Ok(pool) => pool.query_reply(
                 "UPDATE \"item_instance\" SET \"bag_id\" = $1, \"slot\" = $2 \
@@ -379,7 +470,11 @@ impl DatabaseCharacters {
             Err(_) => return Err("the character database pool is poisoned".to_string()),
         };
         match reply.recv() {
-            Ok(Ok(rows)) => Ok(!rows.is_empty()),
+            Ok(Ok(rows)) if !rows.is_empty() => Ok(MoveOutcome::At { bag_id, slot }),
+            Ok(Ok(_)) => Ok(MoveOutcome::Refused {
+                place: Some(here),
+                reason: Refused::NoSuchItem,
+            }),
             Ok(Err(error)) => {
                 self.log.out(
                     LogLevel::Error,
@@ -390,6 +485,63 @@ impl DatabaseCharacters {
             }
             Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
         }
+    }
+
+    /// The first free slot in the bags a character carries, backpack first.
+    ///
+    /// Ported from `ASURA/crates/asura-store/src/state/inventory.rs:977-1007`,
+    /// `first_free_carrying_slot`: the search covers the bags from [`BACKPACK_MODEL`] to
+    /// [`LAST_CARRYING_MODEL`], ordered by model and then by id and slot. The working implementation says
+    /// why this exists at all: the reference's own `GmBag_TryAddToBag` tests `items[idx] != 0` where it
+    /// means `== 0`, so it overwrites an occupied slot instead of finding an empty one. This is the
+    /// intent, not the bug - unequipping something has to have somewhere to put it.
+    pub fn first_free_carrying_slot(
+        &self,
+        uuid: &str,
+        bags: &[crate::creation::Bag],
+    ) -> Result<Option<(u16, u8)>, String> {
+        let held = self.items_of(uuid)?;
+        let mut carrying: Vec<&crate::creation::Bag> = bags
+            .iter()
+            .filter(|bag| (BACKPACK_MODEL..=LAST_CARRYING_MODEL).contains(&bag.model))
+            .collect();
+        carrying.sort_by_key(|bag| (bag.model, bag.id));
+        for bag in carrying {
+            for slot in 0..bag.slots {
+                if !held
+                    .iter()
+                    .any(|row| row.bag_id == bag.id && row.slot == slot)
+                {
+                    return Ok(Some((bag.id, slot)));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// The nine item ids `UPDATE_AGENT_VISUAL_EQUIPMENT` carries: what the agent is wearing, by slot.
+    ///
+    /// `ASURA/crates/asura-store/src/state/inventory.rs:136-158`, `equipped_item_ids`: read out of the
+    /// equipped-items bag rather than from a constant, because the ids belong to this character's items -
+    /// a second character's armour has different ones. A slot the character wears nothing in is zero.
+    pub fn equipped_item_ids(
+        &self,
+        uuid: &str,
+        bags: &[crate::creation::Bag],
+    ) -> Result<[u32; 9], String> {
+        let mut ids = [0u32; 9];
+        let Some(bag) = bags.iter().find(|bag| bag.model == EQUIPPED_ITEMS_MODEL) else {
+            return Ok(ids);
+        };
+        for row in self.items_of(uuid)? {
+            if row.bag_id != bag.id {
+                continue;
+            }
+            if let Some(held) = ids.get_mut(usize::from(row.slot)) {
+                *held = row.item_id;
+            }
+        }
+        Ok(ids)
     }
 
     /// Remove one of a character's items, and answer whether the row was the character's.
