@@ -2580,7 +2580,7 @@ impl WorldSession {
                     // and the first simulation tick.
                     instance_packets::CLIENT_LOAD_REQUEST_SPAWN => {
                         let point = entry;
-                        let mut frames = match point {
+                        let frames = match point {
                             Some(point) => {
                                 self.say(
                                     LogLevel::Info,
