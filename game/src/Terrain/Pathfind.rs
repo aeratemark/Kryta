@@ -1363,6 +1363,68 @@ impl Default for PathGraphs {
 }
 
 impl PathGraphs {
+    /// Import every map's graph out of a `Gw.dat`, which is what `GameSrv_LoadMap` does with the blob its
+    /// map config names.
+    ///
+    /// A map whose blob is missing or does not import is left out, with a line saying so: the world still
+    /// serves that map, it just cannot say anything about where an agent in it may walk. Only an archive
+    /// that cannot be opened at all is an error, and the caller decides what to do about that.
+    /// `ASURA/crates/asura-world/src/pathfind.rs:1507`, `PathGraphs::load`.
+    pub fn load(archive_path: &str, maps: &[MapEntry]) -> std::io::Result<PathGraphs> {
+        let mut archive = crate::pack::GwDat::open(archive_path)?;
+        let mut data = std::collections::HashMap::new();
+
+        for map in maps {
+            if let Some(graph) = import_graph(&mut archive, archive_path, map) {
+                data.entry(map.file_id).or_insert(graph);
+            }
+        }
+
+        let graphs = PathGraphs(std::sync::Arc::new(PathGraphsInner {
+            data: std::sync::Mutex::new(data),
+            bound: std::sync::Mutex::new(std::collections::HashMap::new()),
+            finders: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }));
+        graphs.bind(maps);
+        Ok(graphs)
+    }
+
+    /// Make one map pathable: bind it to a graph already loaded (a dump), or import its blob from the
+    /// archive. An archive that will not open is the only error; a blob that is missing or does not import
+    /// is logged and leaves the map without pathfinding, exactly as at startup.
+    /// `ASURA/crates/asura-world/src/pathfind.rs:1562`, `PathGraphs::import`.
+    pub fn import(&self, map: &MapEntry, archive_path: &str) -> std::io::Result<()> {
+        let already_loaded = self
+            .0
+            .data
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .contains_key(&map.file_id);
+        if already_loaded {
+            self.0
+                .bound
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .insert(map.id as i32, map.file_id);
+            return Ok(());
+        }
+        let mut archive = crate::pack::GwDat::open(archive_path)?;
+        if let Some(graph) = import_graph(&mut archive, archive_path, map) {
+            self.0
+                .data
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .entry(map.file_id)
+                .or_insert(graph);
+        }
+        self.0
+            .bound
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .insert(map.id as i32, map.file_id);
+        Ok(())
+    }
+
     /// Load the graphs from a dump written by the dumper, so no `Gw.dat` is needed at runtime.
     ///
     /// Nothing is bound yet: call [`PathGraphs::bind`] with the maps this world serves.
@@ -1514,6 +1576,53 @@ impl PathGraphs {
 // `PathGraphs::load`/`import` (1507-1592) and `import_graph` (1703-1744) wait on the importer in
 // `map_data.rs`, which is the last piece of this subject.
 // ---------------------------------------------------------------------------------------------
+
+/// Read one map's blob out of an open archive and import it, or say why it is absent.
+///
+/// `ASURA/crates/asura-world/src/pathfind.rs:1703`, `import_graph`: every line it prints is the working
+/// implementation's own.
+pub fn import_graph(
+    archive: &mut crate::pack::GwDat,
+    archive_path: &str,
+    map: &MapEntry,
+) -> Option<std::sync::Arc<PathStaticData>> {
+    match find_path_blob(archive, map.file_id, map.id as i32) {
+        Ok(Some((blob_id, content))) => {
+            if blob_id != map.file_id {
+                eprintln!(
+                    "world: map {} ({}) path graph comes from blob {blob_id:#X} rather than \
+                     {:#X}: the archive binds the plain logical id (the bit-31 replacement flag, \
+                     docs/03-roadmap.md)",
+                    map.id, map.name, map.file_id
+                );
+            }
+            match PathStaticData::import(&content) {
+                Ok(imported) => Some(std::sync::Arc::new(imported)),
+                Err(err) => {
+                    eprintln!(
+                        "world: map {} ({}) has no path graph: blob {blob_id:#X} did not import: {err}",
+                        map.id, map.name
+                    );
+                    None
+                }
+            }
+        }
+        Ok(None) => {
+            eprintln!(
+                "world: map {} ({}) has no path graph: blob {:#X} is not in {archive_path}",
+                map.id, map.name, map.file_id
+            );
+            None
+        }
+        Err(err) => {
+            eprintln!(
+                "world: map {} ({}) has no path graph: blob {:#X} could not be read: {err}",
+                map.id, map.name, map.file_id
+            );
+            None
+        }
+    }
+}
 
 /// The blob a map's path graph actually lives at, tolerating the archive's bit-31 replacement rule.
 ///
@@ -1822,6 +1931,42 @@ mod tests {
     /// `PathHeapPush`/`PathHeapPop` pop the cheapest node first, and keep doing it as the heap shrinks -
     /// the order is the order the search visits trapezoids in, which is why the reference's own
     /// sift-down is kept rather than a tidy one.
+    /// The whole archive path: `PathGraphs::load` reads map 148's own blob out of this machine's
+    /// `Gw.dat`, binds it, and the map walks from the point its config spawns on. Skipped when there is
+    /// no archive to read.
+    #[test]
+    fn a_map_loaded_from_the_archive_walks_where_its_spawn_stands() {
+        let Some(path) = std::env::var("KRYTA_GW_DAT").ok().or_else(|| {
+            let candidate = std::path::PathBuf::from("Gw.dat");
+            candidate.exists().then(|| candidate.to_string_lossy().into_owned())
+        }) else {
+            eprintln!("skipped: no local Gw.dat");
+            return;
+        };
+        let map = MapEntry {
+            id: 148,
+            kind: 0,
+            file_id: 0x1B97D,
+            name: "Ascalon City (pre-Searing)".to_string(),
+            instance_value: Some(0xBB14_F539),
+        };
+        let graphs = PathGraphs::load(&path, std::slice::from_ref(&map)).expect("open the archive");
+        assert_eq!(graphs.imported(), 1, "map 148s blob imported");
+        assert_eq!(graphs.maps(), vec![148], "and it is bound");
+        // The spawn point the map's own config names, and a walk a few dozen units away from it.
+        let spawn = pos(9541.87, 4796.46);
+        let walked = graphs.walk(148, spawn, pos(9600.0, 4850.0));
+        assert!(
+            matches!(walked, Walk::Found(_)),
+            "the map walks from its own spawn point: {walked:?}"
+        );
+        // A map this world does not bind has no graph, whatever the archive holds.
+        assert!(matches!(
+            graphs.walk(146, spawn, pos(9600.0, 4850.0)),
+            Walk::NoGraph
+        ));
+    }
+
     #[test]
     fn the_heap_pops_in_cost_order() {
         let mut heap = Vec::new();

@@ -397,9 +397,14 @@ road.
      -blob case (971), its node-id ranges (994), and against this machine's real archive - map 148's
      blob imports, the graph has planes and trapezoids, and the map's own spawn point lands in a
      trapezoid, which is the check ASURA uses to know its import worked.
-   - **Left**: nothing of the importer. The three callers remain: `import_graph` (pathfind.rs
-     1703-1744) and `PathGraphs::load` / `PathGraphs::import` (1507-1592); then the world's start-up
-     reads a `Gw.dat` (or a dump) and walking answers from this machine's own archive.
+   - **Left**: nothing of the importer. **(done)** The three callers too: `import_graph`
+     (pathfind.rs 1703-1744, with the working implementation's own log lines for a substituted id, an
+     unimportable blob and an absent one), `PathGraphs::load` (1507) and `PathGraphs::import` (1562).
+     A test loads map 148 from this machine's real `Gw.dat` through `PathGraphs::load`, binds it, and
+     **the map walks from its own spawn point** - while map 146, unbound, still answers `NoGraph`.
+     **The walking subject is ported end to end from the archive.** What remains outside it: the
+     world's start-up does not yet call `load`/`from_dump` and the session still answers through the
+     `Graphs` shim, so no client sees a waypoint until that wiring lands.
    - `PathStaticData::import` (490) and `read` (506): the `PATH_DATA_SIGNATURE`/`PATH_DATA_VERSION`
      check, then `read_planes` (535) -> `read_plane` (551) -> per plane `read_counts` (578),
      `skip_tag11` (606), `read_vectors` (618), `read_trapezoids` (639), `read_root_node` (681),
