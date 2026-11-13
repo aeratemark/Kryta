@@ -4161,13 +4161,19 @@ Logger.root = 6,Console
         let mut sending = common::cryptography::Arc4::new(&key);
 
         // 3. The block: the outpost's load, not the creation instance's, with the record's district
-        // and language, and the character's own name.
-        let expected = [
+        // and language, and the character's own name. The block carries the exploration grid and the
+        // instance table after the instance's record, so it is read frame by frame up to the table.
+        let grid = crate::maps::cartography::init_frames(crate::maps::cartography::grid_for(148));
+        let (table, notes) = crate::maps::instance_table::table_for(world.maps());
+        assert!(notes.is_empty(), "every map's value is stated or absent: {notes:?}");
+        let mut expected = vec![
             instance_packets::instance_load_head(),
             instance_packets::instance_player_data_start(),
             instance_packets::instance_load_player_name("Travelled One"),
             instance_packets::instance_load_info(1, 148, 0, 3, 2, 0),
         ];
+        expected.extend(grid);
+        expected.extend(table.frames());
         let expected_bytes: usize = expected.iter().map(Vec::len).sum();
         let mut block = vec![0u8; expected_bytes];
         client.read_exact(&mut block).unwrap();
@@ -4262,19 +4268,70 @@ Logger.root = 6,Console
             .expect("the item is one of the character's");
         assert_eq!((moved_row.bag_id, moved_row.slot), (3, 7), "the row moved with it");
 
-        // 4d. An equip: the item goes to the slot its kind is worn in, in the equipped bag.
+        // 4d. An equip: the item goes to the slot its kind is worn in, in the equipped bag, and whatever
+        // was worn there comes off to the first free carrying slot
+        // (`ASURA/crates/asura-world/src/item.rs:314-436`). An item already in its own worn slot is
+        // `MoveOutcome::Unchanged` and answers nothing, so the one picked is somewhere else.
+        let equipped_bag = crate::creation::equipped_bag(world.creation())
+            .expect("the setting names the equipped bag");
+        // The starting set's wearable items are already worn, so the sequence is the player's own: take
+        // one off to the backpack first, then wear it again.
         let worn = starting
             .items
             .iter()
             .find(|item| crate::creation::equipped_slot(item.item_type).is_some())
             .expect("the set carries something wearable");
         let worn_slot = crate::creation::equipped_slot(worn.item_type).unwrap();
-        let equipped_bag = crate::creation::equipped_bag(world.creation())
-            .expect("the setting names the equipped bag");
+        let backpack = crate::creation::bags(world.creation())
+            .iter()
+            .find(|bag| bag.model == crate::characters::BACKPACK_MODEL)
+            .copied()
+            .expect("the content has a backpack");
+        let free = (0..backpack.slots)
+            .find(|slot| {
+                !starting
+                    .items
+                    .iter()
+                    .any(|item| item.bag_id == Some(backpack.id) && item.slot == Some(*slot))
+            })
+            .expect("the backpack has a free slot");
+        let mut take_off = vec![0u8; 9];
+        take_off[0..2].copy_from_slice(&0x8072u16.to_le_bytes());
+        take_off[2..6].copy_from_slice(&worn.id.to_le_bytes());
+        take_off[6..8].copy_from_slice(&backpack.id.to_le_bytes());
+        take_off[8] = free;
+        sending.apply(&mut take_off);
+        client.write_all(&take_off).unwrap();
+        let mut off = vec![0u8; 11];
+        client.read_exact(&mut off).unwrap();
+        reading.apply(&mut off);
+        assert_eq!(&off[..2], &[0x3E, 0x01], "the drag's placement");
+        assert_eq!(&off[8..10], &backpack.id.to_le_bytes(), "into the backpack");
+        // Taking it off changes what the agent is drawn wearing, so that is sent again too.
+        let mut off_drawn = vec![0u8; 2 + 4 + 9 * 4];
+        client.read_exact(&mut off_drawn).unwrap();
+        reading.apply(&mut off_drawn);
+        assert_eq!(&off_drawn[..2], &[0x6E, 0x00], "the agent's worn items");
+        let occupant = starting
+            .items
+            .iter()
+            .find(|item| {
+                item.bag_id == Some(equipped_bag.id)
+                    && item.slot == Some(worn_slot)
+                    && item.id != worn.id
+            })
+            .map(|item| item.id);
         let mut ask = vec![0x30, 0x80];
         ask.extend_from_slice(&worn.id.to_le_bytes());
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
+        if let Some(occupant) = occupant {
+            let mut off = vec![0u8; 11];
+            client.read_exact(&mut off).unwrap();
+            reading.apply(&mut off);
+            assert_eq!(&off[..2], &[0x3E, 0x01], "the eviction's placement");
+            assert_eq!(&off[4..8], &occupant.to_le_bytes(), "the item taken off");
+        }
         let mut placed = vec![0u8; 11];
         client.read_exact(&mut placed).unwrap();
         reading.apply(&mut placed);
@@ -4282,6 +4339,11 @@ Logger.root = 6,Console
         assert_eq!(&placed[4..8], &worn.id.to_le_bytes(), "the item");
         assert_eq!(&placed[8..10], &equipped_bag.id.to_le_bytes(), "the equipped bag");
         assert_eq!(placed[10], worn_slot, "the slot its kind is worn in");
+        // And what the agent is drawn wearing is sent again.
+        let mut drawn = vec![0u8; 2 + 4 + 9 * 4];
+        client.read_exact(&mut drawn).unwrap();
+        reading.apply(&mut drawn);
+        assert_eq!(&drawn[..2], &[0x6E, 0x00], "the agent's worn items");
 
         // 4e. A drop (`0x802C`, the item and a count byte): the stack is the state and **nothing goes
         // back**, which is what the working implementation does and what its notes on the two
