@@ -18,6 +18,10 @@
 #![allow(clippy::manual_is_multiple_of)] // (len % 2) == 0 is the reference spelling in PathHeapPop
 #![allow(clippy::collapsible_if)] // the nested if is the reference shape in PickNextPoint
 
+// The directional walk, a child module as ASURA keeps it (pathfind/directional.rs).
+#[path = "Pathfind/Directional.rs"]
+pub mod directional;
+
 
 /// A point on a map, in the game's own units, on one of the map's planes.
 ///
@@ -476,7 +480,7 @@ use crate::terrain::map_data::{PathStaticData, Portal};
 /// `srv->map_context` with one difference - it has one context per server because it runs one server per
 /// map, while this hosts several maps in one process.
 pub struct PathContext {
-    data: std::sync::Arc<PathStaticData>,
+    pub(crate) data: std::sync::Arc<PathStaticData>,
     /// Trap id to `(plane id, position in that plane's trapezoids)`. Trap ids are dense and assigned in
     /// plane order by the importer, so this is the reference's `array_at(&nodes, trap->trap_id)` and its
     /// `PathTrapezoid *` in one table.
@@ -507,18 +511,18 @@ impl PathContext {
     }
 
     /// The trapezoid a trap id names.
-    fn trap(&self, trap_id: u32) -> Trapezoid {
+    pub(crate) fn trap(&self, trap_id: u32) -> Trapezoid {
         let (plane, position) = self.index[trap_id as usize];
         self.data.planes[usize::from(plane)].trapezoids[position as usize]
     }
 
     /// The plane a trap id lives on.
-    fn plane_of(&self, trap_id: u32) -> u16 {
+    pub(crate) fn plane_of(&self, trap_id: u32) -> u16 {
         self.index[trap_id as usize].0
     }
 
     /// A trapezoid's neighbour field (`Option<usize>`, a position in its own plane) as a trap id.
-    fn neighbour(&self, trap_id: u32, local: Option<usize>) -> Option<u32> {
+    pub(crate) fn neighbour(&self, trap_id: u32, local: Option<usize>) -> Option<u32> {
         local.map(|position| {
             let plane = usize::from(self.plane_of(trap_id));
             self.data.planes[plane].trapezoids[position].trap_id
@@ -526,7 +530,7 @@ impl PathContext {
     }
 
     /// A portal of the plane `plane`.
-    fn portal(&self, plane: u16, portal_id: usize) -> Option<Portal> {
+    pub(crate) fn portal(&self, plane: u16, portal_id: usize) -> Option<Portal> {
         self.data
             .planes
             .get(usize::from(plane))?
@@ -537,7 +541,7 @@ impl PathContext {
 
     /// The trapezoids a portal leads to, as trap ids: the reference walks `portal->pair->traps` and
     /// dereferences each entry, so an entry the importer left NULL is skipped here rather than crashing.
-    fn portal_pair_traps(&self, portal: &Portal) -> Vec<u32> {
+    pub(crate) fn portal_pair_traps(&self, portal: &Portal) -> Vec<u32> {
         let Some(plane) = self.data.planes.get(usize::from(portal.portal_plane_id)) else {
             return Vec::new();
         };
@@ -1434,6 +1438,26 @@ impl PathGraphs {
         }
     }
 
+    /// Follow manual input through adjacent walkable cells, rather than finding a route.
+    ///
+    /// `ASURA/crates/asura-world/src/pathfind/directional.rs`, `walk`, whose own header marks it
+    /// **PROVISIONAL / NOT ACCEPTED** - the caveat travels with the port.
+    pub fn walk_direction(
+        &self,
+        map_id: i32,
+        from: Pos,
+        offset: (f32, f32),
+        settings: crate::terrain::pathfind::directional::DirectionalSettings,
+    ) -> Walk {
+        match self.with_finder(map_id, |finder| {
+            crate::terrain::pathfind::directional::walk(finder, from, offset, settings)
+        }) {
+            Some(Some(points)) => Walk::Found(points),
+            Some(None) => Walk::NoPath,
+            None => Walk::NoGraph,
+        }
+    }
+
     /// Find a route to a point on an unspecified plane. Manual movement uses `walk_direction`: choosing
     /// a destination plane globally can send a player off a bridge to reach that point.
     pub fn walk_any_plane(&self, map_id: i32, from: Pos, to: (f32, f32)) -> Walk {
@@ -1699,6 +1723,43 @@ mod tests {
             matches!(graphs.walk_any_plane(148, pos(5.0, 2.0), (5.0, 8.0)), Walk::Found(_)),
             "a destination on an unspecified plane is found too"
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Manual movement follows the direction it is given through adjacent cells. ASURA's own proof of
+    /// this walker is a live capture over a real map's dumped graph; this is the structural one.
+    #[test]
+    fn a_manual_offset_walks_the_direction_it_is_given() {
+        let data = (*two_stacked_traps()).clone();
+        let bytes = crate::terrain::graph_dump::encode(&[crate::terrain::graph_dump::DumpedGraph {
+            map_id: 148,
+            map_file_id: 0x1B97D,
+            data,
+        }]);
+        let path = std::env::temp_dir().join("kryta-directional-test.dump");
+        std::fs::write(&path, &bytes).expect("write the dump");
+        let graphs = PathGraphs::from_dump(&path.to_string_lossy()).expect("load the dump");
+        graphs.bind(&[MapEntry {
+            id: 148,
+            kind: 0,
+            file_id: 0x1B97D,
+            name: "Ascalon City (pre-Searing)".to_string(),
+            instance_value: None,
+        }]);
+        let settings = crate::terrain::pathfind::directional::DirectionalSettings::default();
+        // Up from the lower trapezoid: the walk follows the direction across the edge above it.
+        let walked = graphs.walk_direction(148, pos(5.0, 2.0), (0.0, 1.0), settings);
+        let Walk::Found(points) = walked else {
+            panic!("an upward offset walks: {walked:?}");
+        };
+        assert!(!points.is_empty(), "and it says where");
+        let last = points.last().expect("a point");
+        assert!(last.pos.y > 2.0, "it moved up: {:?}", last.pos);
+        // A map with no graph has nothing to say, whatever the direction.
+        assert!(matches!(
+            graphs.walk_direction(146, pos(5.0, 2.0), (0.0, 1.0), settings),
+            Walk::NoGraph
+        ));
         let _ = std::fs::remove_file(&path);
     }
 

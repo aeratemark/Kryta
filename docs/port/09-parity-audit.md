@@ -366,10 +366,15 @@ road.
    `from_dump`, `bind`, `empty`, `imported`, `maps`, `walk`, `walk_any_plane` and `with_finder`. A
    test loads a graph from a real `ASURAPG1` dump, binds it to one of two maps, and walks: the bound
    map answers `Found`, the unbound one `NoGraph`, and `walk_any_plane` finds a destination on an
-   unspecified plane. **Left**: `PathGraphs::load` and `PathGraphs::import` (lines 1507-1592, which
-   read a graph out of a `Gw.dat` through the importer), `walk_direction` (1639) and the whole of
-   `pathfind/directional.rs` (320 lines), then `import_graph` and `find_path_blob` (1703-1794) with the
-   importer in `map_data.rs` (step 4 below).
+   unspecified plane; and **all 320 lines of `pathfind/directional.rs`** - `DirectionalSettings` (its
+   two numbers are ASURA's `directional_movement.json`: `edge_tolerance` 0.01, `distance_slack` 0.5),
+   the edge/coverage/neighbour helpers, and `walk` itself, with ASURA's own **PROVISIONAL / NOT
+   ACCEPTED** caveat carried in the module header rather than tidied away - plus
+   `PathGraphs::walk_direction` (line 1639) wired onto it. A test walks an upward offset across two
+   stacked trapezoids and checks the map with no graph still answers `NoGraph`. **Left**:
+   `PathGraphs::load` and `PathGraphs::import` (lines 1507-1592, which read a graph out of a `Gw.dat`
+   through the importer), then `import_graph` and `find_path_blob` (1703-1794) with the importer in
+   `map_data.rs` (step 4 below).
 4. **The importer** in `map_data.rs` last, only so this machine can produce a dump from its own
    `Gw.dat`; the world's start-up then loads a dump the way ASURA does.
 
