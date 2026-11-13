@@ -102,7 +102,9 @@ one that says which half broke - the login program's, the world program's, or th
 The world half of this journey is also played automatically against the *program* by
 `cargo test -p worldserver --test end_to_end -- --ignored --nocapture`: it starts the real
 `worldserver`, performs the creation screen, loads map 148, asks for the items, the spawn point and the
-players, drags, equips and destroys an item, speaks a line and types the chat commands, sends the travel
+players, clicks a point twenty units away and reads the walk it is answered with (`0x0029`, the
+finder's own first waypoint - skipped when `GwDat` names no archive), drags, equips and destroys an
+item, speaks a line and types the chat commands, sends the travel
 request and reads the redirect's eight frames - the same wire steps 5 to 15 do with a client.
 The login half is `cargo test -p authserver --test end_to_end -- --ignored --nocapture`, which starts
 the real `authserver` and performs the client's file check, version message, key exchange and portal

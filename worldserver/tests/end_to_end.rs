@@ -677,6 +677,47 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         reading.apply(&mut tick);
         assert_eq!(&tick[..2], &[0x1E, 0x00], "the simulation tick");
 
+        // 8. A click in the outpost (`GAME_CMSG_MOVE_TO_COORD`, `0x803E`: the point and its plane).
+        // The world answers from map 148's own path graph, which it imports out of `Gw.dat` at
+        // start-up (`ASURA/crates/asura-world/src/agent.rs:802-856`): the finder's first waypoint in
+        // `0x0029`, and nothing at all when it refuses. Skipped on a machine with no archive, where
+        // every walk is `NoGraph` by design.
+        let archive = Config::load_json("worldserver.json", false, Policy::default())
+            .expect("the world program's own configuration")
+            .value_string("GwDat", "Gw.dat")
+            .expect("GwDat is a string")
+            .0;
+        if std::path::Path::new(&archive).exists() {
+            let mut walk = vec![0u8; 14];
+            walk[0..2].copy_from_slice(&0x803Eu16.to_le_bytes());
+            // Twenty units from where the character was put rather than across the map: the walk is
+            // inside the ground the client already stands on, so the answer is the reference's own
+            // path and not a route no outpost holds.
+            walk[2..6].copy_from_slice(&(x + 20.0).to_le_bytes());
+            walk[6..10].copy_from_slice(&(y + 20.0).to_le_bytes());
+            // The plane is the u32 the client sends; 0 is the floor, which is where an entry stands.
+            sending.apply(&mut walk);
+            stream.write_all(&walk).expect("the walk request");
+            let answer = read_frames(&mut stream, &mut reading, 0x0029, 1);
+            let headers: Vec<u16> = answer.iter().map(|(header, _)| *header).collect();
+            let last = &answer.last().unwrap().1;
+            assert_eq!(
+                &last[..2],
+                &[0x29, 0x00],
+                "the walk is answered with the finder's first waypoint: {headers:04X?}"
+            );
+            // `0x0029` carries the point it walks to, and it is the finder's, at or beside the click:
+            // `29 00 | agent | x | y | plane | current_plane`.
+            let wx = f32::from_le_bytes([last[6], last[7], last[8], last[9]]);
+            let wy = f32::from_le_bytes([last[10], last[11], last[12], last[13]]);
+            assert!(
+                (wx - (x + 20.0)).abs() <= 300.0 && (wy - (y + 20.0)).abs() <= 300.0,
+                "the first waypoint ({wx}, {wy}) is the path's, not a point across the map"
+            );
+        } else {
+            eprintln!("skipped the walk step: no client archive at {archive}");
+        }
+
         // The item operations the manual test's steps 9 to 11 do, against the program: a drag, an
         // equip and a destroy. Each one is a row in the character database and an answer to the
         // client; the items are the ones the confirm wrote, read back through the same repository.
