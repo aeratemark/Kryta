@@ -12,7 +12,10 @@ checkout today, not from a document about it.
 | `worldserver` | `src/server/apps/worldserver/Main.cpp` | the same config and logging, `ThreadPool` (2) at `:243`, `sScriptMgr->SetScriptLoader(AddScripts)` at `:272`, `SetModulesLoader` at `:273`, `sScriptMgr->Initialize` at `:282`, `sWorld->SetInitialWorldSettings` at `:318`, `StartWorldNetwork(BindIP, WorldServerPort 8085, Network.Threads 1)` at `:363`, the console and the SOAP thread, then `sScriptMgr->OnStartup` at `:398` |
 
 On shutdown the world runs `sWorldSessionMgr->KickAll` (`:372`), `sMapMgr->UnloadAll`,
-`sScriptMgr->OnAfterUnloadAllMaps` and `sScriptMgr->OnShutdown` (`:426`).
+`sScriptMgr->OnAfterUnloadAllMaps` and `sScriptMgr->OnShutdown` (`:426`). This tree does the same
+order: `sockets.stop()` is the kick (a flag every session reads on its next turn, then the network
+closes) and the world's own shutdown is raised after it; `sMapMgr->UnloadAll` and its hook have no
+work here, because a fresh world disposes the copies an earlier run left at its start.
 
 The split is by conversation, not by database: auth answers login and hands out a world entry; the
 world owns the gameplay socket.
