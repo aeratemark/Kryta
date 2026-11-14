@@ -23,17 +23,17 @@ copies of the listed Git blobs.
 | Subject | Recovered source | Kryta context |
 |---|---|---|
 | Game rules | `docs/36-game-rules-ledger.md` | Already recovered as `docs/game-rules.md`. |
-| Rust mechanics, Lua behavior, events and scripting | `docs/30-world-content-and-scripting.md`; `docs/guidance/scripting-and-behavior.md` | `docs/port/06-world-plan.md` maps game systems; `docs/port/10-separation-guide.md` records current boundaries. |
+| Rust mechanics, Lua behavior, events and scripting | `docs/30-world-content-and-scripting.md`; `docs/guidance/scripting-and-behavior.md` | `docs/port/11-content-and-behaviour.md` owns the recovered design. |
 | HeroAI and scaling | `docs/31-heroai-server-feasibility.md`; `docs/research/heroai-server-port.md` | `docs/port/06-world-plan.md` names the hero subject. |
-| Self-contained profiles and separate saved state | `docs/34-self-contained-profiles.md`; `docs/guidance/game-packs.md` | Review separately against Kryta's data and configuration design. |
+| Self-contained profiles and separate saved state | `docs/34-self-contained-profiles.md`; `docs/guidance/game-packs.md` | `docs/port/11-content-and-behaviour.md` owns the recovered design. |
 | Skills, mechanics and behavior | `docs/35-skill-mechanics-and-behavior.md`; `docs/research/skill-mechanics-and-behavior.md` | Game facts and open issues require comparison with `docs/game-rules.md`. |
-| World simulation and the control panel | `docs/32-world-simulation-plan.md`; `docs/33-control-panel-design.md`; `docs/work/world-simulation-plan.md`; `docs/work/control-panel-plan.md` | Historical plans, requiring comparison with Kryta's structure and current implementation. |
+| World simulation and the control panel | `docs/32-world-simulation-plan.md`; `docs/33-control-panel-design.md`; `docs/work/world-simulation-plan.md`; `docs/work/control-panel-plan.md` | World subjects are mapped in `docs/port/06-world-plan.md`; panel requirements are in `docs/port/12-research-and-control-panel.md`. |
 | Captures, initialization and parity | `docs/23-initialization-protocol.md`; `docs/24-stream-parity.md`; `docs/29-initialization-capture.md`; `docs/history/gwps-parity/`; `docs/reference/client-protocol.md` | `docs/evidence/`, `docs/port/02-wire.md`, and `docs/port/09-parity-audit.md` hold Kryta's present evidence and ledger. |
 | ASURA reengineering | `docs/work/re-engineering-plan.md`; `docs/research/azerothcore-structure.md`; `docs/37-rework-layers.md` | Compare with Kryta's `docs/port/01-structure.md` and decisions. |
 
 ## Findings from the first comparison
 
-- `docs/game-rules.md` has the recovered ledger's body. Its extra introduction records the recovery.
+- `docs/game-rules.md` began with the recovered ledger. It incorporates later ASURA corrections to R11/R12, R22, R27, E199 and E220, and the unresolved world-model questions.
 - `docs/evidence/packet-coverage.md` matches the recovered `docs/work/packet-coverage.md` byte for
   byte. `docs/evidence/client-protocol.md` contains a correction to the `0x8038` login message size,
   so the historical copy must not overwrite it.

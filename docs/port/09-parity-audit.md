@@ -509,7 +509,7 @@ because the reference's structure is this tree's authority for how a thing is ar
 | `travel.rs` | 534 | `answer_party_travel`, `begin_transfer`, `cross_portal`, `answer_teleport_command`, `answer_travel_init` - `game/Handlers/TravelHandler.rs` | ported; the seat reservation is named in 7.4 |
 | `item.rs` | 561 | `answer_item_move`, `answer_equip_item`, `CLIENT_DROP_ITEM`, `CLIENT_UNEQUIP_ITEM` - `game/Handlers/ItemHandler.rs` | ported |
 | `instance.rs` | 528 | `game/Districts/` (`Districts`, `Peers`, `Instances`) | this tree's arrangement: a copy of a map is a district, and the population is `Peers` |
-| `creation.rs` | 519 | `confirm_creation`, `answer_creation_*` | ported |
+| `creation.rs` | 519 | `confirm_creation`, `answer_creation_*` in `game/Handlers/CharacterHandler.rs` | ported |
 | `portals.rs` | 503 | `game/Maps/Portals.rs` | ported whole; the data is `map_arch` and `map_arrival` |
 | `graph_dump.rs` | 473 | `game/Terrain/GraphDump.rs` | ported whole |
 | `gwdat.rs` | 431 | `game/Pack/Gwdat.rs` | ported whole |

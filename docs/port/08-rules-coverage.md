@@ -23,7 +23,7 @@ The states are:
 | R4 an outpost has numbered districts | in | copies are numbered and the load reports the number in `0x019A` |
 | R5 a new district opens at the allotment | in | `World.DistrictAllotment` (100) and the first-with-room rule; `a_filled_district_is_left_for_the_first_with_room` |
 | R16 one district is enough to begin | in | the first entry opens district 1 and the login answers the district list with exactly one (`authserver/tests/end_to_end.rs` checks the 29-byte answer at the program level: the transaction echoed, eleven language pairs, language 0 with one district) |
-| R22 a joining character takes the first district with room | in | `Districts::enter` with no named district |
+| R22 default assignment takes the first district with room | in | `Districts::enter` with no named district |
 | R57 a named district is honoured | in | `enter` with a hint opens or joins that number; `a_named_district_is_honoured_even_before_it_exists` |
 | R58 a full district cannot be entered | data | `enter` refuses and the connection closes; the refusal's own wire is not captured |
 | R37/R38/R39/R40 teardown and the disconnect hold | in | an empty copy is held 900 s and disposed by the world's tick; a socket that ends is a disconnect (`a_copy_is_held_for_the_hold_and_then_disposed`). The reconnection itself is not built |

@@ -16,7 +16,8 @@ use shared::network::socket::SessionIo;
 use crate::server::packets::{agent_packets, chat_packets};
 use crate::server::world_session::{CharacterSheet, WorldSession};
 
-impl WorldSession {    /// `GAME_CMSG_SEND_CHAT_MESSAGE` (`0x8064`): the client speaks.
+impl WorldSession {
+    /// `GAME_CMSG_SEND_CHAT_MESSAGE` (`0x8064`): the client speaks.
     ///
     /// Ported whole from `ASURA/crates/asura-world/src/chat.rs:193-353` (`handle_chat_message`). The
     /// frame is `{agent u32, text String16}` - the table's own field list

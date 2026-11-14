@@ -50,8 +50,9 @@ remaining deviation is described accurately in its decision record.
 
 **What exists.** `game/src/Server/WorldSession.rs` holds connection handling and also carries gameplay
 work: the map's clock (`step_map`, which calls `Agent::advance` and `Portals::crossed` and decides
-when to advance and what to do with the result) and the character-creation and load path
-(`confirm_creation`, `load_map`, `entry_point`). Four message families are in `game/src/Handlers/`.
+when to advance and what to do with the result) and the load (`load_map`, `entry_point`,
+`saved_position`), which builds the load's frames from inside the session. Five message families are
+in `game/src/Handlers/`.
 
 **Done (2026-11-14, item family).** The item messages are the first family moved, all four of them:
 `answer_item_move`, `answer_equip_item`, `answer_drop_item` and `answer_unequip_item` are
@@ -84,6 +85,17 @@ nouns they belong to: `Maps/Portals.rs`, `Portal/`, and `place_for_travel` in th
 where the map's own placement rule is read. What the session now keeps from the travel path is the
 hand-off itself, and the map's clock, which the third item owns. No frame, order, size, broadcast or
 log line changed; the end-to-end arch journey and the login journey pass untouched.
+
+**Done (2026-11-14, character family).** The creation screen's three asks and its confirm moved to
+`game/src/Handlers/CharacterHandler.rs`: `answer_creation_request_player`,
+`answer_creation_request_armors`, `answer_creation_change_prof` and `confirm_creation`, with the
+`Creation` state they read and `creation_player_block` - the block a screen is drawn from - beside
+them (from `ASURA/crates/asura-world/src/creation.rs:190-255`, `259-271`, `275-341`, `346-519`,
+dispatched in that order by `dispatch.rs:88-103`). The confirm's decisions were already the nouns':
+the row is `DatabaseCharacters` (`write_starting_items`, `unlock_map`), the starting set is
+`crate::creation`, and where a character starts is the world's own first outpost. No frame, order, size
+or log line changed; the creation journey (the block, a changed profession, the confirm's row and the
+refusal of a taken name) passes untouched.
 
 There is already useful extraction: agent state and movement operations are in `game/src/Agents/`,
 pathfinding in `game/src/Terrain/`, portal geometry in `game/src/Maps/`, and character item persistence
@@ -137,10 +149,8 @@ from script name to a number of hooks (`scripts/src/ScriptMgr/mod.rs`), and `Add
 **Work to resolve.** Port the relevant AzerothCore script manager interfaces and lifecycle at the
 locations the reference uses, including an actual route from engine events to registered callbacks.
 Establish how scripts and modules register against those interfaces. For Guild Wars behaviour, use
-ASURA and `docs/game-rules.md` as the behaviour sources. The owner selected Lua for external game
-behaviour, with Rust providing simulation mechanics, in ASURA `docs/30-world-content-and-scripting.md`
-(recovered under `docs/evidence/asura-history/`). The integration and content interfaces still need
-to be designed against Kryta's structure.
+ASURA and `docs/game-rules.md` as the behaviour sources. The owner-selected Lua/Rust boundary,
+profile ownership and remaining integration questions are in `docs/port/11-content-and-behaviour.md`.
 
 **Evidence of completion.** A registered script can receive an implemented engine event and affect
 an authorized game action through the intended interface. A module can register and receive its

@@ -30,6 +30,8 @@ Two consequences:
 | `tools/adapt-protocol-table.py` | moved the ported message table into `game/src/Server/Protocol/Tables.rs`, once | nothing; it is the record of the move | ASURA `crates/asura-protocol/src/packets.rs` |
 | `tools/import-creation-inventory.py` | imported the bags, items and profession sets into `data/*.json`, once | a checkout of ASURA to read | ASURA `state/inventory/seed.rs` and `default_equipment.rs` |
 
+The recovered control-panel and research requirements are in `docs/port/12-research-and-control-panel.md`.
+
 ## The administration tool
 
 ```powershell

@@ -20,7 +20,8 @@ use crate::server::packets::{
 };
 use crate::server::world_session::{parse_address, WorldSession, TRAVEL_EFFECT};
 
-impl WorldSession {    /// A crossing decided from the player's **own step**: where the character stood before this report
+impl WorldSession {
+    /// A crossing decided from the player's **own step**: where the character stood before this report
     /// and where it stands after it.
     ///
     /// `ASURA/crates/asura-world/src/travel.rs:319-388` (`portal_crossed`), ported whole: a crossing

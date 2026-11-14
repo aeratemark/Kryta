@@ -13,6 +13,9 @@
 //! (`TravelHandler`, answered by the travel row, `Portals` and `place_for_travel`) and a spoken line
 //! (`ChatHandler`, answered by `game/Chat/`).
 
+#[path = "CharacterHandler.rs"]
+pub mod character;
+
 #[path = "ItemHandler.rs"]
 pub mod item;
 

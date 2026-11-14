@@ -2,7 +2,7 @@
 
 **Where this came from.** ASURA's `docs/36-game-rules-ledger.md`, written by the owner on 2026-11-02 and
 kept through several revisions; it was removed when that repository's documents were reworked. Recovered
-from `git show f7c2f31:docs/36-game-rules-ledger.md` on 2026-11-28 and copied here, because it is the
+from `git show f7c2f31:docs/36-game-rules-ledger.md` and copied here, because it is the
 description of how the game works that this port is measured against - not a plan, and not another
 project's opinion.
 
@@ -26,6 +26,23 @@ assumed wrong.** "This task is about achieving parity on that; if Eden or the ga
 something, you should listen; we are only assuming our own code is not correct for this phase."
 Where our code and the game or Eden disagree, the game or Eden wins, and the disagreement is a code
 fix to be scheduled, never a reason to edit the evidence.
+
+## Questions carried from the later ASURA review
+
+The following statements need reconciliation before an implementation chooses between them.
+They are preserved from ASURA `docs/reference/game-world-model.md`, "Unresolved statements
+requiring review", available under `docs/evidence/asura-history/`.
+
+| Subject | Statements to reconcile |
+|---|---|
+| Travel gating | R12/R20 describe unlocked-outpost travel. Earlier owner wording said the game decides whether travel is allowed. The scope of server-side gating remains open. |
+| Last-outpost placement | R14 describes a load at the last outpost, while R13 and the later doorway instruction provide destination-specific arrivals. Distinguish login, ordinary travel and disconnect restoration. |
+| Party capacity | R17 describes disbanding at a smaller cap; R26 describes truncation and separate parties for remaining players. |
+| Population timing | R29 says content exists when an instance is created; R34 describes spawning and ticking most enemies in compass range. Distinguish definitions, actor creation and active simulation. |
+| Instance reuse | R32 requires a new instance on re-entry. The earlier proposal to reuse an empty instance did not distinguish reused storage from reused game state. |
+| Instance scope | R2 states outposts are shared; R35 and R32 use broader party and lifetime wording. R37 separately states the empty-outpost timeout. |
+| Doorway fallback | R21 describes an arrival near the portal; an earlier model summary described a destination spawn. The missing-arrival rule needs evidence. |
+| Quest placement | Earlier examples mention quest-selected spawn positions, while R55 restricts quests to the quest log. The placement policy remains open. |
 
 ## Status vocabulary
 
@@ -54,12 +71,12 @@ Rules are never deleted. A contradicted rule keeps its row and its contradicting
 | R19 | A **leader disconnecting is no different from any other member**. That member's **heroes and henchmen deactivate until it reconnects** |
 | R20 | **World-map (fast) travel reaches outposts only**, and only an **unlocked** one. Any other destination is reached by **portal** or by a **scripted** travel |
 | R21 | A **portal walk's arrival position is provided by the destination**; if none is available, the character appears **near the portal** on the destination map |
-| R22 | A joining character is placed in the **first district with available slots**. The only retained choice is the **region** |
+| R22 | Default district assignment uses the first district with slots. R57 supplies the later named-district and language qualification |
 | R23 | **Heroes belong to their player and disconnect with it** - a leader's disconnect takes its heroes with it |
 | R24 | **Henchmen are held per party**: each party has its own set of heroes or henchmen, hired for that party |
 | R25 | **Heroes were introduced in Nightfall but are usable everywhere.** Leave the option open so any mode may allow heroes anywhere - do not hardcode a campaign restriction |
 | R26 | Arriving at a map whose **cap is smaller** **truncates** the party. Only as many members enter as the cap allows, **filled leader-first, then the leader's heroes** (4 heroes + leader entering a 4-slot map drops the last hero). Remaining **players** are left **in parties of one**, each keeping its own heroes |
-| R27 | **Henchmen are removed from the party on arrival at an outpost.** The henchman roster is **not a fixed set** - every outpost offers different ones, so the removal forces the player to hire the new set by hand |
+| R27 | Superseded by the same-day correction R27b below; the earlier blanket removal instruction is retired |
 | R27b | **Correction to R27, same day:** henchmen **accompany the party** to outposts and missions. On arrival at an outpost, a henchman that **exists in that outpost is kept**, and one that **does not exist there is kicked**. They are mercenaries hired like heroes, not a fixed party-owned list |
 | R29 | **Everything exists before a player arrives**: NPCs, enemies and props are present when the instance is created, unless a script makes them appear later or disappear |
 | R30 | **Most NPCs are static**; some walk. Their paths and behaviour are to be **scripted from the Lua side**, not hardcoded |
@@ -95,7 +112,8 @@ Rules are never deleted. A contradicted rule keeps its row and its contradicting
 | R8 | **Non-leader hops district -> asked whether to leave the current party** |
 | R9 | **Any party member crossing a portal** brings the **whole party** into the destination instance |
 | R10 | Hopping between outpost copies is normal play (merchants, party business), not an edge case |
-| R11 | **Explorable teardown:** if the player(s) **disconnect**, the instance is kept **15 minutes** for reconnection. If everyone **travels out by any normal means** (portal, history/scripted), it is **disposed immediately**. **After the 15 minutes expire there is no reconnection: the instance is disposed and the character reappears at its last visited outpost** || R12 | **Unlocks gate travel:** you can only travel to maps you have unlocked; you start with **one** unlocked. A scripted/forced travel **unlocks at arrival** |
+| R11 | **Explorable teardown:** if the player(s) **disconnect**, the instance is kept **15 minutes** for reconnection. If everyone **travels out by any normal means** (portal, history/scripted), it is **disposed immediately**. **After the 15 minutes expire there is no reconnection: the instance is disposed and the character reappears at its last visited outpost** |
+| R12 | **Unlocks gate travel:** you can only travel to maps you have unlocked; you start with **one** unlocked. A scripted/forced travel **unlocks at arrival** |
 | R13 | **Entry spawn:** outposts have many scattered spawn points. **Every entry into an outpost takes a random point of that map's own list, lands scattered up to 250 units around it (the radius is `config/Server/spawns.json`'s `spawn_scatter`, a server setting), and faces the point's angle** (owner, 2026-11-05: "every time we enter an outpost is on a random spawn point from the list"; "when we spawn we should get our position randomized 250 units around a circle from the spawn point"). A travel never preserves the character's last position; only a disconnect does. **The entrance set is now the door's:** a portal crossing is a step through the wall a map's `portals.json` states (`arches`, two endpoints), and the receiving map's `arrivals` entry for the map the character came from decides where it stands and which way it faces - the outpost's random list answers only the entries that are not doorways (owner, 2026-11-05: "portal travels are not respecting our portals files, nor our arrival point"; "the portal is an invisible wall we cross ... it should be a plane") |
 | R14 | A load always places a character at its **last outpost visited** |
 | R15 | **Party size is not a constant:** it starts small, is capped at **8 for most content**, but some game modes allow **12**, and some instances **25**. Configurable, never hardcoded |
@@ -372,7 +390,7 @@ Witnesses in Rurik's numbering; restate in GWPS numbers when the port happens.
 | # | fact | witness |
 |---|---|---|
 | E198 | **Every NPC transaction is one symmetric barter shape**: give gold plus give items against receive gold plus receive items, so a buy is gold for an item, a collector turn-in is trophies for a reward, and a craft is gold plus materials for an item | `Eden/docs/re/interaction-sessions.md:203-209` |
-| E199 | **The transact messages have fixed sizes and 16-wide item arrays**: 74 is 152 bytes, 77 is 192 bytes and adds a per-side u8 quantity array, 76 is 156 bytes and adds a flag, and every item count is asserted against 16 | `Eden/docs/re/interaction-sessions.md:632-670` |
+| E199 | **Eden reports client-side transaction layouts with 16-wide item arrays** (source-only layout sizes, not independently captured wire lengths): 74 is 152 bytes, 77 is 192 bytes and adds a per-side u8 quantity array, 76 is 156 bytes and adds a flag, and every item count is asserted against 16 | `Eden/docs/re/interaction-sessions.md:632-670` |
 | E200 | **Service 12 TRADE_BUY and 13 TRADE_SELL belong to the rare-material trader NPC, and player trade is a separate protocol**; the two must not be merged | `Eden/docs/re/interaction-sessions.md:175-179` |
 | E201 | **A merchant buy price is 2 * price factor * the item's value field, times quantity**, sent as CtoS 77 with gold given and the item received | `Eden/docs/re/vendor-window.md:74-81` |
 | E202 | **The buy quantity is capped at 250 when the item's data flag 0x80000 is set and at 10 otherwise**, never exceeds gold divided by the unit price, and the quantity box appears only when more than one is affordable | `Eden/docs/re/vendor-window.md:167-169` |
@@ -393,7 +411,7 @@ Witnesses in Rurik's numbering; restate in GWPS numbers when the port happens.
 | E217 | **A craft order gathers whole stacks of each required material until the needed count is reached** and sends CtoS 77 with gold given = gold per unit * quantity and quantity 1 per stack; 17 or more stacks sends nothing and shows an error instead | `Eden/docs/re/craft-window.md:58-72` |
 | E218 | **Craft affordability is the minimum of gold divided by the recipe's gold, the currency count divided by its cost, and each material's cached count divided by the recipe need**, capped at 1, 250 or 10 by the item data flags | `Eden/docs/re/craft-window.md:119-128` |
 | E219 | WIKI: a collector exchanges a specific trophy in a specific number for its reward, each armour collector offers only one piece, and quest-reward collectors take quest trophies rather than loot | https://wiki-en.guildwars.com/wiki/Collector |
-| E220 | **The client's in-game travel request, measured on the live client**: `PARTY_TRAVEL`, opcode `0xB1` (177), is the six-dword struct `{opcode, map, territory, district, language, flag}`, and the captures show `{177, 148, -2, 0, 0, 1}` and `{177, 163..166, -2, 0, 0, 1}`, so the field order is map, territory, district, language, flag and **district 0 is the value a client sends when it does not pick one**. The wire length is 9 bytes, the declared size in this project's table; the 24 bytes are the client's own bookkeeping struct | `recordings/client/feature/travel/login-to-portal-20261031-003720.jsonl` (seq 1223); `recordings/client/feature/travel/doors-20261031-095754.jsonl` (seq 4143, 4986, 8518, 9286, 12038) |
+| E220 | **The client's in-game travel request, measured on the live client**: `PARTY_TRAVEL`, opcode `0xB1` (177), is the six-dword struct `{opcode, map, territory, district, language, flag}`, and the captures show `{177, 148, -2, 0, 0, 1}` and `{177, 163..166, -2, 0, 0, 1}`, so the field order is map, territory, district, language, flag and **district 0 is the value a client sends when it does not pick one**. The packet table declares 9 wire bytes; that claim is not proved by these struct captures. The 24-byte observation is the client's bookkeeping struct | `recordings/client/feature/travel/login-to-portal-20261031-003720.jsonl` (seq 1223); `recordings/client/feature/travel/doors-20261031-095754.jsonl` (seq 4143, 4986, 8518, 9286, 12038) |
 
 ## Contradicted
 
