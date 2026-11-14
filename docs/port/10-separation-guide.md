@@ -29,18 +29,26 @@ front door reads a game version message and relays the connection to the world
 (`authserver/src/Server/front_door.rs`; `docs/decisions/0004-gameplay-connections-arrive-at-the-front-door.md`).
 The world owns the gameplay session.
 
-**Where the boundary is wider.** `authserver/src/Server/session.rs:1076` calls the game map-placement
-rule, and `:1168-1179` builds and records the travel hand-off. The session also uses game account and
-character types. Decision 0003 describes the portal as the one game module used by auth, so that
-statement no longer describes all the current uses. AzerothCore's `src/server/apps/CMakeLists.txt:130-139`
-links auth to `shared` and world to `modules`, `scripts`, and `game`.
+**Done (2026-11-14, the inventory and the decision).** `docs/decisions/0010-auth-and-the-game-library.md`
+holds both. The edge is 37 `game::` uses in five files, and every one of them is one of six things: the
+portal (`0003`'s subject), the client's 64-byte version message (a protocol message), the character's
+rows, the travel hand-off row, the account table (rows), and the pure rule that decides where a
+character enters (`game::maps::placement`, `session.rs:1075-1111`). Measured against ASURA, that is
+exactly its own layering: `crates/asura-auth` links `asura-protocol`, `asura-db`, `asura-store`,
+`asura-rules` and `asura-config`, and links `asura-world` not at all - and its accepted decision D25 is
+the owner's rule that a game rule a protocol answer needs belongs in a *rules* layer, not in the world
+library. The decision taken: the edge stays, because the reference's chain has no layer for four of the
+six pieces, and moving the pure rule into `shared` would put a game rule in the library both programs
+link - the blur `AGENTS.md` forbids.
 
-**Work to resolve.** Inventory each auth use of `game`, including the portal, character data,
-placement, travel and routing. Compare the ownership and hand-off with AzerothCore and the required
-ASURA conversation. Decide where each responsibility belongs and record any departure from the
-reference in `docs/decisions/`. Preserve the client's messages and their order, and update the parity
-ledger for any listed change. Hosting an HTTP listener and choosing the ownership of its code are
-separate decisions. The correct destination for each piece has not been established by this guide.
+**What that leaves.** The one piece both authorities would put somewhere else is the pure rule
+(`asura-rules`, ASURA's D25): to follow it, this tree grows a `rules/` layer beside `shared/`, linked by
+both programs, with each rule re-exported at its old path. That adds a layer to the crate chain
+`AGENTS.md` states, so it is the owner's call, and this phase is not a restructuring phase. AzerothCore's
+`src/server/apps/CMakeLists.txt:130-139` links auth to `shared` and world to `modules`, `scripts` and
+`game`; this tree's auth links `game`, which is the deviation the record states and bounds. Hosting an
+HTTP listener (`0003`) and the socket layer that classifies a connection (`0004`) are separate decisions
+and are not touched by it.
 
 **Evidence of completion.** The dependency graph and actual imports agree with the resulting design,
 the hand-off and login tests pass, and a real client verifies the login and entry sequence. Any
