@@ -136,6 +136,10 @@ pub struct World {
     /// place other players can be in, and a connection is told about them (`game/Districts/Peers.rs`,
     /// `ASURA/crates/asura-world/src/instance.rs:406-473`).
     peers: Arc<Mutex<crate::districts::Peers>>,
+    /// The scripts this world runs, shared the way the copies are: the program registers them before
+    /// the world serves anything, and the world's own moments raise them
+    /// (`game/Scripting/mod.rs`, the reference's `sScriptMgr`).
+    scripts: Arc<Mutex<crate::scripting::ScriptMgr>>,
 }
 
 impl World {
@@ -153,6 +157,7 @@ impl World {
             graphs: std::sync::Arc::new(crate::terrain::pathfind::PathGraphs::empty()),
             portals: std::sync::Arc::new(crate::maps::Portals::empty()),
             peers: Arc::new(Mutex::new(crate::districts::Peers::new())),
+            scripts: Arc::new(Mutex::new(crate::scripting::ScriptMgr::new())),
         }
     }
 
@@ -229,17 +234,53 @@ impl World {
         Arc::clone(&self.districts)
     }
 
-    /// One tick of the world: the copies that have been empty past their hold are disposed (R37,
-    /// R40) and named, so the program can say which went.
+    /// The scripts this world runs (`game/Scripting/mod.rs`).
+    pub fn scripts(&self) -> Arc<Mutex<crate::scripting::ScriptMgr>> {
+        Arc::clone(&self.scripts)
+    }
+
+    /// Take the scripts the program registered, before the world serves anything.
     ///
-    /// Reference: `World::Update(uint32 diff)` (`src/server/game/World/World.cpp:1131`) and the
-    /// `sMapMgr->Update(diff)` it calls at `:1254` - the world drives its maps, and a program's own
-    /// loop drives the world (`src/server/apps/worldserver/Main.cpp:618`). What this tree's world has
-    /// to drive today is the copies; the maps' own clocks are the guide's third item.
+    /// Reference: the reference's manager is a singleton built at start-up (`Main.cpp:272-273` set
+    /// the loaders, `ScriptMgr::Initialize` runs them); this tree's is a value, and the world it
+    /// belongs to takes it here.
+    pub fn set_scripts(&mut self, scripts: crate::scripting::ScriptMgr) {
+        self.scripts = Arc::new(Mutex::new(scripts));
+    }
+
+    /// The world is started: every script that declared the hook is told.
+    ///
+    /// Reference: `sScriptMgr->OnStartup()` once the world is ready (`Main.cpp:398`).
+    pub fn on_startup(&self) {
+        if let Ok(mut scripts) = self.scripts.lock() {
+            scripts.on_startup();
+        }
+    }
+
+    /// The world is shutting down: every script that declared the hook is told.
+    ///
+    /// Reference: `sScriptMgr->OnShutdown()` during shutdown (`Main.cpp:426`).
+    pub fn on_shutdown(&self) {
+        if let Ok(mut scripts) = self.scripts.lock() {
+            scripts.on_shutdown();
+        }
+    }
+
+    /// One tick of the world: the scripts are told, and the copies that have been empty past their
+    /// hold are disposed (R37, R40) and named, so the program can say which went.
+    ///
+    /// Reference: `World::Update(uint32 diff)` (`src/server/game/World/World.cpp:1131`): its own
+    /// order is the world's work first and the scripts' world-update hook after it (`:1355`), then
+    /// `sMapMgr->Update(diff)` at `:1254`; a program's own loop drives the world
+    /// (`src/server/apps/worldserver/Main.cpp:618`). What this tree's world has to drive today is the
+    /// copies; the maps' own clocks are the guide's third item.
     ///
     /// `now` is the epoch second the district rows are stamped with, because the hold is measured
-    /// against the table the copies live in.
-    pub fn update(&self, now: u64) -> Vec<(u32, u32)> {
+    /// against the table the copies live in; `diff` is the tick the scripts are told about.
+    pub fn update(&self, now: u64, diff: std::time::Duration) -> Vec<(u32, u32)> {
+        if let Ok(mut scripts) = self.scripts.lock() {
+            scripts.on_world_update(diff);
+        }
         let hold = u64::from(self.settings.explorable_disconnect_hold);
         match self.districts.lock() {
             Ok(mut districts) => districts.sweep(now, hold),
@@ -340,6 +381,81 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    /// A script that writes down the world's moments it was told about, in order.
+    struct Witness {
+        name: String,
+        seen: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl crate::scripting::ScriptObject for Witness {
+        fn name(&self) -> &str {
+            &self.name
+        }
+    }
+
+    impl crate::scripting::WorldScript for Witness {
+        fn on_startup(&mut self) {
+            self.seen.lock().unwrap().push("startup".to_string());
+        }
+
+        fn on_update(&mut self, diff: Duration) {
+            self.seen
+                .lock()
+                .unwrap()
+                .push(format!("update:{}", diff.as_millis()));
+        }
+
+        fn on_shutdown(&mut self) {
+            self.seen.lock().unwrap().push("shutdown".to_string());
+        }
+    }
+
+    /// The route the reference has and this tree now has too: the world raises its own moments
+    /// (`sScriptMgr->OnStartup()` at `Main.cpp:398`, `OnWorldUpdate(diff)` from `World::Update` at
+    /// `World.cpp:1355`, `OnShutdown()` at `Main.cpp:426`) and a registered script is what answers
+    /// them, while a script that did not declare a hook is not called for it.
+    #[test]
+    fn the_world_raises_its_moments_to_the_scripts_that_declared_them() {
+        let mut world = World::new(1);
+        let mut scripts = crate::scripting::ScriptMgr::new();
+        let tuned: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let deaf: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        scripts
+            .add_world_script(
+                Box::new(Witness {
+                    name: "a-tuned".to_string(),
+                    seen: Arc::clone(&tuned),
+                }),
+                &[
+                    crate::scripting::WorldHook::OnStartup,
+                    crate::scripting::WorldHook::OnUpdate,
+                ],
+            )
+            .unwrap();
+        scripts
+            .add_world_script(
+                Box::new(Witness {
+                    name: "a-deaf-one".to_string(),
+                    seen: Arc::clone(&deaf),
+                }),
+                &[crate::scripting::WorldHook::OnShutdown],
+            )
+            .unwrap();
+        world.set_scripts(scripts);
+
+        world.on_startup();
+        world.update(0, Duration::from_millis(1000));
+        world.on_shutdown();
+
+        assert_eq!(
+            *tuned.lock().unwrap(),
+            vec!["startup".to_string(), "update:1000".to_string()]
+        );
+        assert_eq!(*deaf.lock().unwrap(), vec!["shutdown".to_string()]);
+    }
 
     /// A map is named the way the working implementation names it: its name and its id, its id alone
     /// when it has no name, and never an empty string (`catalogue.rs:120-152`).

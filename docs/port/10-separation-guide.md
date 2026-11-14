@@ -174,16 +174,41 @@ results match ASURA. Automated tests support this check; the client is the judge
 
 ## 4. Script and module boundary
 
-**What exists.** `worldserver/src/main.rs:151` initializes `ScriptMgr`. The registry holds a mapping
-from script name to a number of hooks (`scripts/src/ScriptMgr/mod.rs`), and `AddScripts.rs` and
-`AddModulesScripts.rs` register nothing. It cannot currently store and dispatch gameplay callbacks.
-`game/src/Scripting/mod.rs` and `game/src/Modules/mod.rs` are unported. No module crate exists.
+**What exists (2026-11-14).** The manager lives where the reference keeps it - `game/src/Scripting/`,
+beside the interfaces - and holds real scripts, not counts. `scripts/` keeps what the reference keeps
+there: the two loaders. No module crate exists.
 
-**Work to resolve.** Port the relevant AzerothCore script manager interfaces and lifecycle at the
-locations the reference uses, including an actual route from engine events to registered callbacks.
-Establish how scripts and modules register against those interfaces. For Guild Wars behaviour, use
-ASURA and `docs/game-rules.md` as the behaviour sources. The owner-selected Lua/Rust boundary,
-profile ownership and remaining integration questions are in `docs/port/11-content-and-behaviour.md`.
+**Done (2026-11-14, the manager and its route).** `ScriptObject` (`ScriptObject.h:38`), `WorldScript`
+(`WorldScript.h:45`) and `ScriptMgr` (`ScriptMgr.h` 940 lines, `ScriptMgr.cpp` 292) are ported as the
+reference has them: the program sets a loader per kind, `initialize` runs them once, a script is
+numbered by its order of registration (`ScriptPointerList[_scriptIdCounter++]`, `:820`), a name
+registered twice is refused, and a hook is answered only by the scripts that declared it
+(`AddScript(script, enabledHooks)`, `:796`; `CALL_ENABLED_HOOKS`, `ScriptMgrMacros.h:73-77`). The
+engine now raises its own moments: `World::on_startup` at the program's ready line
+(`sScriptMgr->OnStartup()`, `Main.cpp:398`), `World::update(now, diff)` from the world's timer
+(`OnWorldUpdate(diff)`, `World.cpp:1355`), and `World::on_shutdown` on the way down
+(`Main.cpp:426`) - the same three moments, in the same order, in the reference's own places. The world
+owns the manager the way it owns its copies, so a session can reach it without a global.
+
+`World::update` is proven to reach a registered script, and to skip one that did not declare the
+hook, by `game/src/World/mod.rs`'s `the_world_raises_its_moments_to_the_scripts_that_declared_them`.
+
+**Ported thin, and said so.** Three of the reference's thirteen world hooks are here: `OnUpdate`,
+`OnStartup`, `OnShutdown` - the three moments this tree raises. The other ten (`WorldScript.h:30-43`)
+each need both an engine moment and argument types this tree has no counterpart for (a locale, a
+`ShutdownExitCode`, a `ShutdownMask`, a client cache version, an MOTD text), and writing those types
+first would be inventing them. The other script *families* the reference has - `PlayerScript.h`
+(51,849 bytes), `AllMapScript`, `CreatureScript`, `ItemScript` and the rest - are not here: they arrive
+with the game objects they are about.
+
+**Work to resolve.** The route exists; the *action* does not yet. Nothing a script is handed today can
+change the world: the hooks take no argument, exactly as the reference's do, because the reference's
+scripts reach `sWorld` and `sObjectMgr` as globals and this tree has no globals - so a script's first
+authorized action needs an interface to act through, and that interface is the content boundary the
+owner has to set (`docs/port/11-content-and-behaviour.md`, the Lua/Rust split). The reference's first
+such family for this world is `PlayerScript`'s chat hooks, which is what `scripts/World/chat_log.cpp`
+is written against and what would move the chat line out of `Handlers/ChatHandler.rs` and into a
+script. A module crate is the last piece: `modules/` has the loader hook and no crate.
 
 **Evidence of completion.** A registered script can receive an implemented engine event and affect
 an authorized game action through the intended interface. A module can register and receive its

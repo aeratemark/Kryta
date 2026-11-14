@@ -148,7 +148,7 @@ fn run(args: &[String]) -> Result<(), String> {
     // starts its io-context threads (its `ThreadPool`) before this; that pool is this tree's socket
     // layer, which owns its runtimes and is created with the listener, so the thread stage lands
     // there and not as a stage of its own (`docs/port/01-structure.md`).
-    let mut scripts = scripts::ScriptMgr::new();
+    let mut scripts = game::scripting::ScriptMgr::new();
     scripts.set_script_loader(scripts::add_scripts);
     scripts.set_modules_loader(scripts::add_modules_scripts);
     log.out(LogLevel::Info, "server.loading", "Initializing Scripts...");
@@ -236,6 +236,10 @@ fn run(args: &[String]) -> Result<(), String> {
     }
 
     let mut world = game::world::World::new(realm);
+    // The scripts the program registered at stage 7 are the world's: the manager is a game symbol in
+    // the reference too (`sScriptMgr`, `src/server/game/Scripting/`), and the world is the object
+    // that raises its moments.
+    world.set_scripts(scripts);
     // The maps are rows in the world database (`docs/decisions/0009-world-schema.md`), read the way the
     // reference reads its map records at `SetInitialWorldSettings`: one query, held for the life of the
     // program. A world started against an empty database hosts no map, and says so.
@@ -565,6 +569,8 @@ fn run(args: &[String]) -> Result<(), String> {
             "READY: listening on {bind}:{bound} as world {realm}; a client's gameplay connection is copied here by the login program; status reported every {status_interval} s."
         ),
     );
+    // The world is up, so its scripts are told (`sScriptMgr->OnStartup()`, `Main.cpp:398`).
+    world.on_startup();
 
     // Stages after this one, in the reference's order, and none exists yet:
     //   CliRunnable                   the console, when `Console.Enable`
@@ -643,7 +649,10 @@ fn run(args: &[String]) -> Result<(), String> {
                         break;
                     }
                     let hold = u64::from(tick_world.settings().explorable_disconnect_hold);
-                    let disposed = tick_world.update(unix_now());
+                    let disposed = tick_world.update(
+                        unix_now(),
+                        std::time::Duration::from_millis(u64::from(tick_world.settings().sweep_interval_ms)),
+                    );
                     for (map_id, district) in disposed {
                         tick_log.out(
                             LogLevel::Info,
@@ -659,6 +668,9 @@ fn run(args: &[String]) -> Result<(), String> {
     }
 
     wait_for_shutdown();
+    // The world is going down, so its scripts are told while it still stands
+    // (`sScriptMgr->OnShutdown()`, `Main.cpp:426`).
+    world.on_shutdown();
     stop_tick.store(true, std::sync::atomic::Ordering::Relaxed);
     stop_status.store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = status_writer.join();
