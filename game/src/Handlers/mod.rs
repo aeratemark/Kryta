@@ -13,3 +13,6 @@
 
 #[path = "ItemHandler.rs"]
 pub mod item;
+
+#[path = "MovementHandler.rs"]
+pub mod movement;

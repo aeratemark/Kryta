@@ -49,8 +49,9 @@ remaining deviation is described accurately in its decision record.
 ## 2. Gameplay session owns several mechanics
 
 **What exists.** `game/src/Server/WorldSession.rs` holds connection handling and also carries gameplay
-work: the portal crossing, the four movement handlers, and `step_map`, which calls `Agent::advance` and
-`Portals::crossed` while deciding when to advance and what to do with the result.
+work: the portal crossing (`cross_portal`), the map's clock (`step_map`, which calls `Agent::advance`
+and `Portals::crossed` and decides when to advance and what to do with the result), and the travel and
+chat families, which have not moved yet.
 
 **Done (2026-11-14, item family).** The item messages are the first family moved, all four of them:
 `answer_item_move`, `answer_equip_item`, `answer_drop_item` and `answer_unequip_item` are
@@ -62,6 +63,16 @@ the equipped bag, which prints nothing and reads nothing. `move_item`, `equipped
 end-to-end item journey (drag, equip, drop, unequip) passes untouched. The session exposes what a
 handler needs (`say`, `send`, `characters()`, `bags()`, `item_templates()`, `equipped_bag()`,
 `player_id()`) as `pub(crate)`, which is the surface every later family will use.
+
+**Done (2026-11-14, movement family).** The four movement messages moved the same way:
+`answer_move_to_coord`, `answer_position_update`, `answer_cancel_movement` and `answer_last_position` are
+`impl WorldSession` members in `game/src/Handlers/MovementHandler.rs`, and the dispatch in the session is
+one call each. Their decisions were already the nouns': `AgentState::adopt_report`,
+`begin_walk`/`begin_manual_walk`/`advance`/`cancel_movement`/`adopt_correction` in `Agents/`, the route
+in `pathfind`/`directional`, and the wall in `Maps/Portals.rs`. What stays in the session is what is not a
+message: the map's clock (`step_map`) and the transfer it can start (`cross_portal`), which the guide's
+third and fourth items own. No frame, order or size changed; the end-to-end journey's walk, its doorway
+crossing and its tick measurement all pass untouched.
 
 There is already useful extraction: agent state and movement operations are in `game/src/Agents/`,
 pathfinding in `game/src/Terrain/`, portal geometry in `game/src/Maps/`, and character item persistence
@@ -115,8 +126,10 @@ from script name to a number of hooks (`scripts/src/ScriptMgr/mod.rs`), and `Add
 **Work to resolve.** Port the relevant AzerothCore script manager interfaces and lifecycle at the
 locations the reference uses, including an actual route from engine events to registered callbacks.
 Establish how scripts and modules register against those interfaces. For Guild Wars behaviour, use
-ASURA and `docs/game-rules.md` as the behaviour sources. The language, content interfaces, and scope
-of any Lua integration require their own design evidence and decisions before implementation.
+ASURA and `docs/game-rules.md` as the behaviour sources. The owner selected Lua for external game
+behaviour, with Rust providing simulation mechanics, in ASURA `docs/30-world-content-and-scripting.md`
+(recovered under `docs/evidence/asura-history/`). The integration and content interfaces still need
+to be designed against Kryta's structure.
 
 **Evidence of completion.** A registered script can receive an implemented engine event and affect
 an authorized game action through the intended interface. A module can register and receive its

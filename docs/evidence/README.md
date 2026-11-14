@@ -7,6 +7,7 @@ in the repository rather than at another project's working copy.
 |---|---|---|
 | `client-protocol.md` | one client's protocol, measured: framing, the handshake, the login batch, the portal request, the gameplay version message, and the map and item families | ASURA `docs/reference/client-protocol.md` |
 | `packet-coverage.md` | the header-to-name-and-size table that record produced, with its own note on what a recorded size is | ASURA `docs/work/packet-coverage.md` |
+| `asura-history/README.md` | recovered historical documentation, source commits, and a subject index | ASURA Git history |
 
 `recordings/` is the other half: the captures themselves, copied whole from ASURA's `recordings/` -
 `gwps/` (the reference server's own send trace), `asura/` (a working server's wire), and `client/`

@@ -125,9 +125,9 @@ struct Claimed {
 /// is the wall the step crosses, so the pair is what a crossing needs - not the agent's position, which
 /// a simulation tick may already have advanced.
 #[derive(Debug, Clone, Copy, Default)]
-struct PortalStep {
-    position: (f32, f32),
-    last_step: Option<((f32, f32), (f32, f32))>,
+pub(crate) struct PortalStep {
+    pub(crate) position: (f32, f32),
+    pub(crate) last_step: Option<((f32, f32), (f32, f32))>,
 }
 
 /// `GAME_CMSG_ITEM_MOVE` (`0x8072`): a drag in the inventory - the item, the bag and the slot.
@@ -227,7 +227,7 @@ pub struct WorldSession {
     /// Where a character may stand on each map, for the entry placement of R13.
     spawns: Vec<crate::maps::MapSpawn>,
     /// The numbers this world runs by: the spawn scatter and the rest.
-    settings: crate::world::world_config::WorldConfig,
+    pub(crate) settings: crate::world::world_config::WorldConfig,
     /// The account the version message named, kept for the travel hand-off a redirect writes: the
     /// login database's travel row is keyed by account and player token.
     account: std::sync::Mutex<[u8; 16]>,
@@ -237,7 +237,7 @@ pub struct WorldSession {
     /// The map's walkable graphs, which a walk request is answered from: one finder per map, imported
     /// from the client archive at start-up (`ASURA/crates/asura-world/src/pathfind.rs:1484`). A map
     /// whose graph was never bound answers `Walk::NoGraph`.
-    graphs: std::sync::Arc<crate::terrain::pathfind::PathGraphs>,
+    pub(crate) graphs: std::sync::Arc<crate::terrain::pathfind::PathGraphs>,
     /// The doorways a step is judged against, and the arrivals a crossing lands on.
     portals: std::sync::Arc<crate::maps::Portals>,
     /// The arrival points the world read with its maps (R21), so a crossing knows where the receiving
@@ -254,7 +254,7 @@ pub struct WorldSession {
     /// reports: `ASURA/crates/asura-world/src/player.rs:43-74` (`portal_position`, `last_step`,
     /// `record_portal_step`). Simulation ticks never move it - a tick can cross a wall between
     /// reports, and that movement must remain in the next check.
-    portal: std::sync::Mutex<PortalStep>,
+    pub(crate) portal: std::sync::Mutex<PortalStep>,
     /// The character database, when the program opened one: a creation screen's confirm writes a row
     /// there. A session without it can draw the screen but cannot finish it.
     characters: Option<std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>>,
@@ -280,7 +280,7 @@ pub struct WorldSession {
     master: Option<[u8; shared::cryptography::handshake::MASTER_SECRET_LEN]>,
     /// The players loaded in this world's running copies: a connection tells them it arrived, and is
     /// told when one of them does (game/Districts/Peers.rs).
-    peers: std::sync::Arc<std::sync::Mutex<crate::districts::Peers>>,
+    pub(crate) peers: std::sync::Arc<std::sync::Mutex<crate::districts::Peers>>,
     /// The frames other sessions pushed to this one, which it scrambles with its own cipher and writes
     /// when it next looks. A session that has not loaded a map has no channel at all.
     outbox: std::sync::Mutex<Option<std::sync::mpsc::Receiver<Vec<u8>>>>,
@@ -1183,7 +1183,7 @@ impl WorldSession {
     ///
     /// `ASURA/crates/asura-world/src/player.rs:60-74`, `record_portal_step`: the segment between two
     /// finite client reports, and nothing at all when the client reported the same point again.
-    fn record_portal_step(&self, position: (f32, f32)) {
+    pub(crate) fn record_portal_step(&self, position: (f32, f32)) {
         let Ok(mut portal) = self.portal.lock() else {
             return;
         };
@@ -1764,308 +1764,6 @@ impl WorldSession {
         }
     }
 
-    /// `GAME_CMSG_MOVE_TO_COORD` (`0x803E`): the agent is asked to walk to a point.
-    ///
-    /// `ASURA/crates/asura-world/src/agent.rs:710` (`handle_move_to_coord`), ported whole: the finder
-    /// is asked for a path from where the agent stands; an empty path sends **nothing** (the
-    /// reference's own `if (0 < agent->waypoints.len)`), and a refusal also sends nothing, because the
-    /// one message that could answer it - `0x002C` with the server's own copy - disconnected a client
-    /// with `007` once and teleported it into a wall once (`agent.rs:864-871`). A path that is found is
-    /// densified to the live cadence (`densify`, `agent.rs:646`) and answered with `0x0029`, which
-    /// every other client in the map is told as well.
-    async fn answer_move_to_coord(
-        &self,
-        io: &mut SessionIo,
-        peer: &str,
-        message: &[u8],
-        crypt: &mut AuthCrypt,
-    ) {
-        let body = &message[2..];
-        if body.len() < 12 {
-            self.say(
-                LogLevel::Warn,
-                format!(
-                    "Gameplay connection from {peer}: a walk request is {} bytes and its point needs 16; it cannot be read.",
-                    message.len()
-                ),
-            );
-            return;
-        }
-        let destination = (
-            f32::from_le_bytes([body[0], body[1], body[2], body[3]]),
-            f32::from_le_bytes([body[4], body[5], body[6], body[7]]),
-        );
-        let plane = u32::from_le_bytes([body[8], body[9], body[10], body[11]]) as u16;
-        let to = crate::terrain::Pos {
-            x: destination.0,
-            y: destination.1,
-            plane,
-        };
-        let Some((agent_id, from, planes)) = self.with_agent(|agent| {
-            (agent.agent_id, agent.here(), agent.plane)
-        }) else {
-            return;
-        };
-        let walked = self.graphs.walk(self.map_id() as i32, from, to);
-        match walked {
-            crate::terrain::Walk::Found(waypoints) => {
-                let waypoints = crate::agents::densify(waypoints, from, crate::agents::LIVE_CADENCE_STEP);
-                let begun = self.with_agent(|agent| {
-                    let speed = (agent.move_type != 1 || agent.move_speed != 1.0)
-                        .then(|| agent_packets::agent_update_speed(agent_id, 1.0, 1));
-                    agent.move_type = 1;
-                    agent.move_speed = 1.0;
-                    let first = agent.begin_walk(waypoints)?;
-                    Some((
-                        agent_packets::agent_move_to_point(
-                            agent_id,
-                            (first.pos.x, first.pos.y),
-                            first.pos.plane,
-                            agent.plane,
-                        ),
-                        speed,
-                    ))
-                });
-                if let Some((walk, speed)) = begun.flatten() {
-                    let mut reply: Vec<Vec<u8>> = speed.into_iter().map(|(_, f)| f).collect();
-                    reply.push(walk.1);
-                    // Everyone else is told where this agent is walking: the reference broadcasts the
-                    // same message (`ASURA/crates/asura-world/src/agent.rs:849-855`,
-                    // `GameSrv_BroadcastAgentMoveToPoint`), and a client that is not told keeps drawing
-                    // the walker where it last stood.
-                    if let Ok(peers) = self.peers.lock() {
-                        peers.broadcast(self.player_id(), self.map_id(), self.district(), &reply);
-                    }
-                    self.send(io, peer, crypt, &reply, "the walk").await;
-                }
-            }
-            crate::terrain::Walk::NoPath | crate::terrain::Walk::NoGraph => {
-                self.with_agent(|agent| agent.cancel_movement());
-                self.say(
-                    LogLevel::Info,
-                    format!(
-                        "Gameplay connection from {peer}: agent {agent_id} cannot walk from ({:.1}, {:.1}) plane {} to ({:.1}, {:.1}) plane {plane}: standing still, and nothing is sent.",
-                        from.x, from.y, planes, destination.0, destination.1
-                    ),
-                );
-            }
-        }
-    }
-
-    /// `GAME_CMSG_POSITION_UPDATE` (`0x803D`): where the client is, and the offset it is walking in.
-    ///
-    /// `ASURA/crates/asura-world/src/agent.rs:887` (`handle_position_update`), ported whole: the report
-    /// is adopted under its elapsed-time budget, a manual walk follows the offset through the map's
-    /// connected cells (`walk_direction`), and the answer is the direction, the movement type and the
-    /// destination - the live capture's own order (`agent.rs:1000-1029`). A report that is not finite,
-    /// or whose type is outside 1-8, is dropped exactly as it is there (`agent.rs:923-929`).
-    async fn answer_position_update(
-        &self,
-        io: &mut SessionIo,
-        peer: &str,
-        message: &[u8],
-        crypt: &mut AuthCrypt,
-    ) {
-        let body = &message[2..];
-        if body.len() < 24 {
-            self.say(
-                LogLevel::Warn,
-                format!(
-                    "Gameplay connection from {peer}: a position report is {} bytes and needs 26; it cannot be read.",
-                    message.len()
-                ),
-            );
-            return;
-        }
-        let position = (
-            f32::from_le_bytes([body[0], body[1], body[2], body[3]]),
-            f32::from_le_bytes([body[4], body[5], body[6], body[7]]),
-        );
-        let plane = u32::from_le_bytes([body[8], body[9], body[10], body[11]]) as u16;
-        let offset = (
-            f32::from_le_bytes([body[12], body[13], body[14], body[15]]),
-            f32::from_le_bytes([body[16], body[17], body[18], body[19]]),
-        );
-        let move_type = u32::from_le_bytes([body[20], body[21], body[22], body[23]]) as u8;
-        if ![position.0, position.1, offset.0, offset.1]
-            .iter()
-            .all(|value| value.is_finite())
-            || !(1..=8).contains(&move_type)
-        {
-            return;
-        }
-        let now = std::time::Instant::now();
-        let Some((adopted, walk_was_running, reply)) = self.with_agent(|agent| {
-            let walk_was_running = 0.0 < agent.motion.speed;
-            let adopted = agent.adopt_report(position, plane, now);
-            let reply = if adopted != crate::agents::Adopted::Refused {
-                let from = agent.here();
-                let walked = self.graphs.walk_direction(
-                    self.map_id() as i32,
-                    from,
-                    offset,
-                    crate::terrain::pathfind::directional::DirectionalSettings::default(),
-                );
-                let waypoints = match walked {
-                    crate::terrain::Walk::Found(waypoints) => waypoints,
-                    crate::terrain::Walk::NoPath | crate::terrain::Walk::NoGraph => Vec::new(),
-                };
-                let norm = (offset.0 * offset.0 + offset.1 * offset.1).sqrt();
-                let direction = if norm > 0.0 {
-                    (offset.0 / norm, offset.1 / norm)
-                } else {
-                    (0.0, 0.0)
-                };
-                agent.begin_manual_walk(waypoints, direction, move_type)
-            } else {
-                Vec::new()
-            };
-            (adopted, walk_was_running, reply)
-        }) else {
-            return;
-        };
-        let reply: Vec<Vec<u8>> = reply.into_iter().map(|(_, frame)| frame).collect();
-        self.say(
-            LogLevel::Debug,
-            format!(
-                "Gameplay connection from {peer}: a position report ({:.1}, {:.1}) plane {plane}: {adopted:?}, server walk running={walk_was_running}, {} message(s) answered.",
-                position.0,
-                position.1,
-                reply.len()
-            ),
-        );
-        // The step this report moved the character along: the doorway test is the wall the step
-        // crosses, not the position a tick may already have advanced
-        // (`ASURA/crates/asura-world/src/agent.rs:1038-1041`, `record_portal_step`).
-        self.record_portal_step(position);
-        if !reply.is_empty() {
-            // Everyone else is told what this report made the agent do, before the walker itself is
-            // (`ASURA/crates/asura-world/src/agent.rs:1041-1042`: `instance.broadcast`, then `send`).
-            if let Ok(peers) = self.peers.lock() {
-                peers.broadcast(self.player_id(), self.map_id(), self.district(), &reply);
-            }
-            self.send(io, peer, crypt, &reply, "the walk the report asked for")
-                .await;
-        }
-    }
-
-    /// `GAME_CMSG_CANCEL_MOVEMENT` (`0x8028`): the client stopped walking.
-    ///
-    /// `ASURA/crates/asura-world/src/agent.rs:1062` (`handle_cancel_movement`): the agent's own walk is
-    /// cancelled - destination to where it stands, speed to zero - and every client is told it stopped
-    /// with `0x0028`. Cancelling is the load-bearing half: without it the server keeps advancing its
-    /// copy along the abandoned path and answers the next click from a position the client left behind.
-    async fn answer_cancel_movement(
-        &self,
-        io: &mut SessionIo,
-        peer: &str,
-        crypt: &mut AuthCrypt,
-    ) {
-        let Some((stop, was_walking)) = self.with_agent(|agent| {
-            let was_walking = 0.0 < agent.motion.speed;
-            agent.cancel_movement();
-            (agent_packets::agent_stop_moving(agent.agent_id), was_walking)
-        }) else {
-            return;
-        };
-        self.say(
-            LogLevel::Debug,
-            format!(
-                "Gameplay connection from {peer}: the client cancelled walking{}.",
-                if was_walking {
-                    " and a server-side walk was running: cancelled"
-                } else {
-                    ""
-                }
-            ),
-        );
-        // Every client is told it stopped, before the walker itself is
-        // (`ASURA/crates/asura-world/src/agent.rs:1103-1104`).
-        if let Ok(peers) = self.peers.lock() {
-            peers.broadcast(
-                self.player_id(),
-                self.map_id(),
-                self.district(),
-                std::slice::from_ref(&stop.1),
-            );
-        }
-        self.send(io, peer, crypt, &[stop.1], "the stop").await;
-    }
-
-    /// `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` (`0x8047`): the stopping point a cancel carries.
-    ///
-    /// `ASURA/crates/asura-world/src/agent.rs:1117` (`handle_last_position`), ported whole: a
-    /// correction within the world's `MaxAllowedCorrection` and on the same plane is taken, and the
-    /// answer is the movement type 9 followed by a destination at that point; a refused correction
-    /// sends **nothing at all**, because the only position it could name is the server's own stale
-    /// guess, and the client obeys that message - measured live as one refusal ordering a client 196.7
-    /// units backwards (`agent.rs:1108-1116`). The server's own copy stops walking either way.
-    async fn answer_last_position(
-        &self,
-        io: &mut SessionIo,
-        peer: &str,
-        message: &[u8],
-        crypt: &mut AuthCrypt,
-    ) {
-        let body = &message[2..];
-        if body.len() < 12 {
-            self.say(
-                LogLevel::Warn,
-                format!(
-                    "Gameplay connection from {peer}: a stopping point is {} bytes and needs 16; it cannot be read.",
-                    message.len()
-                ),
-            );
-            return;
-        }
-        let position = (
-            f32::from_le_bytes([body[0], body[1], body[2], body[3]]),
-            f32::from_le_bytes([body[4], body[5], body[6], body[7]]),
-        );
-        let plane = u32::from_le_bytes([body[8], body[9], body[10], body[11]]) as u16;
-        let ceiling = self.settings.max_allowed_correction;
-        let Some((taken, reply)) = self.with_agent(|agent| {
-            let taken = agent.adopt_correction(position, plane, ceiling);
-            let reply = if taken {
-                agent.stop_manual_walk()
-            } else {
-                agent.stand_still();
-                Vec::new()
-            };
-            (taken, reply)
-        }) else {
-            return;
-        };
-        self.say(
-            LogLevel::Debug,
-            format!(
-                "Gameplay connection from {peer}: a stopping point ({:.1}, {:.1}) plane {plane} against a ceiling of {ceiling:.1}: {}.",
-                position.0,
-                position.1,
-                if taken {
-                    "taken - type 9 and a destination at that point"
-                } else {
-                    "refused - the agent stops and nothing is sent"
-                }
-            ),
-        );
-        // A correction the server accepted is a movement the reports lagged behind; it crosses a
-        // doorway the same way a walk does (`ASURA/crates/asura-world/src/agent.rs:1175-1179`). A point
-        // that is not finite leaves no segment at all.
-        if position.0.is_finite() && position.1.is_finite() {
-            self.record_portal_step(position);
-        } else if let Ok(mut portal) = self.portal.lock() {
-            portal.last_step = None;
-        }
-        if !reply.is_empty() {
-            let reply: Vec<Vec<u8>> = reply.into_iter().map(|(_, frame)| frame).collect();
-            if let Ok(peers) = self.peers.lock() {
-                peers.broadcast(self.player_id(), self.map_id(), self.district(), &reply);
-            }
-            self.send(io, peer, crypt, &reply, "the stopping point").await;
-        }
-    }
-
     /// Write everything other sessions have pushed at this one, and nothing when they pushed nothing.
     async fn flush_outbox(&self, io: &mut SessionIo, peer: &str, crypt: &mut AuthCrypt) {
         let mut frames: Vec<Vec<u8>> = Vec::new();
@@ -2087,7 +1785,7 @@ impl WorldSession {
     /// where the body stands: an introduction names the point a player is at **now**, not the one it
     /// entered at (`ASURA/crates/asura-world/src/instance.rs:249-255`, `standing`, and `PeerView::from`,
     /// which reads the live agent).
-    fn with_agent<T>(&self, work: impl FnOnce(&mut crate::agents::Agent) -> T) -> Option<T> {
+    pub(crate) fn with_agent<T>(&self, work: impl FnOnce(&mut crate::agents::Agent) -> T) -> Option<T> {
         let mut agent = self.agent.lock().ok()?;
         let agent = agent.as_mut()?;
         let answer = work(agent);
@@ -2125,7 +1823,7 @@ impl WorldSession {
 
     /// The district this connection entered, when it has entered one: the number a copy is known by
     /// (`game/Districts/`), and the half a peer registry keys on.
-    fn district(&self) -> u32 {
+    pub(crate) fn district(&self) -> u32 {
         match self.entered.lock() {
             Ok(entered) => entered.map(|(_, district)| district).unwrap_or(0),
             Err(_) => 0,
@@ -2148,7 +1846,7 @@ impl WorldSession {
     }
 
     /// The map this connection is in, as the graph lookup wants it.
-    fn map_id(&self) -> u32 {
+    pub(crate) fn map_id(&self) -> u32 {
         match self.entered.lock() {
             Ok(entered) => entered.map(|(map_id, _)| map_id).unwrap_or(0),
             Err(_) => 0,
