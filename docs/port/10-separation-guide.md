@@ -52,8 +52,9 @@ remaining deviation is described accurately in its decision record.
 work: the portal crossing, the four movement handlers, and `step_map`, which calls `Agent::advance` and
 `Portals::crossed` while deciding when to advance and what to do with the result.
 
-**Done (2026-11-14, item family).** The item messages are the first family moved: `answer_item_move`
-and `answer_equip_item` are `impl WorldSession` members in `game/src/Handlers/ItemHandler.rs`, and the
+**Done (2026-11-14, item family).** The item messages are the first family moved, all four of them:
+`answer_item_move`, `answer_equip_item`, `answer_drop_item` and `answer_unequip_item` are
+`impl WorldSession` members in `game/src/Handlers/ItemHandler.rs`, and the
 decision they used to hold - where an item would be worn - is `characters::equip_place` in
 `game/src/Characters/Equipping.rs`, a pure function over the character's rows, the item templates and
 the equipped bag, which prints nothing and reads nothing. `move_item`, `equipped_item_ids` and

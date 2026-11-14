@@ -2696,69 +2696,12 @@ impl WorldSession {
                     // (`0x0020`, `AgentType_Item`) crashed with that message as the log's last line -
                     // and neither appears in any capture (`item.rs:236-246`). So the stack is the state
                     // and silence is the answer.
-                    CLIENT_DROP_ITEM => {
-                        let item_id = message
-                            .get(2..6)
-                            .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]));
-                        let count = message.get(6).copied();
-                        let (Some(item_id), Some(count)) = (item_id, count) else {
-                            self.say(
-                                LogLevel::Warn,
-                                format!(
-                                    "Gameplay connection from {peer}: a drop of {} bytes cannot be read.",
-                                    message.len()
-                                ),
-                            );
-                            return;
-                        };
-                        if item_id == 0 || count == 0 {
-                            self.say(
-                                LogLevel::Info,
-                                format!(
-                                    "Gameplay connection from {peer}: a drop of {count} of item {item_id} names something that is not an item; ignored."
-                                ),
-                            );
-                            return;
-                        }
-                        let Some(pool) = self.characters.as_ref() else {
-                            return;
-                        };
-                        let characters = crate::characters::DatabaseCharacters::new(
-                            std::sync::Arc::clone(pool),
-                            self.log.clone(),
-                        );
-                        let uuid = crate::characters::uuid_text(&sheet.uuid);
-                        match characters.take_from_stack(&uuid, item_id, u32::from(count)) {
-                            Ok(Some(remaining)) => self.say(
-                                LogLevel::Info,
-                                format!(
-                                    "Gameplay connection from {peer}: {count} of item {item_id} dropped; {remaining} left in the bag, and nothing is sent."
-                                ),
-                            ),
-                            Ok(None) => self.say(
-                                LogLevel::Info,
-                                format!(
-                                    "Gameplay connection from {peer}: a drop names item {item_id}, which the character does not carry in that quantity; ignored."
-                                ),
-                            ),
-                            Err(error) => self.say(
-                                LogLevel::Warn,
-                                format!(
-                                    "Gameplay connection from {peer}: the drop could not be written: {error}"
-                                ),
-                            ),
-                        }
-                    }
+                    CLIENT_DROP_ITEM => self.answer_drop_item(peer, &message, sheet),
                     // `GAME_CMSG_UNEQUIP_ITEM` (`0x804F`): the working implementation answers it by
                     // saying what it cannot do - the message carries no item id and no capture shows
                     // what it means, and dragging the item out of the equipped bag works instead
                     // (`ASURA/crates/asura-world/src/item.rs:555`).
-                    CLIENT_UNEQUIP_ITEM => self.say(
-                        LogLevel::Info,
-                        format!(
-                            "Gameplay connection from {peer}: an unequip (0x804F) is not ported: it carries no item id and no capture shows what it means; dragging the item out of the equipped bag is the path that works."
-                        ),
-                    ),
+                    CLIENT_UNEQUIP_ITEM => self.answer_unequip_item(peer),
                     // The client wears one of its items: the slot its kind is worn in, in the equipped
                     // bag, with whatever was worn there taken off to the first free carrying slot - and
                     // the agent's worn items sent again, which is the one thing the client cannot work
