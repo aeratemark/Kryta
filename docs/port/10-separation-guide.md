@@ -48,11 +48,12 @@ remaining deviation is described accurately in its decision record.
 
 ## 2. Gameplay session owns several mechanics
 
-**What exists.** `game/src/Server/WorldSession.rs` holds connection handling and also carries gameplay
-work: the map's clock (`step_map`, which calls `Agent::advance` and `Portals::crossed` and decides
-when to advance and what to do with the result) and the load (`load_map`, `entry_point`,
-`saved_position`), which builds the load's frames from inside the session. Five message families are
-in `game/src/Handlers/`.
+**What exists (2026-11-14, after the families moved).** `game/src/Server/WorldSession.rs` holds what a
+connection is: the seed exchange, the version message, the travel row's claim, the head block, the read
+loop, the outbox and the district it gives back. Six message families are in `game/src/Handlers/`, and
+the load's answers are `game/Agents/Player.rs`'s. What is still the session's and should not be is the
+map's clock (`step_map`, which calls `Agent::advance` and `Portals::crossed` and decides when to advance
+and what to do with the result) - the third item's subject.
 
 **Done (2026-11-14, item family).** The item messages are the first family moved, all four of them:
 `answer_item_move`, `answer_equip_item`, `answer_drop_item` and `answer_unequip_item` are
@@ -115,26 +116,25 @@ responsibilities in the reference's corresponding layers. Preserve all branches,
 error handling and frames. Moving a function to another file alone does not settle its ownership.
 Start with a specifically selected subject and keep the work and parity audit scoped to it.
 
-**Done (2026-11-14, the load block).** The first of the load's three asks to get its noun right:
-`0x8090` - the players request - is answered by `game/src/Agents/Player.rs`, `Player::load_block`,
-the whole block frame for frame in the reference's order (`ASURA/crates/asura-world/src/player.rs`,
-540 lines, `player_block`). The frames moved verbatim; the nine lines that changed spelling are the
-ones that read the character's row (`sheet.` -> `self.`) and the world's settings (`self.settings.` ->
-`settings.`). What stayed is what is not the player object's: the database reads that decide the
-unlocked-instance bitmap (the character's rows, R12's arrival rule), the entry point, the district's
-introductions and the broadcast that tells the copy this body is here - `Player` is given the state and
-returns the frames. `PLAYER_TEAM_TOKEN`, `UNLOCKED_MAP_ZEROS` and `MORALE_FULL` moved with it, to the
+**Done (2026-11-14, the load's three answers).** The load's answers got the noun the reference gives
+them. `0x8090` - the players request - is `Player::load_block`; `0x8091` - the inventory stream and the
+map's record - is `Player::items_answer`; `0x8088` - the entry point - is `Player::spawn_answer`; all
+three in `game/src/Agents/Player.rs`, frame for frame in the reference's order
+(`ASURA/crates/asura-world/src/player.rs`, 540 lines, `player_block`). The frames moved verbatim; the
+only lines that changed spelling are the ones that read the character's row (`sheet.` -> `self.`) and
+the world's settings (`self.settings.` -> `settings.`). What stayed is what is not the player object's:
+the database reads that decide the unlocked-instance bitmap (the character's rows, R12's arrival rule),
+the entry point itself, the district's introductions, the broadcast that tells the copy this body is
+here, and the agent the session creates at the entry point - `Player` is given the state and returns
+the frames. `PLAYER_TEAM_TOKEN`, `UNLOCKED_MAP_ZEROS` and `MORALE_FULL` moved with it, to the
 `player.rs` the working implementation keeps them in. No frame, order or size changed; all four
-end-to-end journeys and the login journey pass untouched, and the load's own block is unchanged in the
-diff that moved it except for those nine lines' spelling.
+end-to-end journeys and the login journey pass untouched.
 
-**The next subject: the load's other two asks.** `0x8091` (the item stream and the map's record) and
-`0x8088` (the entry point) are still answered inside `WorldSession::load_map`'s read loop. Measured
-against the two authorities: ASURA answers them in different domain modules - `item::handle_request_items`
-and `agent::handle_request_spawn` (`ASURA/crates/asura-world/src/dispatch.rs:24-34`) - and the reference
-answers neither with a handler: they are `Player::SendItems` and the entry point of
-`Player::SendInitialPackets*`, i.e. the player object's again. So the same treatment: frames to the noun
-that owns them, the reads left where they are, and no frame, order or size changed.
+The message families are therefore all out of the session: item, movement, travel, chat, character and
+the load's three answers. What is left in `WorldSession` is the connection's own cycle - the seed
+exchange and the version message, the travel row's claim, the head block, the read loop, the map's
+clock, the outbox and the district it gives back - which is the reference's `WorldSession` and ASURA's
+`connection.rs`, not a message family. The clock is the third item's.
 
 **Evidence of completion.** The subject has a traceable handler-to-mechanic path, the mechanic's
 state and decisions have a clear owner, existing callers and persistence still work, and recorded

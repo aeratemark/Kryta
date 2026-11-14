@@ -38,9 +38,8 @@ pub(crate) struct Player {
     /// The item ids the agent is drawn wearing, from the equipped bag, in its own order. A slot
     /// the character wears nothing in is zero.
     pub equipped: [u32; 9],
-    /// The instances the character has reached, as the client addresses them: bit `n % 32` of
-    /// word `n / 32`.
-    pub unlocked: Vec<u32>,
+    /// The gold the character carries (R45: gold is per character).
+    pub gold: u32,
     pub profession: u8,
     pub unlocked_professions: u32,
     pub level: u8,
@@ -48,6 +47,46 @@ pub(crate) struct Player {
 }
 
 impl Player {
+    /// The `0x8091` answer: the inventory stream and the map's record, measured in one block. The
+    /// manifest pair that ends it names the map in its second form
+    /// (`ASURA/crates/asura-world/src/map.rs:22-58`; ASURA answers it in `item.rs`,
+    /// `handle_request_items`, and the reference in `Player::SendItems`).
+    pub(crate) fn items_answer(
+        &self,
+        inventory: &crate::creation::Inventory,
+        map: &crate::world::MapEntry,
+    ) -> Vec<Vec<u8>> {
+        let mut frames = crate::creation::load_item_stream(inventory, self.gold);
+        frames.push(misc_packets::hard_mode_unlocked(1));
+        frames.push(character_packets::character_update_info(""));
+        frames.push(misc_packets::map_update_current(map.id as u16, 0));
+        frames.push(instance_packets::ready_for_map_spawn(0));
+        frames.push(instance_packets::instance_manifest_phase(0));
+        frames.push(instance_packets::instance_manifest_phase(1));
+        frames.push(instance_packets::instance_manifest_done(2, 877, 0));
+        frames.push(instance_packets::instance_manifest_phase(0));
+        frames.push(instance_packets::instance_manifest_phase(1));
+        frames.push(instance_packets::instance_manifest_done(
+            0,
+            map.id as u16,
+            0,
+        ));
+        frames
+    }
+
+    /// The `0x8088` answer: the entry point and nothing else - `spawn_block` in the working
+    /// implementation is exactly one `0x0196` frame (`ASURA/crates/asura-world/src/map.rs:13-20`),
+    /// and the simulation's ticks come from the ticker, not from this answer. ASURA answers it in
+    /// `agent::handle_request_spawn`.
+    pub(crate) fn spawn_answer(&self, map: &crate::world::MapEntry) -> Vec<u8> {
+        instance_packets::instance_load_spawn_point(
+            map.file_id,
+            self.position.0,
+            self.position.1,
+            self.plane,
+        )
+    }
+
     /// The `0x8090` answer: the whole block the client's players request is answered with, frame
     /// for frame and in the reference's own order (`GameSrv_HandleInstanceLoadRequestPlayers`,
     /// `ASURA/crates/asura-world/src/player.rs`, `player_block`). It is one block, not a menu: the
@@ -57,11 +96,14 @@ impl Player {
     /// message that ends the load.
     ///
     /// The players already in this copy of the map are introduced ahead of it, and that is the
-    /// session's to do: it is the district that knows who else is there.
+    /// session's to do: it is the district that knows who else is there. So is the bitmap of
+    /// reached instances - it is the character's rows, read with the arrival's own R12 write, and
+    /// handed here as the list the block names.
     pub(crate) fn load_block(
         &self,
         settings: &crate::world::world_config::WorldConfig,
         load_ms: u32,
+        unlocked: &[u32],
     ) -> Vec<Vec<u8>> {
         let agent = self.agent;
         let player = self.player;
@@ -72,7 +114,6 @@ impl Player {
         let direction = self.direction;
         let appearance = self.appearance;
         let equipped = self.equipped;
-        let unlocked = &self.unlocked;
         let mut progress = [0u32; character_packets::FACTIONS_DWORDS];
         // Experience has no column yet; level and morale do, and the client shows 0 for a level
         // it is not told (`ASURA/crates/asura-world/src/player.rs`).

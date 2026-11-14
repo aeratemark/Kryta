@@ -1220,6 +1220,56 @@ impl WorldSession {
         let saved = self.saved_position(sheet);
         let entry = self.entry_point(map, saved);
         let load_started = std::time::Instant::now();
+        // The character as the load is told it: the two ids it is named by, where it stands, what it
+        // wears. Everything here is decided once, before the first ask, because the entry position,
+        // the block and the player record all have to name the same place.
+        let agent = self.player_id();
+        let player = self.player_id();
+        let position = entry
+            .map(|point| (point.0, point.1))
+            .unwrap_or((0.0, 0.0));
+        let plane = entry.map(|point| point.2).unwrap_or(0);
+        // The entry point's own facing (its spawn point's angle, or a doorway arrival's), and
+        // `(1, 0)` when it states none - `map_spawns.rs:44-53`.
+        let direction = entry.map(|point| point.3).unwrap_or((1.0, 0.0));
+        // The look the client builds the model from: the character's own bits, or the world's default
+        // when its row carries none (an all-zero word is `Profession_None`, which the client cannot
+        // draw).
+        let appearance = if sheet.appearance == 0 {
+            self.settings.appearance
+        } else {
+            sheet.appearance
+        };
+        // The item ids the agent is drawn wearing, from the equipped bag, in its own order. A slot
+        // the character wears nothing in is zero.
+        let mut equipped = [0u32; 9];
+        if let Some(bag) = self
+            .creation
+            .as_ref()
+            .and_then(crate::creation::equipped_bag)
+        {
+            for item in inventory.items_in(bag.id) {
+                if let Some(slot) = item.slot
+                    && let Some(held) = equipped.get_mut(slot as usize)
+                {
+                    *held = item.id;
+                }
+            }
+        }
+        let state = crate::agents::Player {
+            agent,
+            player,
+            position,
+            plane,
+            direction,
+            appearance,
+            equipped,
+            gold: sheet.gold,
+            profession: sheet.profession,
+            unlocked_professions: sheet.unlocked_professions,
+            level: sheet.level,
+            name: sheet.name.clone(),
+        };
         // The map's clock: ASURA's `Instance::run` owns one per map and wakes on its own interval
         // (`ASURA/crates/asura-world/src/instance.rs:394-403`), independent of anything a client sends -
         // "a map still ticks every interval, it just no longer owns a task that sleeps". A tick driven
@@ -1260,21 +1310,7 @@ impl WorldSession {
                     // The items ask: the inventory stream and the map's record, measured in one
                     // block. The manifest pair that ends it names the map in its second form.
                     instance_packets::CLIENT_LOAD_REQUEST_ITEMS => {
-                        let mut frames = crate::creation::load_item_stream(&inventory, sheet.gold);
-                        frames.push(misc_packets::hard_mode_unlocked(1));
-                        frames.push(character_packets::character_update_info(""));
-                        frames.push(misc_packets::map_update_current(map.id as u16, 0));
-                        frames.push(instance_packets::ready_for_map_spawn(0));
-                        frames.push(instance_packets::instance_manifest_phase(0));
-                        frames.push(instance_packets::instance_manifest_phase(1));
-                        frames.push(instance_packets::instance_manifest_done(2, 877, 0));
-                        frames.push(instance_packets::instance_manifest_phase(0));
-                        frames.push(instance_packets::instance_manifest_phase(1));
-                        frames.push(instance_packets::instance_manifest_done(
-                            0,
-                            map.id as u16,
-                            0,
-                        ));
+                        let frames = state.items_answer(&inventory, map);
                         self.send(io, peer, crypt, &frames, "the inventory and the map's record")
                             .await;
                     }
@@ -1305,12 +1341,7 @@ impl WorldSession {
                                     ));
                                 }
                                 self.start_portal_position((point.0, point.1));
-                                vec![instance_packets::instance_load_spawn_point(
-                                    map.file_id,
-                                    point.0,
-                                    point.1,
-                                    point.2,
-                                )]
+                                vec![state.spawn_answer(map)]
                             }
                             None => {
                                 // A map with no entry spawn and no doorway arrival cannot be entered, and
@@ -1344,39 +1375,6 @@ impl WorldSession {
                     // visibility and player flags, the player and the agent it is drawn as, the
                     // agent's own properties and look, the party, and the message that ends the load.
                     instance_packets::CLIENT_LOAD_REQUEST_PLAYERS => {
-                        let agent = self.player_id();
-                        let player = self.player_id();
-                        let position = entry
-                            .map(|point| (point.0, point.1))
-                            .unwrap_or((0.0, 0.0));
-                        let plane = entry.map(|point| point.2).unwrap_or(0);
-                        // The entry point's own facing (its spawn point's angle, or a doorway arrival's),
-                        // and `(1, 0)` when it states none - `map_spawns.rs:44-53`.
-                        let direction = entry.map(|point| point.3).unwrap_or((1.0, 0.0));
-                        // The look the client builds the model from: the character's own bits, or the
-                        // world's default when its row carries none (an all-zero word is
-                        // `Profession_None`, which the client cannot draw).
-                        let appearance = if sheet.appearance == 0 {
-                            self.settings.appearance
-                        } else {
-                            sheet.appearance
-                        };
-                        // The item ids the agent is drawn wearing, from the equipped bag, in its own
-                        // order. A slot the character wears nothing in is zero.
-                        let mut equipped = [0u32; 9];
-                        if let Some(bag) = self
-                            .creation
-                            .as_ref()
-                            .and_then(crate::creation::equipped_bag)
-                        {
-                            for item in inventory.items_in(bag.id) {
-                                if let Some(slot) = item.slot
-                                    && let Some(held) = equipped.get_mut(slot as usize)
-                                {
-                                    *held = item.id;
-                                }
-                            }
-                        }
                         // The instance this character is now standing in is **reached**, so it is
                         // unlocked - the walk sets the bit and the bit never gates the walk
                         // (`ASURA/crates/asura-world/src/player.rs:442-462`). Written before the bitmap
@@ -1477,21 +1475,7 @@ impl WorldSession {
                                 PLAYER_TEAM_TOKEN,
                             ));
                         }
-                        let state = crate::agents::Player {
-                            agent,
-                            player,
-                            position,
-                            plane,
-                            direction,
-                            appearance,
-                            equipped,
-                            unlocked,
-                            profession: sheet.profession,
-                            unlocked_professions: sheet.unlocked_professions,
-                            level: sheet.level,
-                            name: sheet.name.clone(),
-                        };
-                        frames.extend(state.load_block(&self.settings, load_ms));
+                        frames.extend(state.load_block(&self.settings, load_ms, &unlocked));
                         let count = frames.len();
                         self.send(io, peer, crypt, &frames, "the players and the load's last message")
                             .await;

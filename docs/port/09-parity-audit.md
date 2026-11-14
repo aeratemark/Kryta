@@ -504,7 +504,7 @@ because the reference's structure is this tree's authority for how a thing is ar
 | `lib.rs` | 1,164 | `game/World/`, `game/Agents/`, the tick | this tree's arrangement: `GameError` is an error string here, `mark_redirect`/`stamp_ms` are the redirect's own log line |
 | `pvp_items.rs` | 1,567 | `game/DataStores/PvpItems.rs` | ported as data: the same 387 `(id, params)` rows, streamed in the load |
 | `main.rs` | 727 | `worldserver/src/main.rs` | this tree's arrangement: the same stages in the reference's order, with the reference's stage numbers in the comments |
-| `player.rs` | 540 | `game/Agents/Player.rs` (the load block's frames), the session's unlocked bitmap and peer join | ported: `PlayerBlock`, `player_block`'s frame order, `unlock_bitmap`, `handle_request_players` |
+| `player.rs` | 540 | `game/Agents/Player.rs` (the load's three answers' frames), the session's unlocked bitmap and peer join | ported: `PlayerBlock`, `player_block`'s frame order, `unlock_bitmap`, `handle_request_players` |
 | `connection.rs` | 587 | `game/Server/WorldSession.rs`, `WorldSocketMgr` | this tree's arrangement: one session per connection, the ping interval and value as settings |
 | `travel.rs` | 534 | `answer_party_travel`, `begin_transfer`, `cross_portal`, `answer_teleport_command`, `answer_travel_init` - `game/Handlers/TravelHandler.rs` | ported; the seat reservation is named in 7.4 |
 | `item.rs` | 561 | `answer_item_move`, `answer_equip_item`, `CLIENT_DROP_ITEM`, `CLIENT_UNEQUIP_ITEM` - `game/Handlers/ItemHandler.rs` | ported |
