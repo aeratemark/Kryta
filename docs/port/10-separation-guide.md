@@ -157,6 +157,7 @@ this tree's side, and it is the same table the noun's other reads use; the sessi
 its own outside the confirm's statement, which is the character family's. The fallback's fields are
 tested one by one (name "Player", Prophecies, Warrior, level 1, gold 0, the creation screen's unlocked
 professions), and the four end-to-end journeys pass untouched.
+
 The message families are therefore all out of the session: item, movement, travel, chat, character and
 the load's three answers. What is left in `WorldSession` is the connection's own cycle - the seed
 exchange and the version message, the travel row's claim, the head block, the read loop, the map's
