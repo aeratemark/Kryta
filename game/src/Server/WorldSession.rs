@@ -3081,7 +3081,13 @@ impl WorldSession {
             let read = io.read_timeout(&mut buffer, wait).await;
             match read {
                 Ok(shared::network::socket::ReadOutcome::TimedOut) => {
-                    next_tick = std::time::Instant::now() + period;
+                    // Cadence, not drift: the next deadline moves by one period from the one that
+                    // fired, the way `tokio::time::interval` does in `Instance::run`
+                    // (`ASURA/crates/asura-world/src/instance.rs:394-403`). Measuring the period from
+                    // "now" instead would add the tick's own work to every interval, and the map would
+                    // run a few percent slow for as long as it runs. A missed deadline is caught up one
+                    // tick at a time, which is that interval's own default.
+                    next_tick += period;
                     if loaded {
                     // **How long it has been since the last tick**, not a counter: the client advances
                     // its simulation - and its sync copy of every agent - by this number

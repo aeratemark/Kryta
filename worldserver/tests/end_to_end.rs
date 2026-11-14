@@ -1706,6 +1706,54 @@ fn a_step_through_ascalon_citys_arch_crosses_to_lakeside_county() {
             frame
         };
 
+        // The clock first, because that is what a doorway waits on: over 600 ms of silence the map ticks
+        // on its own interval - `World.SimulationTickMs`, ASURA's 100 - and each tick carries the time
+        // that really elapsed, not a counter and not a catch-up burst
+        // (`ASURA/crates/asura-world/src/instance.rs:394-403`, `:290-308`).
+        {
+            use std::io::Read as _;
+            let deadline = std::time::Instant::now() + Duration::from_millis(600);
+            let mut buffer: Vec<u8> = Vec::new();
+            let mut ticks: Vec<u32> = Vec::new();
+            let mut chunk = [0u8; 4096];
+            while std::time::Instant::now() < deadline {
+                if let Ok(read) = stream.read(&mut chunk)
+                    && read > 0
+                {
+                    let mut plain = chunk[..read].to_vec();
+                    reading.apply(&mut plain);
+                    buffer.extend_from_slice(&plain);
+                    while !buffer.is_empty() {
+                        match game::server::protocol::decode_game_message(&buffer, false) {
+                            Ok((frame, used)) => {
+                                let header = frame.header();
+                                let mut bytes = buffer[..used].to_vec();
+                                buffer.drain(..used);
+                                if header == 0x001E && bytes.len() >= 6 {
+                                    ticks.push(u32::from_le_bytes([
+                                        bytes[2], bytes[3], bytes[4], bytes[5],
+                                    ]));
+                                }
+                                bytes.clear();
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+            println!("ticks in 600 ms: {ticks:?}");
+            assert!(
+                (3..=8).contains(&ticks.len()),
+                "the map ticks on its own clock about every 100 ms: {ticks:?}"
+            );
+            for elapsed in &ticks {
+                assert!(
+                    *elapsed >= 50 && *elapsed <= 250,
+                    "a tick carries the time that really elapsed, never a catch-up jump: {ticks:?}"
+                );
+            }
+        }
+
         // The doorway test uses the segment between two finite client reports, so the first report is
         // the point the character is already standing on: a repeated point is not a step
         // (`ASURA/crates/asura-world/src/player.rs:60-74`).
