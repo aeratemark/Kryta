@@ -36,19 +36,19 @@ rows, the travel hand-off row, the account table (rows), and the pure rule that 
 character enters (`game::maps::placement`, `session.rs:1075-1111`). Measured against ASURA, that is
 exactly its own layering: `crates/asura-auth` links `asura-protocol`, `asura-db`, `asura-store`,
 `asura-rules` and `asura-config`, and links `asura-world` not at all - and its accepted decision D25 is
-the owner's rule that a game rule a protocol answer needs belongs in a *rules* layer, not in the world
+its own rule that a game rule a protocol answer needs belongs in a rules layer rather than in the world
 library. The decision taken: the edge stays, because the reference's chain has no layer for four of the
 six pieces, and moving the pure rule into `shared` would put a game rule in the library both programs
 link - the blur `AGENTS.md` forbids.
 
-**What that leaves.** The one piece both authorities would put somewhere else is the pure rule
-(`asura-rules`, ASURA's D25): to follow it, this tree grows a `rules/` layer beside `shared/`, linked by
-both programs, with each rule re-exported at its old path. That adds a layer to the crate chain
-`AGENTS.md` states, so it is the owner's call, and this phase is not a restructuring phase. AzerothCore's
-`src/server/apps/CMakeLists.txt:130-139` links auth to `shared` and world to `modules`, `scripts` and
-`game`; this tree's auth links `game`, which is the deviation the record states and bounds. Hosting an
-HTTP listener (`0003`) and the socket layer that classifies a connection (`0004`) are separate decisions
-and are not touched by it.
+**What that leaves: nothing open.** The one piece ASURA puts elsewhere is the pure rule, and by this
+tree's authority order it stays here - `AGENTS.md` gives the reference the layers and ASURA the
+conversation, the reference has no rules layer and keeps its repositories as nouns, so no `rules/` crate
+and no store layer is created. D25 is the evidence that the login's conversation needs the rule, and the
+reason ASURA needed a layer for it (its `asura-world` may not exist when its login decides) is not a
+reason here, where the rule's nouns are in `game` whether or not a world has started. A real client still
+holds the last word on the login and entry sequence. Hosting an HTTP listener (`0003`) and the socket
+layer that classifies a connection (`0004`) are separate decisions and are not touched by this.
 
 **Evidence of completion.** The dependency graph and actual imports agree with the resulting design,
 the hand-off and login tests pass, and a real client verifies the login and entry sequence. Any

@@ -490,6 +490,68 @@ mod tests {
         );
         assert_eq!(*deaf.lock().unwrap(), vec!["shutdown".to_string()]);
     }
+    /// The world's own slower timer, which the program no longer keeps: a copy is swept only once
+    /// `World.SweepIntervalMs` of passed time has accumulated, and the world reads the clock itself
+    /// when it fires (`World::update`, the reference's `WorldUpdateTimer` arrangement at
+    /// `World.cpp:1131`). `InstanceTick` off is a world with no such timer at all (R33).
+    #[test]
+    fn the_world_sweeps_its_copies_once_the_interval_has_passed() {
+        let mut world = World::new(148);
+        world.set_settings(crate::world::world_config::WorldConfig {
+            sweep_interval_ms: 100,
+            // Nothing is held: what the sweep is asked about is whether it *fires*, and a copy that
+            // was entered and left is empty the moment it is left.
+            explorable_disconnect_hold: 0,
+            ..crate::world::world_config::WorldConfig::default()
+        });
+        let outpost = MapEntry {
+            id: 148,
+            kind: Some(map_kind::OUTPOST),
+            file_id: 113_021,
+            name: "Ascalon City (pre-Searing)".to_string(),
+            instance_value: Some(0xBB14_F539),
+        };
+        {
+            let districts = world.districts();
+            let mut districts = districts.lock().unwrap();
+            districts.enter(&outpost, 0, 0, 100).unwrap();
+            districts.leave(148, 1, 0);
+        }
+
+        // Half of the interval: the scripts are told, and nothing is swept yet.
+        assert!(world.update(Duration::from_millis(50)).is_empty());
+        // The second half completes it, and the copy nobody is inside is disposed and named.
+        assert_eq!(world.update(Duration::from_millis(50)), vec![(148, 1)]);
+        // And the timer starts again: the next half-interval sweeps nothing.
+        assert!(world.update(Duration::from_millis(50)).is_empty());
+    }
+
+    /// `InstanceTick` off keeps every copy: a world without the clock does not sweep (R33).
+    #[test]
+    fn a_world_without_the_instance_tick_never_sweeps() {
+        let mut world = World::new(148);
+        world.set_settings(crate::world::world_config::WorldConfig {
+            instance_tick: false,
+            sweep_interval_ms: 1,
+            explorable_disconnect_hold: 0,
+            ..crate::world::world_config::WorldConfig::default()
+        });
+        let outpost = MapEntry {
+            id: 148,
+            kind: Some(map_kind::OUTPOST),
+            file_id: 113_021,
+            name: "Ascalon City (pre-Searing)".to_string(),
+            instance_value: Some(0xBB14_F539),
+        };
+        {
+            let districts = world.districts();
+            let mut districts = districts.lock().unwrap();
+            districts.enter(&outpost, 0, 0, 100).unwrap();
+            districts.leave(148, 1, 0);
+        }
+        assert!(world.update(Duration::from_millis(1000)).is_empty());
+        assert_eq!(world.districts().lock().unwrap().count_of(148), 1, "the copy is still held");
+    }
 
     /// A map is named the way the working implementation names it: its name and its id, its id alone
     /// when it has no name, and never an empty string (`catalogue.rs:120-152`).

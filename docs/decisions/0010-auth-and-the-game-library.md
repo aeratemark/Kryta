@@ -67,12 +67,17 @@ Measured against that, `crates/asura-auth/Cargo.toml` depends on `asura-protocol
 3. **The edge is one-way and already checked.** Nothing in `game` names `authserver`; the crate graph
    in `Cargo.toml` refuses it, so the compiler holds it.
 
-**What is not decided here, and what a move would cost.** If the owner wants ASURA's D25 layer, the
-shape is one new crate beside `shared/` - call it `rules/` - holding the pure decisions (the placement
-rule first), linked by both programs, with `game` re-exporting each rule at its old path so no call site
-moves in the same commit (the tree's own rule for a move). That is a new layer in the tree, so it is the
-owner's call and not this record's: it changes the crate chain that `AGENTS.md` states, and this phase
-is not a restructuring phase.
+**Why D25 does not decide it here.** `AGENTS.md` gives the reference the design and gives ASURA the
+conversation: "What it is *not* the authority for is this tree's structure - where a file goes, what a
+program starts, how a layer is arranged - which stays the reference's", and ASURA's documents
+"describe its own function; they are not rules here". The reference has no rules layer and keeps its
+repositories as nouns, so neither the layer nor the store is created here. D25 is the evidence that the
+conversation needs the rule - and the reason ASURA needed a layer for it, which was that its
+`asura-world` may not exist when its login decides; in this tree the rule's nouns are in `game` whether
+or not a world has started, so the same need is already met by the edge.
+
+A change of mind is a change of authority, not a code edit: this record would have to be corrected
+first, and it says "no" because the reference does.
 
 **What it would not be.** It would not move the portal (`0003` decides its host), the store nouns
 (they are nouns by the reference's arrangement), the protocol message (that is `shared`'s subject and a
@@ -80,7 +85,5 @@ separate move), or the front door (`0004`).
 
 ## What it does not decide
 
-- Whether a store layer should exist at all. ASURA has one; the reference does not, and this tree's
-  repositories are nouns.
 - The auth program's own conversation: what it answers, and in what order, is the parity ledger's
   subject (`docs/port/09-parity-audit.md`), and nothing here changes it.
