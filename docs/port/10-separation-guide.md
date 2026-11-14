@@ -148,13 +148,25 @@ holds shared world data and districts. These are real pieces of a simulation, di
 the session, application and game library.
 
 **Reference.** AzerothCore's `src/server/apps/worldserver/Main.cpp:618` calls `sWorld->Update(diff)`;
-`src/server/game/World/World.cpp:1131` implements the world update and calls the script world-update
-hook at `:1355`.
+`src/server/game/World/World.cpp:1131` implements the world update, calls `sMapMgr->Update(diff)` at
+`:1254`, and calls the script world-update hook at `:1355`. The maps tick themselves from there
+(`MapMgr::Update`, `src/server/game/Maps/MapMgr.cpp:251`, scheduling every map's own `Update`), so a
+program's loop drives the world, the world drives the maps, and a session ticks nothing.
 
-**Work to resolve.** Trace Kryta's current tick and lifecycle paths, then compare their ownership and
-execution order with the reference and their observable behaviour with ASURA. Determine which update
-responsibilities belong in the world, its maps and instances, and the session. Account for shared
-state, concurrent sessions, disconnects and shutdown before changing scheduling.
+**Done (2026-11-14, the copies' sweep).** The first piece of the world's own update: `World::update(now)`
+(`game/src/World/mod.rs`) disposes the copies that have been empty past their hold and names them (R37,
+R40), and `worldserver`'s timer calls it instead of locking the district table itself - the reference's
+`sWorld->Update(diff)`, with the sweep as the one thing this world has to drive today. Same interval,
+same log line, same rows.
+
+**Work to resolve (the rest).** The maps' own clocks: `WorldSession::step_map` still advances the
+agent and tests the doorway inside the connection's read loop, where ASURA has one clock per map
+(`Instance::run`, `ASURA/crates/asura-world/src/instance.rs:394-403`) that every connection in that map
+races against (`connection.rs:494-548`). Moving it changes who advances an agent and in what order
+relative to traffic, so the client's own timing is the measure, not an opinion; the reference's shape is
+the world update driving each map, and a map's clock serving its connections. Also unresolved: whether
+the program's separate timers (the status line and this sweep) become one `Update(diff)` loop, as
+`Main.cpp`'s is.
 
 **Evidence of completion.** A trace shows which component schedules and updates each implemented
 piece, instance lifecycle and movement remain correct with multiple connections, and client-visible

@@ -229,6 +229,24 @@ impl World {
         Arc::clone(&self.districts)
     }
 
+    /// One tick of the world: the copies that have been empty past their hold are disposed (R37,
+    /// R40) and named, so the program can say which went.
+    ///
+    /// Reference: `World::Update(uint32 diff)` (`src/server/game/World/World.cpp:1131`) and the
+    /// `sMapMgr->Update(diff)` it calls at `:1254` - the world drives its maps, and a program's own
+    /// loop drives the world (`src/server/apps/worldserver/Main.cpp:618`). What this tree's world has
+    /// to drive today is the copies; the maps' own clocks are the guide's third item.
+    ///
+    /// `now` is the epoch second the district rows are stamped with, because the hold is measured
+    /// against the table the copies live in.
+    pub fn update(&self, now: u64) -> Vec<(u32, u32)> {
+        let hold = u64::from(self.settings.explorable_disconnect_hold);
+        match self.districts.lock() {
+            Ok(mut districts) => districts.sweep(now, hold),
+            Err(_) => Vec::new(),
+        }
+    }
+
     /// Give the copies their table and their log: what a program does once the world database is
     /// open and the maps are read (`docs/port/06-world-plan.md`, step 3).
     pub fn set_instances(

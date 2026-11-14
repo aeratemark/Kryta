@@ -643,10 +643,7 @@ fn run(args: &[String]) -> Result<(), String> {
                         break;
                     }
                     let hold = u64::from(tick_world.settings().explorable_disconnect_hold);
-                    let disposed = match tick_world.districts().lock() {
-                        Ok(mut districts) => districts.sweep(unix_now(), hold),
-                        Err(_) => Vec::new(),
-                    };
+                    let disposed = tick_world.update(unix_now());
                     for (map_id, district) in disposed {
                         tick_log.out(
                             LogLevel::Info,
