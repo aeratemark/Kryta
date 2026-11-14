@@ -115,6 +115,20 @@ responsibilities in the reference's corresponding layers. Preserve all branches,
 error handling and frames. Moving a function to another file alone does not settle its ownership.
 Start with a specifically selected subject and keep the work and parity audit scoped to it.
 
+**The next subject: the load's three asks.** One family is left, and its ownership is not answered by
+moving it. The client's three load asks are answered inside `WorldSession::load_map`'s own read loop -
+`0x8091` with the item stream and the map's record, `0x8088` with the entry point, `0x8090` with the
+whole load block. Measured against the two authorities: ASURA answers each in a *different* domain
+module - `item::handle_request_items`, `agent::handle_request_spawn`, `player::handle_request_players`
+(`ASURA/crates/asura-world/src/dispatch.rs:24-34`, and `player.rs` is 507 lines of that block) - while
+the reference has no per-message handler for them at all: it is `WorldSession::HandlePlayerLogin` calling
+`Player::LoadFromDB` and then `Player::SendInitialPacketsBeforeAddToMap` /
+`SendInitialPacketsAfterAddToMap`, i.e. the bursts belong to the **player object**, not to a handler
+file. This tree has no player object; the reference's `Entities/Player/` is the directory this tree
+calls `Agents/`. So the work is: a `Player`-shaped noun (frame builders over the load's state, with the
+database reads and the R12 unlock left where they are), the three arms reduced to a call each, and no
+frame, order or size changed. It was not started in place of finishing the four families above.
+
 **Evidence of completion.** The subject has a traceable handler-to-mechanic path, the mechanic's
 state and decisions have a clear owner, existing callers and persistence still work, and recorded
 frames and the client confirm the same behaviour.
