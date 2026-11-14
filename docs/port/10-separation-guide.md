@@ -49,9 +49,9 @@ remaining deviation is described accurately in its decision record.
 ## 2. Gameplay session owns several mechanics
 
 **What exists.** `game/src/Server/WorldSession.rs` holds connection handling and also carries gameplay
-work: the portal crossing (`cross_portal`), the map's clock (`step_map`, which calls `Agent::advance`
-and `Portals::crossed` and decides when to advance and what to do with the result), and the travel and
-chat families, which have not moved yet.
+work: the map's clock (`step_map`, which calls `Agent::advance` and `Portals::crossed` and decides
+when to advance and what to do with the result) and the character-creation and load path
+(`confirm_creation`, `load_map`, `entry_point`). Four message families are in `game/src/Handlers/`.
 
 **Done (2026-11-14, item family).** The item messages are the first family moved, all four of them:
 `answer_item_move`, `answer_equip_item`, `answer_drop_item` and `answer_unequip_item` are
@@ -73,6 +73,17 @@ in `pathfind`/`directional`, and the wall in `Maps/Portals.rs`. What stays in th
 message: the map's clock (`step_map`) and the transfer it can start (`cross_portal`), which the guide's
 third and fourth items own. No frame, order or size changed; the end-to-end journey's walk, its doorway
 crossing and its tick measurement all pass untouched.
+
+**Done (2026-11-14, travel and chat families).** The five travel messages and the one chat message
+moved as they stand, doc comments and ASURA citations intact: `cross_portal`, `answer_party_travel`,
+`begin_transfer`, `answer_travel_init` and `answer_teleport_command` are `impl WorldSession` members in
+`game/src/Handlers/TravelHandler.rs` (from `travel.rs:132-169`, `184-258`, `279-302`, `319-388`,
+`401-534`), and `answer_chat_message` in `game/src/Handlers/ChatHandler.rs` (from `chat.rs:193-353`).
+The decisions these carry - the doorway test, the travel row's claim, the landing point - stay in the
+nouns they belong to: `Maps/Portals.rs`, `Portal/`, and `place_for_travel` in the session, which is
+where the map's own placement rule is read. What the session now keeps from the travel path is the
+hand-off itself, and the map's clock, which the third item owns. No frame, order, size, broadcast or
+log line changed; the end-to-end arch journey and the login journey pass untouched.
 
 There is already useful extraction: agent state and movement operations are in `game/src/Agents/`,
 pathfinding in `game/src/Terrain/`, portal geometry in `game/src/Maps/`, and character item persistence
