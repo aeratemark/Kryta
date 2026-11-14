@@ -371,4 +371,25 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("registered twice"), "{error}");
     }
+    /// The order the reference calls the loaders in: the tree's scripts, then the modules'
+    /// (`ScriptMgr::Initialize`, `ScriptMgr.cpp:140-141`). Loaders are function pointers, so the
+    /// record they write to is a static.
+    #[test]
+    fn the_modules_loader_runs_after_the_script_loader() {
+        use std::sync::Mutex as StdMutex;
+        static ORDER: StdMutex<Vec<&'static str>> = StdMutex::new(Vec::new());
+        fn in_tree(_mgr: &mut ScriptMgr) {
+            ORDER.lock().unwrap().push("scripts");
+        }
+        fn out_of_tree(_mgr: &mut ScriptMgr) {
+            ORDER.lock().unwrap().push("modules");
+        }
+        ORDER.lock().unwrap().clear();
+
+        let mut mgr = ScriptMgr::new();
+        mgr.set_script_loader(in_tree);
+        mgr.set_modules_loader(out_of_tree);
+        mgr.initialize().unwrap();
+        assert_eq!(*ORDER.lock().unwrap(), vec!["scripts", "modules"]);
+    }
 }
