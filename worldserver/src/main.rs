@@ -547,6 +547,16 @@ fn run(args: &[String]) -> Result<(), String> {
         report(&note);
     }
     let status_interval = status_interval.max(1);
+    // The world loop's floor: how long may pass before the loop does not bother to update. The
+    // reference's own `MinWorldUpdateTime` (`worldserver.conf`, 1 ms) - `WorldUpdateLoop` sleeps the
+    // remainder rather than updating twice inside it (`Main.cpp:586-616`).
+    let (min_update_ms, notes) = config
+        .value::<u64>("MinWorldUpdateTime", 1)
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let min_update = std::time::Duration::from_millis(min_update_ms.max(1));
 
     let sockets =
         game::server::WorldSocketMgr::start(
@@ -582,82 +592,37 @@ fn run(args: &[String]) -> Result<(), String> {
     // the copies' rows are disposed by a fresh world at its start (`dispose_all`), which is what an
     // unload at the end would have achieved.
 
-    // The status line: what this world is up to, on a timer, so "is it alive and what has reached it"
-    // is answerable from the log alone - the auth program's own arrangement, with the world's state:
-    // the maps it hosts and the instances it currently holds open.
-    let stop_status = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // The world's loop: `WorldUpdateLoop` (`Main.cpp:584-620`), which is one thread in the reference
+    // and is one here. It measures how long it has been, sleeps the remainder of
+    // `MinWorldUpdateTime` when there is one, and calls `sWorld->Update(diff)` - the world decides
+    // inside which of its own slower things are due (the copies' sweep) and tells the scripts every
+    // tick. What is left that is the program's own and not the world's is the status line: it is this
+    // tree's, and it rides the same loop on `StatusInterval` seconds.
+    let stop_update = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let accepted = sockets.accepted_handle();
     let live = sockets.live_handle();
-    let status_writer = {
+    let world_loop = {
         let log = log.clone();
-        let status_world = std::sync::Arc::clone(&world);
-        let stop_status = std::sync::Arc::clone(&stop_status);
+        let update_world = std::sync::Arc::clone(&world);
+        let stop_update = std::sync::Arc::clone(&stop_update);
         let started = std::time::Instant::now();
+        let status_period = std::time::Duration::from_secs(status_interval);
         std::thread::Builder::new()
-            .name("status".to_string())
+            .name("world-update".to_string())
             .spawn(move || {
-                while !stop_status.load(std::sync::atomic::Ordering::Relaxed) {
-                    std::thread::sleep(std::time::Duration::from_secs(status_interval));
-                    if stop_status.load(std::sync::atomic::Ordering::Relaxed) {
-                        break;
+                let mut previous = std::time::Instant::now();
+                let mut next_status = previous + status_period;
+                while !stop_update.load(std::sync::atomic::Ordering::Relaxed) {
+                    let now = std::time::Instant::now();
+                    let diff = now.duration_since(previous);
+                    if diff < min_update {
+                        std::thread::sleep(min_update - diff);
+                        continue;
                     }
-                    let instances = match status_world.districts().lock() {
-                        Ok(districts) => districts.open(),
-                        Err(_) => Vec::new(),
-                    };
-                    let open = if instances.is_empty() {
-                        "none".to_string()
-                    } else {
-                        instances
-                            .iter()
-                            .map(|(map_id, district, members)| {
-                                format!("map {map_id} district {district} ({members} inside)")
-                            })
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    };
-                    log.out(
-                        LogLevel::Info,
-                        "server.worldserver",
-                        format!(
-                            "status: up {} s, listening on {bind}:{bound} as world {realm}, {} connection(s) accepted, {} live, {} map(s) hosted, {} instance(s) open: {open}.",
-                            started.elapsed().as_secs(),
-                            accepted.load(std::sync::atomic::Ordering::Relaxed),
-                            live.load(std::sync::atomic::Ordering::Relaxed),
-                            status_world.maps().len(),
-                            instances.len()
-                        ),
-                    );
-                }
-            })
-            .map_err(|error| format!("cannot start the status writer: {error}"))?
-    };
-
-    // The instance tick (R33): every `World.SweepIntervalMs` milliseconds (1000 by default), copies
-    // that have been empty past the hold (R37) are disposed (R40) and their rows removed.
-    // `InstanceTick` turns the clock off; a world without a clock keeps every copy it opened and says
-    // so in its configuration dump.
-    let stop_tick = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    if world.settings().instance_tick {
-        let sweep = std::time::Duration::from_millis(u64::from(world.settings().sweep_interval_ms));
-        let tick_world = std::sync::Arc::clone(&world);
-        let tick_log = log.clone();
-        let stop_tick = std::sync::Arc::clone(&stop_tick);
-        std::thread::Builder::new()
-            .name("instance-tick".to_string())
-            .spawn(move || {
-                while !stop_tick.load(std::sync::atomic::Ordering::Relaxed) {
-                    std::thread::sleep(sweep);
-                    if stop_tick.load(std::sync::atomic::Ordering::Relaxed) {
-                        break;
-                    }
-                    let hold = u64::from(tick_world.settings().explorable_disconnect_hold);
-                    let disposed = tick_world.update(
-                        unix_now(),
-                        std::time::Duration::from_millis(u64::from(tick_world.settings().sweep_interval_ms)),
-                    );
-                    for (map_id, district) in disposed {
-                        tick_log.out(
+                    previous = now;
+                    for (map_id, district) in update_world.update(diff) {
+                        let hold = update_world.settings().explorable_disconnect_hold;
+                        log.out(
                             LogLevel::Info,
                             "server.worldserver",
                             format!(
@@ -665,15 +630,44 @@ fn run(args: &[String]) -> Result<(), String> {
                             ),
                         );
                     }
+                    if now >= next_status {
+                        next_status = now + status_period;
+                        let instances = match update_world.districts().lock() {
+                            Ok(districts) => districts.open(),
+                            Err(_) => Vec::new(),
+                        };
+                        let open = if instances.is_empty() {
+                            "none".to_string()
+                        } else {
+                            instances
+                                .iter()
+                                .map(|(map_id, district, members)| {
+                                    format!("map {map_id} district {district} ({members} inside)")
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        };
+                        log.out(
+                            LogLevel::Info,
+                            "server.worldserver",
+                            format!(
+                                "status: up {} s, listening on {bind}:{bound} as world {realm}, {} connection(s) accepted, {} live, {} map(s) hosted, {} instance(s) open: {open}.",
+                                started.elapsed().as_secs(),
+                                accepted.load(std::sync::atomic::Ordering::Relaxed),
+                                live.load(std::sync::atomic::Ordering::Relaxed),
+                                update_world.maps().len(),
+                                instances.len()
+                            ),
+                        );
+                    }
                 }
             })
-            .map_err(|error| format!("the instance tick could not start: {error}"))?;
-    }
+            .map_err(|error| format!("the world loop could not start: {error}"))?
+    };
 
     wait_for_shutdown();
-    stop_tick.store(true, std::sync::atomic::Ordering::Relaxed);
-    stop_status.store(true, std::sync::atomic::Ordering::Relaxed);
-    let _ = status_writer.join();
+    stop_update.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = world_loop.join();
     log.out(
         LogLevel::Info,
         "server.worldserver",
@@ -714,14 +708,6 @@ fn run(args: &[String]) -> Result<(), String> {
     );
     log.shutdown();
     Ok(())
-}
-
-/// Seconds since the unix epoch, for the hold the instance tick measures.
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0)
 }
 
 /// Block until the operator stops the program.

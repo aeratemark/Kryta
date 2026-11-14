@@ -16,6 +16,11 @@
     "doc": "How often the program says what it is doing: up time, accepted connections, the maps it hosts and the instances it holds open. The auth program's timer reads the same key."
   },
 
+  "MinWorldUpdateTime": {
+    "value": 1,
+    "doc": "How long may pass before the world's loop does not bother to update, in milliseconds. The reference's own key of the same name (worldserver.conf, 1 ms): WorldUpdateLoop sleeps the remainder rather than updating twice inside it (Main.cpp:586-616). The loop is what calls the world's update, which tells the scripts every tick and sweeps the instance table on its own World.SweepIntervalMs."
+  },
+
   "BindIP": {
     "value": "127.0.0.1",
     "doc": "The address the listener binds."

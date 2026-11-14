@@ -140,6 +140,19 @@ pub struct World {
     /// the world serves anything, and the world's own moments raise them
     /// (`game/Scripting/mod.rs`, the reference's `sScriptMgr`).
     scripts: Arc<Mutex<crate::scripting::ScriptMgr>>,
+    /// How long it has been since the copies were last swept: the world's own slower timer, the
+    /// reference's `WorldUpdateTimer` arrangement - the program's loop says how much time passed and
+    /// this decides whether a thing that does not run every tick is due (`World.cpp:1131`).
+    sweep_elapsed: Mutex<std::time::Duration>,
+}
+
+/// The world's clock, as the district rows are stamped with it: the epoch second the hold is
+/// measured against (`unix_now` in the programs is the same reading).
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs())
+        .unwrap_or(0)
 }
 
 impl World {
@@ -158,6 +171,7 @@ impl World {
             portals: std::sync::Arc::new(crate::maps::Portals::empty()),
             peers: Arc::new(Mutex::new(crate::districts::Peers::new())),
             scripts: Arc::new(Mutex::new(crate::scripting::ScriptMgr::new())),
+            sweep_elapsed: Mutex::new(std::time::Duration::ZERO),
         }
     }
 
@@ -266,24 +280,44 @@ impl World {
         }
     }
 
-    /// One tick of the world: the scripts are told, and the copies that have been empty past their
-    /// hold are disposed (R37, R40) and named, so the program can say which went.
+    /// One tick of the world: the scripts are told every tick, and the copies are swept on the
+    /// world's own slower timer - the ones that have been empty past their hold are disposed (R37,
+    /// R40) and named, so the program can say which went.
     ///
-    /// Reference: `World::Update(uint32 diff)` (`src/server/game/World/World.cpp:1131`): its own
-    /// order is the world's work first and the scripts' world-update hook after it (`:1355`), then
-    /// `sMapMgr->Update(diff)` at `:1254`; a program's own loop drives the world
-    /// (`src/server/apps/worldserver/Main.cpp:618`). What this tree's world has to drive today is the
-    /// copies; the maps' own clocks are the guide's third item.
+    /// Reference: `World::Update(uint32 diff)` (`src/server/game/World/World.cpp:1131`). The program's
+    /// loop calls it with how long it has been (`WorldUpdateLoop`, `Main.cpp:584-620`), its own
+    /// timers decide inside whether a slower thing is due, and the scripts' world-update hook is
+    /// raised at `:1355`. The sweep is this world's slower thing: `World.SweepIntervalMs` between
+    /// checks, measured by the time that has passed rather than by a thread's own sleep.
     ///
-    /// `now` is the epoch second the district rows are stamped with, because the hold is measured
-    /// against the table the copies live in; `diff` is the tick the scripts are told about.
-    pub fn update(&self, now: u64, diff: std::time::Duration) -> Vec<(u32, u32)> {
+    /// `World.InstanceTick` off is a world without that clock: it keeps every copy it opened and says
+    /// so in its configuration dump (R33).
+    pub fn update(&self, diff: std::time::Duration) -> Vec<(u32, u32)> {
         if let Ok(mut scripts) = self.scripts.lock() {
             scripts.on_world_update(diff);
         }
+        if !self.settings.instance_tick {
+            return Vec::new();
+        }
+        let period = std::time::Duration::from_millis(u64::from(self.settings.sweep_interval_ms));
+        let due = match self.sweep_elapsed.lock() {
+            Ok(mut elapsed) => {
+                *elapsed += diff;
+                if *elapsed >= period {
+                    *elapsed = std::time::Duration::ZERO;
+                    true
+                } else {
+                    false
+                }
+            }
+            Err(_) => false,
+        };
+        if !due {
+            return Vec::new();
+        }
         let hold = u64::from(self.settings.explorable_disconnect_hold);
         match self.districts.lock() {
-            Ok(mut districts) => districts.sweep(now, hold),
+            Ok(mut districts) => districts.sweep(now_unix(), hold),
             Err(_) => Vec::new(),
         }
     }
@@ -447,7 +481,7 @@ mod tests {
         world.set_scripts(scripts);
 
         world.on_startup();
-        world.update(0, Duration::from_millis(1000));
+        world.update(Duration::from_millis(1000));
         world.on_shutdown();
 
         assert_eq!(

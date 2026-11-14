@@ -131,6 +131,10 @@ fn a_fresh_world_database_is_applied_seeded_and_served() {
     let mut child = start_world_on(&mut reader);
     let reader = reader.expect("the program's stdout is piped");
     let lines = wait_for(&reader, "READY: listening on", Duration::from_secs(120));
+    // The world's loop runs: it calls the world's update and writes the status line on its own
+    // interval (`WorldUpdateLoop`, `Main.cpp:584-620`), which this run has at one second.
+    let mut lines = lines;
+    lines.extend(wait_for(&reader, "status: up", Duration::from_secs(30)));
     let _ = child.kill();
     let _ = child.wait();
 

@@ -14,7 +14,7 @@ parity. Each proposed change needs its own comparison with those authorities.
 | Infrastructure and game | Established at crate level | `Cargo.toml` and each crate's `Cargo.toml`: `common`, `database`, and `shared` do not depend on `game`; `game` depends on them. |
 | Login and gameplay processes | Established, with code coupling | `authserver/src/main.rs` starts the auth listeners. `game/src/Server/WorldSocketMgr.rs` starts the gameplay listener for `worldserver`. Auth depends on `game` as described below. |
 | Game mechanics and gameplay connection | Partial | `game/src/Agents/mod.rs`, `game/src/Terrain/`, and `game/src/Maps/Portals.rs` contain mechanics. `game/src/Server/WorldSession.rs` also owns gameplay decisions and state. |
-| Game engine and scripts | Not yet operational | `scripts/src/ScriptMgr/mod.rs` stores script names and hook counts. The loaders are empty and `game/src/Scripting/mod.rs` says it is not ported. No gameplay callback dispatch is implemented there. |
+| Game engine and scripts | Partial | `game/src/Scripting/` registers and dispatches three world lifecycle hooks; the loaders register no content and scripts have no world-action interface. |
 | Modules | Not yet implemented | `modules/README.md` states that there are no module crates; `scripts/src/AddModulesScripts.rs` is empty. |
 
 The AzerothCore reference deliberately places its gameplay socket inside the game library. A socket
@@ -142,10 +142,9 @@ frames and the client confirm the same behaviour.
 
 ## 3. Simulation and lifecycle ownership
 
-**What exists.** The session advances its player's agent in `WorldSession::step_map`. Separately,
-`worldserver/src/main.rs:647` runs a thread that sweeps empty districts. `game/src/World/mod.rs`
-holds shared world data and districts. These are real pieces of a simulation, distributed between
-the session, application and game library.
+**What exists.** The session advances its player's agent in `WorldSession::step_map`.
+`worldserver` drives `World::update`, which dispatches world hooks and sweeps empty districts.
+`game/src/World/mod.rs` holds shared world data and districts. The agent tick remains in the session.
 
 **Reference.** AzerothCore's `src/server/apps/worldserver/Main.cpp:618` calls `sWorld->Update(diff)`;
 `src/server/game/World/World.cpp:1131` implements the world update, calls `sMapMgr->Update(diff)` at
@@ -178,14 +177,23 @@ hook arrives with the moment it would be raised. The session registry the refere
 here either: sessions are tasks, so the kick is a flag rather than a walk over a map of them - one
 place, one message, no new state to keep in step.
 
+**Done (2026-11-14, one loop drives the world).** The program's two timers became one thread, as the
+reference's `WorldUpdateLoop` is one loop (`Main.cpp:584-620`): it measures how long it has been, sleeps
+the remainder of `MinWorldUpdateTime` (the reference's own key, 1 ms) rather than updating twice inside
+it, and calls `sWorld->Update(diff)`. The world decides inside which of its own slower things are due -
+the copies' sweep, on `World.SweepIntervalMs`, by the time that has passed rather than by a thread's own
+sleep (the `World`'s `sweep_elapsed`, which is the reference's `WorldUpdateTimer` arrangement) - and
+tells the scripts every tick. The status line is this tree's own diagnostic and not the world's, so it
+rides the same loop on `StatusInterval` seconds. Two threads became one, no client-visible behaviour
+changed, and `World::update` takes only the tick it is told about, reading the clock itself when a slow
+thing is due.
+
 **Work to resolve (the rest).** The maps' own clocks: `WorldSession::step_map` still advances the
 agent and tests the doorway inside the connection's read loop, where ASURA has one clock per map
 (`Instance::run`, `ASURA/crates/asura-world/src/instance.rs:394-403`) that every connection in that map
 races against (`connection.rs:494-548`). Moving it changes who advances an agent and in what order
 relative to traffic, so the client's own timing is the measure, not an opinion; the reference's shape is
-the world update driving each map, and a map's clock serving its connections. Also unresolved: whether
-the program's separate timers (the status line and this sweep) become one `Update(diff)` loop, as
-`Main.cpp`'s is.
+the world update driving each map, and a map's clock serving its connections.
 
 **Evidence of completion.** A trace shows which component schedules and updates each implemented
 piece, instance lifecycle and movement remain correct with multiple connections, and client-visible
