@@ -597,6 +597,27 @@ across Ascalon City's arch (148) starts the crossing, the redirect carries map 1
 connection that follows loads **Lakeside County (146)** standing on map 146's own arrival for a
 character from 148 - `(6602.0, 4485.0)` - then unlocks it.
 
+**The map's clock is ASURA's, and so is the moment a doorway is decided.** Two timing defects were
+still in this tree until 2026-11-20, and together they are why a portal felt late:
+
+- **The tick was driven by the socket's read timeout.** Each arriving message restarted that wait, so
+  exactly the traffic the clock should pace is what starved it: while a client walked and talked, ticks
+  were squeezed out, and the next one then carried the whole accumulated elapsed time - a clock that
+  jumps. `ASURA/crates/asura-world/src/instance.rs:394-403` is a task per map on its own interval,
+  independent of anything a client sends ("a map still ticks every interval, it just no longer owns a
+  task that sleeps"). The deadline here is now **absolute** - one period from the tick that fired,
+  whatever arrives in between.
+- **The doorway was only tested on the client's reports.** ASURA decides it in the map's own step:
+  `Instance::step` advances each agent and tests `before -> after` - the segment **its own copy walked**
+  - and pushes the crossing to the connection, where the session's select serves it biased ahead of
+  everything else (`instance.rs:290-308`, `connection.rs:494-502`). Here the clock now does the same
+  (`WorldSession::step_map`): advance, test the segment, send the tick, then serve the transfer. A
+  click-walk into an arch therefore crosses when the walk reaches it, not when a report happens to
+  straddle the wall. The report path stays, because ASURA has it too (`dispatch.rs:44-54`).
+
+The tick's default is also ASURA's own number now: **100 ms** (`ASURA/config/Server/intervals.json`,
+`tick_interval_ms`, measured from the live client), where this tree had 105.
+
 **What is not ported, and why - all three are stops, not gaps:**
 
 - **NPCs and monsters.** ASURA creates exactly one agent per connection - the player's own

@@ -31,9 +31,13 @@ pub struct WorldConfig {
     /// has not been verified against this client). It is also the dword the reference's own send log
     /// carried - `0D 00 14 00 00 00` - so 20 is the measured value and an operator may change it.
     pub ping_value: u32,
-    /// The interval one connection's simulation is ticked at (R33), in milliseconds. The game's measured
-    /// cadence is ~105 ms (`recordings/asura/feature/travel/first-crossing-20261031.jsonl`, 1780 ticks);
-    /// an operator may run it faster or slower, which is why it is a setting and not a law.
+    /// The interval one connection's simulation is ticked at (R33), in milliseconds.
+    ///
+    /// The working implementation's own intervals file states **100** (`ASURA/config/Server/intervals.json`,
+    /// `tick_interval_ms`: "measured from the live client ... a 0x001E every ~100 ms, median 81"), and its
+    /// map clock wakes on that interval whether or not a client is talking
+    /// (`ASURA/crates/asura-world/src/instance.rs:394-403`). An operator may run it faster or slower,
+    /// which is why it is a setting and not a law.
     pub simulation_tick_ms: u32,
     /// How often the world checks its instance table for copies to dispose (R33, R40), in milliseconds.
     /// The game's own check is not measured; a second is fine-grained enough for a fifteen-minute hold
@@ -113,7 +117,7 @@ impl Default for WorldConfig {
             spawn_scatter: 250.0,
             instance_tick: true,
             ping_value: 20,
-            simulation_tick_ms: 105,
+            simulation_tick_ms: 100,
             sweep_interval_ms: 1000,
             compass_range: 10_000.0,
             explorable_disconnect_hold: 15 * 60,
@@ -310,7 +314,10 @@ mod tests {
         assert_eq!(settings.party_size_cap, 8, "R15");
         assert_eq!(settings.spawn_scatter, 250.0, "R13");
         assert!(settings.instance_tick, "R33");
-        assert_eq!(settings.simulation_tick_ms, 105, "R33's cadence, measured");
+        assert_eq!(
+            settings.simulation_tick_ms, 100,
+            "R33's cadence, ASURA's own intervals file"
+        );
         assert_eq!(settings.sweep_interval_ms, 1000, "R33/R40's sweep, a second");
         assert_eq!(settings.compass_range, 10_000.0, "R34");
         assert_eq!(settings.explorable_disconnect_hold, 900, "R37");

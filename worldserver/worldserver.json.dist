@@ -69,8 +69,8 @@
       "doc": "Whether an instance keeps a clock at all (R33). The game ticks one; an operator may choose not to, and nothing that does not tick can be simulated."
     },
     "SimulationTickMs": {
-      "value": 105,
-      "doc": "How often one connection's simulation is ticked (R33), in milliseconds. 105 is the game's measured cadence (one 0x001E every 90-110 ms over 1780 ticks in the reference's own crossing); an operator may run faster or slower."
+      "value": 100,
+      "doc": "How often a map's simulation is ticked (R33), in milliseconds. 100 is the working implementation's own number (ASURA/config/Server/intervals.json, tick_interval_ms: a 0x001E every ~100 ms, median 81, measured from the live client), and its clock wakes on that interval whatever the client is doing (ASURA/crates/asura-world/src/instance.rs:394-403); an operator may run faster or slower."
     },
 
     "PingValue": {

@@ -32,6 +32,10 @@ use crate::server::protocol::FrameError;
 use database::database::Param;
 use crate::world::World;
 
+/// What one step of the map's clock produced: the segment the agent walked across a doorway, if it
+/// crossed one, and the waypoint frames the tick carries.
+type StepOutcome = (Option<((f32, f32), (f32, f32))>, Option<Vec<u8>>);
+
 /// The agent id a character-creation connection's player is drawn as.
 ///
 /// A creation screen shows one body - the character being made - and a world here has no agent
@@ -2489,6 +2493,16 @@ impl WorldSession {
         let saved = self.saved_position(sheet);
         let entry = self.entry_point(map, saved);
         let load_started = std::time::Instant::now();
+        // The map's clock: ASURA's `Instance::run` owns one per map and wakes on its own interval
+        // (`ASURA/crates/asura-world/src/instance.rs:394-403`), independent of anything a client sends -
+        // "a map still ticks every interval, it just no longer owns a task that sleeps". A tick driven
+        // by the socket's own read timeout is starved by exactly the traffic it should be pacing (each
+        // arriving message restarts the wait), and a starving clock is a doorway crossed late.
+        //
+        // So the deadline is **absolute**: `next_tick` moves by one period from the tick that fired,
+        // whatever the client sends in between.
+        let period = std::time::Duration::from_millis(u64::from(self.settings.simulation_tick_ms));
+        let mut next_tick = std::time::Instant::now() + period;
 
         loop {
             // Whatever other sessions pushed at this one - an introduction, a farewell, a move - is
@@ -3060,52 +3074,49 @@ impl WorldSession {
                 }
             }
 
-            // The simulation's tick (R33): while the map is loaded, one every
-            // `World.SimulationTickMs` milliseconds (105 by default, the reference's measured cadence).
-            let read = io
-                .read_timeout(
-                    &mut buffer,
-                    std::time::Duration::from_millis(u64::from(self.settings.simulation_tick_ms)),
-                )
-                .await;
+            // The two things this connection waits on, and neither is a poll: the client's next bytes,
+            // and the map's clock. `ASURA/crates/asura-world/src/connection.rs:494-548` races the same
+            // two, and the clock's moment does not move because traffic arrived.
+            let wait = next_tick.saturating_duration_since(std::time::Instant::now());
+            let read = io.read_timeout(&mut buffer, wait).await;
             match read {
                 Ok(shared::network::socket::ReadOutcome::TimedOut) => {
+                    next_tick = std::time::Instant::now() + period;
                     if loaded {
-                        // **How long it has been since the last tick**, not a counter: the client
-                        // advances its simulation - and its sync copy of every agent - by this number
-                        // (`ASURA/crates/asura-world/src/instance.rs:369`, `world_simulation_tick`);
-                        // a counter here makes everything the client draws run at the wrong speed.
-                        let now = std::time::Instant::now();
-                        let elapsed = now.duration_since(last_tick);
-                        last_tick = now;
-                        // The instance's own clock advances every agent by the same elapsed time, and
-                        // announces the waypoint a walk crosses - every client is drawing that agent
-                        // from the last destination it was told (`ASURA/crates/asura-world/src/instance.rs:369-386`).
-                        let crossed = self.with_agent(|agent| {
-                            let crossed = agent.advance(elapsed.as_secs_f32());
-                            crossed.map(|waypoint| {
-                                agent_packets::agent_move_to_point(
-                                    agent.agent_id,
-                                    (waypoint.pos.x, waypoint.pos.y),
-                                    waypoint.pos.plane,
-                                    agent.plane,
-                                )
-                            })
-                        });
-                        let mut frames = vec![misc_packets::world_simulation_tick(
-                            u32::try_from(elapsed.as_millis()).unwrap_or(u32::MAX),
-                        )];
-                        if let Some(Some(walk)) = crossed {
-                            frames.push(walk.1);
-                        }
-                        self.send(io, peer, crypt, &frames, "a tick").await;
+                    // **How long it has been since the last tick**, not a counter: the client advances
+                    // its simulation - and its sync copy of every agent - by this number
+                    // (`ASURA/crates/asura-world/src/instance.rs:369`, `world_simulation_tick`); a
+                    // counter here makes everything the client draws run at the wrong speed.
+                    let now = std::time::Instant::now();
+                    let elapsed = now.duration_since(last_tick);
+                    last_tick = now;
+                    // The map's clock advances every agent by the elapsed time, and **the doorway is
+                    // decided on the segment the advance walked** - not on a report's - because that is
+                    // the copy this server believes and the one the client is drawn from
+                    // (`ASURA/crates/asura-world/src/instance.rs:290-308`). A crossing found here is
+                    // pushed to the connection and served before anything else, as `portal_inbox` is in
+                    // `connection.rs:498-502`.
+                    let (crossed, walk) = self.step_map(elapsed);
+                    let mut frames = vec![misc_packets::world_simulation_tick(
+                        u32::try_from(elapsed.as_millis()).unwrap_or(u32::MAX),
+                    )];
+                    if let Some(walk) = walk {
+                        frames.push(walk);
+                    }
+                    self.send(io, peer, crypt, &frames, "a tick").await;
+                    if let Some((from, to)) = crossed {
+                        // The travelling body leaves the map it is in: the clock that crossed it has
+                        // already been announced, then the transfer is served.
+                        self.cross_portal(io, peer, crypt, sheet, from, to).await;
+                        return;
+                    }
                     }
                 }
                 Ok(shared::network::socket::ReadOutcome::Closed) => return,
-                Ok(shared::network::socket::ReadOutcome::Read(read)) => {
+                Ok(shared::network::socket::ReadOutcome::Read(count)) => {
                     // The asks after the seed are scrambled with the key both sides derive, the
                     // same as in the run loop above.
-                    let mut plain = buffer[..read].to_vec();
+                    let mut plain = buffer[..count].to_vec();
                     crypt.decrypt(&mut plain);
                     pending.extend_from_slice(&plain);
                 }
@@ -3652,6 +3663,38 @@ impl WorldSession {
         }
     }
 
+    /// One step of the map's clock: advance this agent by `elapsed`, and answer the waypoint it crossed
+    /// and the doorway its own movement crossed.
+    ///
+    /// `ASURA/crates/asura-world/src/instance.rs:290-308`, `Instance::step`: the agents are advanced
+    /// first, and **the doorway is tested on the segment the advance walked** - `before` to `after`,
+    /// where both are this server's own copy - because that is the position the client is drawn from. A
+    /// crossing found here is served immediately (`connection.rs:498-502`, biased ahead of everything).
+    fn step_map(&self, elapsed: std::time::Duration) -> StepOutcome {
+        let map_id = self.map_id();
+        self.with_agent(|agent| {
+            let before = agent.position;
+            let waypoint = agent.advance(elapsed.as_secs_f32());
+            let after = agent.position;
+            let crossed = if before != after {
+                self.portals.crossed(map_id, before, after)
+            } else {
+                None
+            };
+            let walk = waypoint.map(|waypoint| {
+                agent_packets::agent_move_to_point(
+                    agent.agent_id,
+                    (waypoint.pos.x, waypoint.pos.y),
+                    waypoint.pos.plane,
+                    agent.plane,
+                )
+                .1
+            });
+            (crossed.map(|_| (before, after)), walk)
+        })
+        .unwrap_or((None, None))
+    }
+
     /// Save where the character stood, so a later load resumes there (R14).
     ///
     /// `ASURA/crates/asura-world/src/connection.rs:405-423`: written when the player leaves, and **not**
@@ -3760,6 +3803,56 @@ mod tests {
         Arc::new(move || {
             Box::new(WorldSession::with_master(log.clone(), &world, master)) as Box<dyn Session>
         })
+    }
+
+    /// The map's clock decides a doorway: `ASURA/crates/asura-world/src/instance.rs:290-308` advances the
+    /// agent and tests the segment **the advance walked**, so a walk that carries the character into an
+    /// arch is crossed by the server's own copy - no client report has to straddle the wall, which is
+    /// what made a click-walk into a door late.
+    #[test]
+    fn the_map_clock_crosses_a_doorway_its_own_walk_reached() {
+        let arch = crate::maps::Arch {
+            from_map: 148,
+            idx: 0,
+            to_map: Some(146),
+            // The wall map 148 states, as `data/sql/base/db_world/0012-map-content.sql` holds it.
+            from: (7523.469, 5129.551),
+            to: (7055.75, 5592.349),
+        };
+        let mut prepared = world();
+        prepared.set_portals(crate::maps::Portals::new(vec![arch], 250.0));
+        let session = WorldSession::new(Log::new(), &prepared);
+        {
+            let mut entered = session.entered.lock().unwrap();
+            *entered = Some((148, 1));
+        }
+        // The agent is on the near side of the arch, walking a straight line through it, at the world's
+        // own speed.
+        let speed = prepared.settings().agent_speed;
+        let mut agent = crate::agents::Agent::new(1, (7277.4, 5417.9), 0, (1.0, 0.0), speed);
+        let walked = agent.begin_walk(vec![crate::terrain::Waypoint {
+            pos: crate::terrain::Pos {
+                x: 7184.3,
+                y: 5307.3,
+                plane: 0,
+            },
+            trap_id: 0,
+        }]);
+        assert!(walked.is_some(), "the walk starts");
+        *session.agent.lock().unwrap() = Some(agent);
+
+        // One step of the clock, long enough to carry the agent over the wall - and no client report
+        // anywhere near it.
+        let (crossed, _) = session.step_map(std::time::Duration::from_millis(500));
+        let (from, to) = crossed.expect("the clock crossed the arch the walk reached");
+        assert!(from != to, "the segment is the advance's own");
+        assert!(
+            prepared
+                .portals()
+                .crossed(148, from, to)
+                .is_some_and(|crossed| crossed.to_map == Some(146)),
+            "and it is the arch that leads to 146"
+        );
     }
 
     /// `ASURA/crates/asura-world/src/player.rs:60-74`: the doorway test consumes the segment between two
