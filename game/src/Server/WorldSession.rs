@@ -24,12 +24,10 @@ use shared::cryptography::AuthCrypt;
 use shared::network::socket::{Session, SessionFuture, SessionIo};
 
 use crate::server::packets::{
-    agent_packets, character_packets, creation_load_block, instance_packets,
-    item_packets, misc_packets,
+    agent_packets, creation_load_block, instance_packets, item_packets, misc_packets,
 };
 use crate::server::protocol::GameVersion;
 use crate::server::protocol::FrameError;
-use database::database::Param;
 use crate::agents::player::{PLAYER_TEAM_TOKEN, UNLOCKED_MAP_ZEROS};
 use crate::handlers::character::Creation;
 use crate::world::World;
@@ -45,23 +43,11 @@ type StepOutcome = (Option<((f32, f32), (f32, f32))>, Option<Vec<u8>>);
 /// number is the world's to give, and nothing else reads it until a map exists.
 pub(crate) const CREATION_AGENT: u32 = 1;
 
-/// What a load reads from the character's own row: the name it shows, the campaign and profession
-/// whose starting set its item stream carries, the id its items are recorded under, and the gold it
-/// carries (R45: gold is per character).
-#[derive(Debug, Clone)]
-pub(crate) struct CharacterSheet {
-    pub name: String,
-    pub campaign: u8,
-    pub profession: u8,
-    pub uuid: [u8; 16],
-    pub gold: u32,
-    /// The packed look the client builds the model from, or 0 when the row records none.
-    pub appearance: u32,
-    /// The character's level, which the progress record and the agent's own property carry.
-    pub level: u8,
-    /// The professions the character has unlocked, as a bitmap.
-    pub unlocked_professions: u32,
-}
+/// What a load reads from the character's own row. It is the noun's now
+/// (`game/src/Characters/Sheet.rs`, the reference's `Player::LoadFromDB`); this name stays because
+/// the handlers and the travel path already speak it.
+pub(crate) use crate::characters::CharacterSheet;
+
 
 /// The effect word a travel puts on the travelling agent before the redirect
 /// (`ASURA/crates/asura-world/src/travel.rs:19`, `TRAVEL_EFFECT`; the live capture's own `0x00F1` frame
@@ -1008,65 +994,21 @@ impl WorldSession {
         }
     }
 
-    /// What a load needs from the character's row: the name it shows, and the campaign and profession
-    /// whose starting set the item stream carries.
+    /// The character's own row, as the load reads it - or the sheet a load falls back to when the row
+    /// cannot be read (`CharacterSheet::missing`, the noun's own fallback).
     ///
-    /// A connection whose row cannot be read is loaded as a fresh Prophecies Warrior named "Player":
-    /// a load gives the client a body either way, and the row is what makes the name and the set its
-    /// own.
+    /// Reference: `Player::LoadFromDB`. The statement and the fallback are
+    /// `game/src/Characters/Sheet.rs`'s and `DatabaseCharacters::sheet`'s; what this keeps is the one
+    /// thing only the connection knows: which character its version message named.
     fn character_sheet(&self, version: &crate::server::protocol::GameVersion) -> CharacterSheet {
-        let fallback = CharacterSheet {
-            name: "Player".to_string(),
-            campaign: 0,
-            profession: character_packets::DEFAULT_PROFESSION,
-            uuid: version.character,
-            gold: 0,
-            appearance: 0,
-            level: 1,
-            unlocked_professions: character_packets::CREATION_UNLOCKED_PROFESSIONS,
-        };
         let Some(pool) = self.characters.as_ref() else {
-            return fallback;
+            return CharacterSheet::missing(version.character);
         };
-        let uuid = crate::characters::uuid_text(&version.character);
-        let reply = match pool.lock() {
-            Ok(pool) => pool.query_reply(
-                "SELECT \"name\", \"campaign\", \"primary_profession\", \"gold\"::bigint, \
-                 \"appearance\"::bigint, \"level\"::bigint, \"unlocked_professions\"::bigint \
-                 FROM \"characters\" WHERE \"uuid\" = $1",
-                vec![Param::Text(uuid)],
-            ),
-            Err(_) => return fallback,
-        };
-        let rows = match reply.recv() {
-            Ok(Ok(rows)) => rows,
-            Ok(Err(error)) => {
-                self.say(
-                    LogLevel::Error,
-                    format!("the character's row cannot be read: {error}"),
-                );
-                return fallback;
-            }
-            Err(_) => {
-                self.say(
-                    LogLevel::Error,
-                    "the character database answered no query: it is shutting down",
-                );
-                return fallback;
-            }
-        };
-        rows.first()
-            .map(|row| CharacterSheet {
-                name: row.get::<usize, String>(0),
-                campaign: row.get::<usize, i64>(1) as u8,
-                profession: row.get::<usize, i64>(2) as u8,
-                uuid: version.character,
-                gold: row.get::<usize, i64>(3) as u32,
-                appearance: row.get::<usize, i64>(4) as u32,
-                level: row.get::<usize, i64>(5) as u8,
-                unlocked_professions: row.get::<usize, i64>(6) as u32,
-            })
-            .unwrap_or(fallback)
+        let characters = crate::characters::DatabaseCharacters::new(
+            std::sync::Arc::clone(pool),
+            self.log.clone(),
+        );
+        characters.sheet(&crate::characters::uuid_text(&version.character), version.character)
     }
 
     /// Tell this session how to learn the world is shutting down.
@@ -2022,6 +1964,7 @@ mod tests {
     use super::*;
     use crate::handlers::character::creation_player_block;
     use crate::server::packets::creation_load_block;
+    use crate::server::packets::character_packets;
     use crate::server::protocol::GameVersion;
     use crate::world::{map_kind, MapEntry};
     use shared::cryptography::handshake::{self, CLIENT_SEED_HEADER, KEY_LEN, MASTER_SECRET_LEN};

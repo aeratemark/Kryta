@@ -222,6 +222,58 @@ impl DatabaseCharacters {
         }
     }
 
+    /// The character's own row as a load reads it - or the sheet a load falls back to when the row
+    /// cannot be read.
+    ///
+    /// Reference: `Player::LoadFromDB` (`src/server/game/Entities/Player/Player.cpp`), the row a
+    /// session reads before it draws the player it is about to put in a map. This lived in
+    /// `WorldSession::character_sheet` until 2026-11-14: the statement, and the sheet a failure is
+    /// replaced by, are the noun's. A row that cannot be read is not an error to the caller - a load
+    /// gives the client a body either way (`CharacterSheet::missing`).
+    pub fn sheet(&self, uuid: &str, character: [u8; 16]) -> crate::characters::CharacterSheet {
+        let missing = crate::characters::CharacterSheet::missing(character);
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "SELECT \"name\", \"campaign\", \"primary_profession\", \"gold\"::bigint, \
+                 \"appearance\"::bigint, \"level\"::bigint, \"unlocked_professions\"::bigint \
+                 FROM \"characters\" WHERE \"uuid\" = $1",
+                vec![Param::Text(uuid.to_string())],
+            ),
+            Err(_) => return missing,
+        };
+        let rows = match reply.recv() {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    format!("the character's row cannot be read: {error}"),
+                );
+                return missing;
+            }
+            Err(_) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    "the character database answered no query: it is shutting down",
+                );
+                return missing;
+            }
+        };
+        rows.first()
+            .map(|row| crate::characters::CharacterSheet {
+                name: row.get::<usize, String>(0),
+                campaign: row.get::<usize, i64>(1) as u8,
+                profession: row.get::<usize, i64>(2) as u8,
+                uuid: character,
+                gold: row.get::<usize, i64>(3) as u32,
+                appearance: row.get::<usize, i64>(4) as u32,
+                level: row.get::<usize, i64>(5) as u8,
+                unlocked_professions: row.get::<usize, i64>(6) as u32,
+            })
+            .unwrap_or(missing)
+    }
+
     /// Where a character last stood, or `None` when it has never been saved.
     ///
     /// `ASURA/crates/asura-store/src/state/character.rs:226-246`, `position`: `pos_plane IS NULL` is

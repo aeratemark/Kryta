@@ -16,7 +16,13 @@ pub mod repository;
 #[path = "Equipping.rs"]
 pub mod equipping;
 
+
+#[path = "Sheet.rs"]
+pub mod sheet;
+
 pub use equipping::{NotWorn, equip_place};
+pub use sheet::CharacterSheet;
+
 
 pub use repository::{
     BACKPACK_MODEL, DatabaseCharacters, EQUIPPED_ITEMS_MODEL, HeldItem, LAST_CARRYING_MODEL,

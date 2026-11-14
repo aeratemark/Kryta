@@ -148,6 +148,15 @@ the frames. `PLAYER_TEAM_TOKEN`, `UNLOCKED_MAP_ZEROS` and `MORALE_FULL` moved wi
 `player.rs` the working implementation keeps them in. No frame, order or size changed; all four
 end-to-end journeys and the login journey pass untouched.
 
+**Done (2026-11-14, the sheet a load reads).** The one statement the session still wrote itself -
+`SELECT name, campaign, primary_profession, gold, appearance, level, unlocked_professions FROM
+characters` - moved into `DatabaseCharacters::sheet` (`game/src/Characters/Repository.rs`), with the
+sheet's shape and the sheet a failed read falls back to in `game/src/Characters/Sheet.rs`
+(`CharacterSheet`, `CharacterSheet::missing`). That is the reference's `Player::LoadFromDB` seen from
+this tree's side, and it is the same table the noun's other reads use; the session now keeps no SQL of
+its own outside the confirm's statement, which is the character family's. The fallback's fields are
+tested one by one (name "Player", Prophecies, Warrior, level 1, gold 0, the creation screen's unlocked
+professions), and the four end-to-end journeys pass untouched.
 The message families are therefore all out of the session: item, movement, travel, chat, character and
 the load's three answers. What is left in `WorldSession` is the connection's own cycle - the seed
 exchange and the version message, the travel row's claim, the head block, the read loop, the map's
