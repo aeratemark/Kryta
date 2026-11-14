@@ -11,6 +11,10 @@
 //! (`agent.rs:59`), `POSITION_UPDATE_MAX_ELAPSED_MS` (`agent.rs:63`) and the correction ceiling, which
 //! is its setting `config/Server/movement.json` (`max_allowed_correction`).
 
+#[path = "Player.rs"]
+pub mod player;
+pub(crate) use player::Player;
+
 use std::time::{Duration, Instant};
 
 use crate::terrain::pathfind::{Pos, Waypoint};

@@ -115,19 +115,26 @@ responsibilities in the reference's corresponding layers. Preserve all branches,
 error handling and frames. Moving a function to another file alone does not settle its ownership.
 Start with a specifically selected subject and keep the work and parity audit scoped to it.
 
-**The next subject: the load's three asks.** One family is left, and its ownership is not answered by
-moving it. The client's three load asks are answered inside `WorldSession::load_map`'s own read loop -
-`0x8091` with the item stream and the map's record, `0x8088` with the entry point, `0x8090` with the
-whole load block. Measured against the two authorities: ASURA answers each in a *different* domain
-module - `item::handle_request_items`, `agent::handle_request_spawn`, `player::handle_request_players`
-(`ASURA/crates/asura-world/src/dispatch.rs:24-34`, and `player.rs` is 507 lines of that block) - while
-the reference has no per-message handler for them at all: it is `WorldSession::HandlePlayerLogin` calling
-`Player::LoadFromDB` and then `Player::SendInitialPacketsBeforeAddToMap` /
-`SendInitialPacketsAfterAddToMap`, i.e. the bursts belong to the **player object**, not to a handler
-file. This tree has no player object; the reference's `Entities/Player/` is the directory this tree
-calls `Agents/`. So the work is: a `Player`-shaped noun (frame builders over the load's state, with the
-database reads and the R12 unlock left where they are), the three arms reduced to a call each, and no
-frame, order or size changed. It was not started in place of finishing the four families above.
+**Done (2026-11-14, the load block).** The first of the load's three asks to get its noun right:
+`0x8090` - the players request - is answered by `game/src/Agents/Player.rs`, `Player::load_block`,
+the whole block frame for frame in the reference's order (`ASURA/crates/asura-world/src/player.rs`,
+540 lines, `player_block`). The frames moved verbatim; the nine lines that changed spelling are the
+ones that read the character's row (`sheet.` -> `self.`) and the world's settings (`self.settings.` ->
+`settings.`). What stayed is what is not the player object's: the database reads that decide the
+unlocked-instance bitmap (the character's rows, R12's arrival rule), the entry point, the district's
+introductions and the broadcast that tells the copy this body is here - `Player` is given the state and
+returns the frames. `PLAYER_TEAM_TOKEN`, `UNLOCKED_MAP_ZEROS` and `MORALE_FULL` moved with it, to the
+`player.rs` the working implementation keeps them in. No frame, order or size changed; all four
+end-to-end journeys and the login journey pass untouched, and the load's own block is unchanged in the
+diff that moved it except for those nine lines' spelling.
+
+**The next subject: the load's other two asks.** `0x8091` (the item stream and the map's record) and
+`0x8088` (the entry point) are still answered inside `WorldSession::load_map`'s read loop. Measured
+against the two authorities: ASURA answers them in different domain modules - `item::handle_request_items`
+and `agent::handle_request_spawn` (`ASURA/crates/asura-world/src/dispatch.rs:24-34`) - and the reference
+answers neither with a handler: they are `Player::SendItems` and the entry point of
+`Player::SendInitialPackets*`, i.e. the player object's again. So the same treatment: frames to the noun
+that owns them, the reads left where they are, and no frame, order or size changed.
 
 **Evidence of completion.** The subject has a traceable handler-to-mechanic path, the mechanic's
 state and decisions have a clear owner, existing callers and persistence still work, and recorded

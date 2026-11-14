@@ -25,11 +25,12 @@ use shared::network::socket::{Session, SessionFuture, SessionIo};
 
 use crate::server::packets::{
     agent_packets, character_packets, creation_load_block, instance_packets,
-    item_packets, misc_packets, party_packets,
+    item_packets, misc_packets,
 };
 use crate::server::protocol::GameVersion;
 use crate::server::protocol::FrameError;
 use database::database::Param;
+use crate::agents::player::{PLAYER_TEAM_TOKEN, UNLOCKED_MAP_ZEROS};
 use crate::handlers::character::Creation;
 use crate::world::World;
 
@@ -61,19 +62,6 @@ pub(crate) struct CharacterSheet {
     /// The professions the character has unlocked, as a bitmap.
     pub unlocked_professions: u32,
 }
-
-/// The two dword lists a load sends at full length whether or not a character has used them: the
-/// hard-mode mission and bonus bitmaps. An empty list is not the same message - it is an array the
-/// client can index past the end of (`ASURA/crates/asura-world/src/player.rs`, `UNLOCKED_MAP_ZEROS`,
-/// copied from the reference's own send log: 31 zero words each).
-const UNLOCKED_MAP_ZEROS: &[u32] = &[0u32; 31];
-
-/// The team token a load gives the client. Evidence: the reference's own trace carried `0D F0 AD BA`
-/// in `0x00F2` (`recordings/gwps/world/load-stream.log`), which is `ASURA`'s `PLAYER_TEAM_TOKEN`.
-const PLAYER_TEAM_TOKEN: u32 = 0xBAAD_F00D;
-
-/// Full morale, which a fresh agent has (`ASURA/crates/asura-world/src/player.rs`, `MORALE_FULL`).
-const MORALE_FULL: u32 = 100;
 
 /// The effect word a travel puts on the travelling agent before the redirect
 /// (`ASURA/crates/asura-world/src/travel.rs:19`, `TRAVEL_EFFECT`; the live capture's own `0x00F1` frame
@@ -1452,11 +1440,6 @@ impl WorldSession {
                                 }
                             }
                         }
-                        let mut progress = [0u32; character_packets::FACTIONS_DWORDS];
-                        // Experience has no column yet; level and morale do, and the client shows 0
-                        // for a level it is not told (`ASURA/crates/asura-world/src/player.rs`).
-                        progress[9] = u32::from(sheet.level);
-                        progress[10] = MORALE_FULL;
                         let load_ms = u32::try_from(load_started.elapsed().as_millis())
                             .unwrap_or(u32::MAX);
 
@@ -1494,120 +1477,21 @@ impl WorldSession {
                                 PLAYER_TEAM_TOKEN,
                             ));
                         }
-                        frames.push(misc_packets::pvp_update_unlocked_skills(&[]));
-                        frames.push(misc_packets::pvp_update_unlocked_heroes(&[0xFFFF_FFFF; 8]));
-                        for item in crate::data_stores::pvp_items::PVP_ITEMS {
-                            frames.push(misc_packets::pvp_item_stream_add(item.id, item.params));
-                        }
-                        frames.push(misc_packets::pvp_item_stream_end());
-                        for (feature, param1, param2) in [
-                            (1u16, 10u16, 0u16),
-                            (99, 3, 0),
-                            (100, 5, 0),
-                            (101, 5, 5),
-                            (102, 2, 2),
-                            (111, 1, 0),
-                            (124, 1, 0),
-                            (125, 1, 0),
-                            (131, 1, 0),
-                        ] {
-                            frames.push(misc_packets::account_feature(feature, param1, param2));
-                        }
-                        frames.push(misc_packets::map_update_unlocked_list([
-                            &[],
-                            &[],
-                            UNLOCKED_MAP_ZEROS,
-                            UNLOCKED_MAP_ZEROS,
-                            &unlocked,
-                        ]));
-                        frames.push(misc_packets::instance_loaded(PLAYER_TEAM_TOKEN));
-                        frames.push(agent_packets::agent_update_attribute_points(agent, 50, 50));
-                        frames.push(character_packets::player_update_profession(
+                        let state = crate::agents::Player {
                             agent,
-                            sheet.profession,
-                            0,
-                            0,
-                        ));
-                        frames.push(character_packets::player_update_unlocked_professions(
-                            agent,
-                            sheet.unlocked_professions,
-                        ));
-                        frames.push(character_packets::skillbar_update(
-                            agent,
-                            &[0u32; 8],
-                            &[0u32; 8],
-                            1,
-                        ));
-                        frames.push(character_packets::update_unlocked_skills(&[]));
-                        frames.push(character_packets::character_update_factions(&progress));
-                        frames.push(misc_packets::char_visibility_flags(0xFFFF_FFFF, 0xFFFF_FFFF));
-                        frames.push(misc_packets::player_update_flags(player as u16, 0, 7));
-                        frames.push(agent_packets::agent_update_attributes(agent, &[0u32; 42]));
-                        frames.push(misc_packets::world_update_load_time(load_ms));
-                        frames.push(instance_packets::player_create(
                             player,
-                            agent,
+                            position,
+                            plane,
+                            direction,
                             appearance,
-                            &sheet.name,
-                        ));
-                        frames.push(character_packets::player_update_profession(
-                            agent,
-                            sheet.profession,
-                            0,
-                            0,
-                        ));
-                        frames.push(agent_packets::world_create_agent(
-                            &agent_packets::CreateAgent {
-                                agent_id: agent,
-                                model_id: agent_packets::CHAR_CLASS_PLAYER_BASE | player,
-                                agent_type: agent_packets::AGENT_TYPE_LIVING,
-                                position,
-                                plane,
-                                // The direction the entry point states - the spawn point's own angle, or
-                                // a doorway arrival's, or `(1, 0)` when the row states neither
-                                // (`ASURA/crates/asura-world/src/map_spawns.rs:44-53`).
-                                direction,
-                                speed_base: self.settings.agent_speed,
-                                player_team_token: PLAYER_TEAM_TOKEN,
-                            },
-                        ));
-                        frames.push(agent_packets::agent_update_morale(agent, MORALE_FULL));
-                        frames.push(agent_packets::agent_property_update_int(
-                            agent_packets::AGENT_PROPERTY_ENERGY,
-                            agent,
-                            self.settings.agent_energy,
-                        ));
-                        frames.push(agent_packets::agent_property_update_int(
-                            agent_packets::AGENT_PROPERTY_HEALTH,
-                            agent,
-                            self.settings.agent_health,
-                        ));
-                        frames.push(agent_packets::agent_property_update_float(
-                            agent_packets::AGENT_PROPERTY_ENERGY_REGEN,
-                            agent,
-                            self.settings.agent_energy_regen,
-                        ));
-                        frames.push(agent_packets::agent_property_update_int(
-                            agent_packets::AGENT_PROPERTY_PUBLIC_LEVEL,
-                            agent,
-                            u32::from(sheet.level),
-                        ));
-                        frames.push(agent_packets::agent_initial_effects(agent, 0));
-                        frames.push(misc_packets::update_agent_visual_equipment(agent, equipped));
-                        frames.push(misc_packets::agent_display_cape(agent, 1));
-                        frames.push(agent_packets::world_update_controlled_agent(agent, 3));
-                        frames.push(party_packets::party_create(party_packets::PARTY_ID));
-                        frames.push(party_packets::party_player_add(
-                            party_packets::PARTY_ID,
-                            player as u16,
-                            1,
-                        ));
-                        frames.push(party_packets::party_member_stream_end(party_packets::PARTY_ID));
-                        frames.push(character_packets::character_update_party(
-                            party_packets::PARTY_ID,
-                            1,
-                        ));
-                        frames.push(instance_packets::instance_load_finish());
+                            equipped,
+                            unlocked,
+                            profession: sheet.profession,
+                            unlocked_professions: sheet.unlocked_professions,
+                            level: sheet.level,
+                            name: sheet.name.clone(),
+                        };
+                        frames.extend(state.load_block(&self.settings, load_ms));
                         let count = frames.len();
                         self.send(io, peer, crypt, &frames, "the players and the load's last message")
                             .await;
