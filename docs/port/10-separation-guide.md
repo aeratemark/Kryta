@@ -59,10 +59,10 @@ remaining deviation is described accurately in its decision record.
 **What exists (2026-11-14, after the families moved).** `game/src/Server/WorldSession.rs` holds what a
 connection is: the seed exchange, the version message, the travel row's claim, the head block, the read
 loop, the outbox and the district it gives back. Six message families are in `game/src/Handlers/`, and
-the load's answers are `game/Agents/Player.rs`'s. What is still the session's and should not be is the
-map's clock (`step_map`, which calls `Agent::advance` and `Portals::crossed` and decides when to advance
-and what to do with the result) - the third item's subject.
-
+the load's answers are `game/Agents/Player.rs`'s, and where a character enters a map is
+`game/Agents/Entry.rs`'s. What is still the session's and should not be is the map's clock
+(`step_map`, which calls `Agent::advance` and `Portals::crossed` and decides when to advance and what
+to do with the result) - the third item's subject.
 **Done (2026-11-14, item family).** The item messages are the first family moved, all four of them:
 `answer_item_move`, `answer_equip_item`, `answer_drop_item` and `answer_unequip_item` are
 `impl WorldSession` members in `game/src/Handlers/ItemHandler.rs`, and the
@@ -106,6 +106,16 @@ the row is `DatabaseCharacters` (`write_starting_items`, `unlock_map`), the star
 or log line changed; the creation journey (the block, a changed profession, the confirm's row and the
 refusal of a taken name) passes untouched.
 
+**Done (2026-11-14, where a character enters).** The rule that decides the point, plane and facing a
+character enters a map with moved out of the connection into `game/src/Agents/Entry.rs`
+(`entry_point` over the map, its spawn points, a crossing's landing, a saved position and the world's
+scatter), which is where ASURA keeps it - `Standing::at_spawn` (`agent.rs:460-476`), `arrival` and
+`resume` (`:478-545`) - and the text is the same text, moved. What the connection keeps is what only it
+knows: which landing its claimed travel stated, where the character was saved, and the world's scatter
+setting. Five tests hold the rule itself now (a scattered point of an outpost's own list, a crossing's
+landing winning, a landing for another map not applying, a saved position resumed, a map with no point
+of its own having no entry), and the four end-to-end journeys - creation, the second outpost, the
+resume-on-reconnect and the arch crossing to Lakeside County - pass untouched.
 There is already useful extraction: agent state and movement operations are in `game/src/Agents/`,
 pathfinding in `game/src/Terrain/`, portal geometry in `game/src/Maps/`, and character item persistence
 in `game/src/Characters/`. The presence of these modules does not make every session operation a

@@ -11,6 +11,10 @@
 //! (`agent.rs:59`), `POSITION_UPDATE_MAX_ELAPSED_MS` (`agent.rs:63`) and the correction ceiling, which
 //! is its setting `config/Server/movement.json` (`max_allowed_correction`).
 
+#[path = "Entry.rs"]
+pub mod entry;
+pub use entry::{entry_point, Entering, Landing};
+
 #[path = "Player.rs"]
 pub mod player;
 pub(crate) use player::Player;

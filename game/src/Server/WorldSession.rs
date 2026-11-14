@@ -1796,84 +1796,31 @@ impl WorldSession {
     /// One point of a map's own spawn list, scattered by the world's setting (R13) - or, when the
     /// travel this connection claimed was a doorway crossing, the landing that doorway states (R21).
     ///
-    /// The game's rule: every entry takes a random point of that map's list, lands up to
-    /// `spawn_scatter` units around it, and faces the point's angle. The scatter is a setting, never a
-    /// constant. A crossing states its own point and its own facing, which the receiving map owns
-    /// (`ASURA/crates/asura-world/src/travel.rs:319-338`, `portals::arrival`).
+    /// The rule is the agent's own and lives in `crate::agents::entry_point`
+    /// (`game/src/Agents/Entry.rs`, ASURA's `Standing::at_spawn`/`arrival`/`resume`, `agent.rs:460-545`);
+    /// what this connection adds is the three things the rule needs that only it knows: the landing the
+    /// claimed travel stated, the position the character was saved at, and the world's scatter.
     fn entry_point(
         &self,
         map: &crate::world::MapEntry,
         saved: Option<crate::characters::Position>,
     ) -> Option<(f32, f32, u16, (f32, f32))> {
-        if let Ok(claimed) = self.landing.lock()
-            && let Some(claimed) = *claimed
-            && claimed.map_id == map.id
-        {
-            return Some((
-                claimed.landing.x,
-                claimed.landing.y,
-                claimed.landing.plane.max(0) as u16,
-                claimed.facing,
-            ));
-        }
-        let points: Vec<crate::maps::MapSpawn> = self
-            .spawns
-            .iter()
-            .filter(|spawn| spawn.map_id == map.id)
-            .copied()
-            .collect();
-        if points.is_empty() {
-            return None;
-        }
-        // An **outpost** is entered at a random point of its own list, scattered (R13); every other map
-        // resumes where the character left it when it left from this map, and stands on the map's own
-        // first point otherwise (`Standing::arrival`/`resume`, `ASURA/crates/asura-world/src/agent.rs:478-545`).
-        if map.kind != Some(crate::world::map_kind::OUTPOST) {
-            if let Some(saved) = saved
-                && saved.map_id == map.id
-            {
-                return Some((
-                    saved.x,
-                    saved.y,
-                    saved.plane.max(0) as u16,
-                    // A resumed position keeps the default direction: the facing of a saved position is
-                    // not stored (`agent.rs:536-545`).
-                    (1.0, 0.0),
-                ));
+        let landing = self.landing.lock().ok().and_then(|claimed| *claimed).map(|claimed| {
+            crate::agents::Landing {
+                map_id: claimed.map_id,
+                x: claimed.landing.x,
+                y: claimed.landing.y,
+                plane: claimed.landing.plane,
+                facing: claimed.facing,
             }
-            let first = points[0];
-            return Some((
-                first.x,
-                first.y,
-                first.plane.max(0) as u16,
-                first.direction(),
-            ));
-        }
-        let mut pick = [0u8; 8];
-        let choice = if getrandom::getrandom(&mut pick).is_ok() {
-            (u64::from_le_bytes(pick) % points.len() as u64) as usize
-        } else {
-            0
-        };
-        let point = points[choice];
-        let scatter = self.settings.spawn_scatter;
-        let mut angle = [0u8; 8];
-        let (dx, dy) = if getrandom::getrandom(&mut angle).is_ok() {
-            let raw = u64::from_le_bytes(angle);
-            let radians = (raw % 360) as f32 * std::f32::consts::PI / 180.0;
-            let radius = ((raw / 360) % scatter.max(1.0) as u64) as f32;
-            (radius * radians.cos(), radius * radians.sin())
-        } else {
-            (0.0, 0.0)
-        };
-        // The point states which way a character entering there faces
-        // (`ASURA/crates/asura-world/src/agent.rs:460-476`, `Standing::at_spawn`).
-        Some((
-            point.x + dx,
-            point.y + dy,
-            point.plane.max(0) as u16,
-            point.direction(),
-        ))
+        });
+        crate::agents::entry_point(&crate::agents::Entering {
+            map,
+            spawns: &self.spawns,
+            landing,
+            saved,
+            scatter: self.settings.spawn_scatter,
+        })
     }
 
 
