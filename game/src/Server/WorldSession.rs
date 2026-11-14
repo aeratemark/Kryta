@@ -226,6 +226,11 @@ pub struct WorldSession {
     /// The frames other sessions pushed to this one, which it scrambles with its own cipher and writes
     /// when it next looks. A session that has not loaded a map has no channel at all.
     outbox: std::sync::Mutex<Option<std::sync::mpsc::Receiver<Vec<u8>>>>,
+    /// Set by the listener when the world is shutting down: the session ends itself on its next
+    /// turn, so its own tail runs - the district place is given back and the position is
+    /// written. Reference: `sWorldSessionMgr->KickAll()` (`WorldSessionMgr.cpp:220`), the first
+    /// thing the reference's shutdown does (`Main.cpp:372`). `None` in a session a test builds.
+    closing: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// The id this connection's player and agent are known by, drawn the moment a map load begins.
     ///
     /// One number for both, as every message in this tree already treats them: the load draws the body
@@ -264,6 +269,7 @@ impl WorldSession {
             master: None,
             peers: world.peers(),
             outbox: std::sync::Mutex::new(None),
+            closing: None,
             id: std::sync::Mutex::new(None),
         }
     }
@@ -826,6 +832,11 @@ impl WorldSession {
         // longer than a client tolerates is said out loud, once.
         let mut stalled: Option<(u16, usize, std::time::Instant)> = None;
         loop {
+            // The world is going down: the listener set this before it stopped, and a session that
+            // keeps turning would answer a client that is being kicked (`KickAll`).
+            if self.closing() {
+                return;
+            }
             // Everything already unscrambled and not yet answered, before any more is read.
             while let Some(bytes) = pending.first_chunk::<2>() {
                 let header = u16::from_le_bytes(*bytes);
@@ -1058,6 +1069,22 @@ impl WorldSession {
             .unwrap_or(fallback)
     }
 
+    /// Tell this session how to learn the world is shutting down.
+    ///
+    /// The listener sets the flag and waits; the session reads it at the top of each turn and ends
+    /// itself, which is the reference's kick (`WorldSessionMgr::KickAll`) in a tree whose sessions are
+    /// tasks rather than objects in a loop.
+    pub(crate) fn set_closing(&mut self, closing: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        self.closing = Some(closing);
+    }
+
+    /// Whether the world has told this session to stop.
+    fn closing(&self) -> bool {
+        self.closing
+            .as_ref()
+            .is_some_and(|closing| closing.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
     /// Preserve the full reported movement even when simulation ticks advanced the agent meanwhile.
     ///
     /// `ASURA/crates/asura-world/src/player.rs:60-74`, `record_portal_step`: the segment between two
@@ -1282,6 +1309,11 @@ impl WorldSession {
         let mut next_tick = std::time::Instant::now() + period;
 
         loop {
+            // The world is going down: the same kick the pre-load loop reads, and here it is what
+            // lets the session finish through its own tail instead of being dropped mid-future.
+            if self.closing() {
+                return;
+            }
             // Whatever other sessions pushed at this one - an introduction, a farewell, a move - is
             // written before anything else is read: it travels plaintext and is scrambled here, with
             // this connection's own cipher (`game/Districts/Peers.rs`).
@@ -2094,6 +2126,58 @@ mod tests {
         Arc::new(move || {
             Box::new(WorldSession::with_master(log.clone(), &world, master)) as Box<dyn Session>
         })
+    }
+    /// A session the listener has told the world is closing answers nothing and ends (`KickAll`,
+    /// `WorldSessionMgr.cpp:220`): its next turn is its last, which is what lets its tail give the
+    /// district place back and write the position instead of being dropped mid-future.
+    #[test]
+    fn a_session_told_the_world_is_closing_ends_without_answering() {
+        let log = Log::new();
+        let world = Arc::new(world());
+        let closing = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let factory: shared::network::socket::SessionFactory = {
+            let log = log.clone();
+            let world = Arc::clone(&world);
+            let closing = Arc::clone(&closing);
+            Arc::new(move || {
+                let mut session =
+                    WorldSession::with_master(log.clone(), &world, [0x5Bu8; MASTER_SECRET_LEN]);
+                session.set_closing(Arc::clone(&closing));
+                Box::new(session) as Box<dyn Session>
+            })
+        };
+        let mut manager = shared::network::socket_mgr::SocketMgr::new(factory);
+        let port = manager.start_network("127.0.0.1", 0, 1).unwrap();
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+
+        let version = GameVersion {
+            version: 39167,
+            h0008: 1,
+            map_token: 99,
+            map_id: 0,
+            player_token: 1,
+            account: [0; 16],
+            character: [0; 16],
+            h0038: 0,
+            h003c: 0,
+        };
+        client.write_all(&version.encode()).unwrap();
+
+        let mut byte = [0u8; 1];
+        let mut total = 0;
+        while let Ok(read) = client.read(&mut byte) {
+            if read == 0 {
+                break;
+            }
+            total += read;
+        }
+        assert_eq!(total, 0, "a kicked connection is closed without a word");
+
+        manager.stop_network();
+        log.shutdown();
     }
 
     /// The map's clock decides a doorway: `ASURA/crates/asura-world/src/instance.rs:290-308` advances the

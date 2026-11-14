@@ -575,9 +575,12 @@ fn run(args: &[String]) -> Result<(), String> {
     // Stages after this one, in the reference's order, and none exists yet:
     //   CliRunnable                   the console, when `Console.Enable`
     //   ACSoapThread                  the SOAP endpoint, when `SOAP.Enabled`, port 7878
-    //   sScriptMgr->OnStartup
-    // On shutdown: `sWorldSessionMgr->KickAll`, `sMapMgr->UnloadAll`,
-    // `sScriptMgr->OnAfterUnloadAllMaps`, `sScriptMgr->OnShutdown`.
+    // On shutdown, in the reference's order: `sWorldSessionMgr->KickAll` and the `UpdateSessions(1)`
+    // pass that unloads what it kicked, then `sWorldSocketMgr::StopNetwork` (`Main.cpp:370-374`) -
+    // `sockets.stop` does all three here - then `sScriptMgr->OnShutdown` once the network is gone
+    // (`:426`). `sMapMgr->UnloadAll` and `OnAfterUnloadAllMaps` have no work to do in this tree yet:
+    // the copies' rows are disposed by a fresh world at its start (`dispose_all`), which is what an
+    // unload at the end would have achieved.
 
     // The status line: what this world is up to, on a timer, so "is it alive and what has reached it"
     // is answerable from the log alone - the auth program's own arrangement, with the world's state:
@@ -668,9 +671,6 @@ fn run(args: &[String]) -> Result<(), String> {
     }
 
     wait_for_shutdown();
-    // The world is going down, so its scripts are told while it still stands
-    // (`sScriptMgr->OnShutdown()`, `Main.cpp:426`).
-    world.on_shutdown();
     stop_tick.store(true, std::sync::atomic::Ordering::Relaxed);
     stop_status.store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = status_writer.join();
@@ -681,6 +681,9 @@ fn run(args: &[String]) -> Result<(), String> {
     );
     let accepted = sockets.accepted_count();
     sockets.stop();
+    // And the world's own shutdown, raised once the network is gone, which is where the
+    // reference raises it (`sScriptMgr->OnShutdown()`, `Main.cpp:426`, after the pool is gone).
+    world.on_shutdown();
     for pool in &mut opened {
         pool.close();
     }

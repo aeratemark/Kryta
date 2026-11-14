@@ -153,11 +153,30 @@ the session, application and game library.
 (`MapMgr::Update`, `src/server/game/Maps/MapMgr.cpp:251`, scheduling every map's own `Update`), so a
 program's loop drives the world, the world drives the maps, and a session ticks nothing.
 
-**Done (2026-11-14, the copies' sweep).** The first piece of the world's own update: `World::update(now)`
-(`game/src/World/mod.rs`) disposes the copies that have been empty past their hold and names them (R37,
-R40), and `worldserver`'s timer calls it instead of locking the district table itself - the reference's
-`sWorld->Update(diff)`, with the sweep as the one thing this world has to drive today. Same interval,
-same log line, same rows.
+**Done (2026-11-14, the copies' sweep).** The first piece of the world's own update: `World::update(now, diff)`
+(`game/src/World/mod.rs`) tells the scripts (`sScriptMgr->OnWorldUpdate(diff)`, `World.cpp:1355`) and
+disposes the copies that have been empty past their hold, naming them (R37, R40), and `worldserver`'s
+timer calls it instead of locking the district table itself - the reference's `sWorld->Update(diff)`,
+with the sweep as the one thing this world has to drive today. Same interval, same log line, same rows.
+
+**Done (2026-11-14, the kick and the shutdown order).** A connection now ends itself when the world is
+going down, instead of being dropped mid-future with its place in the district still held and its
+position unwritten. `WorldSocketMgr::stop` sets one flag every session reads at the top of its turn
+(`WorldSession::closing`), waits (bounded) for the live count to fall, and only then stops the network -
+the reference's `sWorldSessionMgr->KickAll()` ("save and kick all players", `WorldSessionMgr.cpp:220`),
+the `UpdateSessions(1)` pass that unloads them, then `sWorldSocketMgr.StopNetwork()`
+(`Main.cpp:370-374`). The program's own shutdown now follows the reference's order: the network goes
+first and `sScriptMgr->OnShutdown` is raised after it (`Main.cpp:426`), where before it was raised while
+the listener still served. Nothing a client sends or receives changed;
+`a_session_told_the_world_is_closing_ends_without_answering` proves a kicked session closes without a
+word, and the end-to-end journeys still start and stop the real program.
+
+**What is not here, and why.** `sMapMgr->UnloadAll` and `OnAfterUnloadAllMaps` have no counterpart work
+in this tree yet: a fresh world disposes the copies an earlier run left
+(`DatabaseInstances::dispose_all` at start-up), which is what an unload at the end would achieve, and the
+hook arrives with the moment it would be raised. The session registry the reference kicks through is not
+here either: sessions are tasks, so the kick is a flag rather than a walk over a map of them - one
+place, one message, no new state to keep in step.
 
 **Work to resolve (the rest).** The maps' own clocks: `WorldSession::step_map` still advances the
 agent and tests the doorway inside the connection's read loop, where ASURA has one clock per map

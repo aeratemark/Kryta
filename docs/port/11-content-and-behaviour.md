@@ -104,7 +104,7 @@ those interfaces are designed.
 
 ## Status and evidence
 
-`scripts/src/ScriptMgr/` currently registers names and counts; its loaders register no content and
-it does not dispatch gameplay callbacks. `game/src/Scripting/` and `game/src/Modules/` are unported.
-No conclusion about client acceptance follows from this design. `docs/port/10-separation-guide.md`
-tracks the present boundary work, and `docs/port/06-world-plan.md` maps world subjects to their nouns.
+`game/src/Scripting/` owns the script manager. Three world lifecycle hooks are wired, and their
+current limits and proof are in `docs/port/10-separation-guide.md`. Lua content integration and a
+module crate remain future work. No conclusion about client acceptance follows from this design.
+`docs/port/06-world-plan.md` maps world subjects to their nouns.

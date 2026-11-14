@@ -37,9 +37,9 @@ file it came from and every capture says its own layer in its header (`layer`, `
 | `recordings/asura/` | a working server, recording its own socket | the packed frame, both directions | two bytes |
 | `recordings/client/` | the client sniffer (`tools/client/sniff-capture.py`), hooking the client's handler table | the client's message **struct**: every field widened to four bytes, zero padding out to the struct's size | four bytes |
 
-- The **wire** size of a message is the reference's declared size for its header
-  (`ASURA/crates/asura-protocol/src/packets.rs`, the `size` column, which is `sizeof` the struct its
-  `pack` writes), and the traces print it: `SEND 0x017C 6 bytes`, `SEND 0x0186 2 bytes`.
+- The packet table declares a size or upper bound. Counted fields give variable-length frames;
+  the descriptor and captured wire determine the actual length. Fixed examples in the send trace
+  include `SEND 0x017C 6 bytes` and `SEND 0x0186 2 bytes`.
 - A struct is **two bytes wider** for a fixed message and far wider where it pads - the recorded table
   says it in as many words (`docs/evidence/packet-coverage.md`: `0x001E` 8 against 6, `0x0186` 4
   against 2, `0x000A` 240 against 140).
@@ -60,8 +60,9 @@ file it came from and every capture says its own layer in its header (`layer`, `
 | `shared/src/Packets/Types.rs` | - | the vocabulary both write rows in: `Packet`, `Field`, `FieldKind`, `Conn`, `Status` |
 | `shared/src/Packets/Frame.rs` | - | the walk both frame with |
 
-That split is the reference's: an opcode table belongs to the program whose connection it describes,
-and the auth program does not link the game library. What is shared is the mechanism, which is what
+The opcode tables belong to their respective connections. Auth currently links the game library for
+the portal and other uses (`docs/decisions/0003-portal-host.md`, `docs/port/10-separation-guide.md`).
+What is shared is the framing mechanism, which is what
 `shared/Packets/` is for; each program owns the vocabulary of its own connection and calls the walk
 with the row it found. (`tools/split-protocol-table.py` and `tools/extract-protocol-types.py` are the
 record of how the merged file was separated again.)
@@ -109,14 +110,12 @@ The frames, with the reference's own wire sizes:
 | 12 | server -> client | `0x018B` | 6 | refused: the header and the error code |
 | 13 | client -> server | `0x0084` | 12 per piece | the seven dye requests a client makes while a profession change is being applied |
 
-- Rows 5 to 8 are the reference's own order, read off its capture of a Necromancer-to-Factions
-  character change and back again
-  (`ASURA/recordings/client/feature/character_creation/character_creation-live-necro_factions.jsonl`,
-  records 305-330 and 355-380: five `0x014D`, then `0x00B7`, `0x00DB`, then per item `0x0161`,
-  `0x015A`, `0x013E`, `0x014B`). A capture of a **struct dump**, so it fixes the messages and their
-  order, not their bytes.
-- What this tree sends on `0x8060` is the working implementation's answer, which is the same order
-  except that the skill list comes before the profession and each item is created and placed only:
+- The live client struct capture `ASURA/recordings/client/feature/character_creation/
+  character_creation-live-necro_factions.jsonl` records five `0x014D` followed by `0x00B7`, `0x00DB`
+  at records 314-320. Its next change also has `0x00B7`, `0x00DB` at records 364-365. This capture
+  establishes observed message order, not wire sizes.
+- What this tree sends on `0x8060` follows ASURA's order: the skill list comes before the profession
+  and each item is created and placed only. The live capture includes additional item messages:
   `ASURA/crates/asura-world/src/creation.rs`, `handle_change_profession`. It omits the reference's
   `0x015A` and `0x014B`, and a client that has drawn the creation screen from it does not mind.
   Adopting those two is open, not done.
@@ -341,9 +340,8 @@ A refusal sends only `0x0003`, with status `11`.
 
 ## Splitting the stream: the table is the protocol
 
-No message carries its length, so the only thing that can say where one ends is a table of sizes -
-which is exactly what the reference's own reader uses. This server keeps one, which is why a single
-read can hold four messages and still be answered correctly.
+No message carries its length. The framer walks the selected table row's field layout, including
+counts, to find the end. A single read can therefore hold several messages.
 
 | header | size | what it is |
 |---|---|---|
