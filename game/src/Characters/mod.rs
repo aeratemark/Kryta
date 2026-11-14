@@ -13,6 +13,11 @@
 #[path = "Repository.rs"]
 pub mod repository;
 
+#[path = "Equipping.rs"]
+pub mod equipping;
+
+pub use equipping::{NotWorn, equip_place};
+
 pub use repository::{
     BACKPACK_MODEL, DatabaseCharacters, EQUIPPED_ITEMS_MODEL, HeldItem, LAST_CARRYING_MODEL,
     MoveOutcome, Refused,
