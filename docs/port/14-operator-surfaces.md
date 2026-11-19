@@ -8,17 +8,19 @@ client-visible behaviour under Rule 0. Those repository rules are not displaced 
 ## 1. Settled direction
 
 One registered Rust API function performs each operation. `data/commands.json` maps a GM command and
-its aliases to that function: `tp` -> teleport, for example. The CLI, management application and Lua
+its aliases to that function: `tp` -> teleport, for example. The embedded server console, standalone
+CLI, authorized in-game chat, management application and Lua
 when it is available can call the same function, with the same execution. A command mapping to a Rust
 function does not require Lua. Adding an alias for an existing function changes data; adding a function
 requires its registration and any engine work it needs, without modifying the dispatcher or other
 functions. The function performs validation and returns its result through the shared contract.
 
-The API is intended for consumption by Kryta tools and third-party tools. Access from another computer
-is a desirable addition, not a requirement for the first delivery. Its public contract, authentication
-and transport must be designed. The existing client portal is a possible point to investigate, not an
-assumed management gateway: it currently serves client identity through authserver, while world
-operations belong to worldserver and process control to the supervisor (`0003-portal-host.md`).
+The API is intended for consumption by Kryta tools and third-party tools. Remote browser access to the
+web manager is required; direct remote API or CLI access is desirable but not required for the first
+delivery. Its public contract, authentication and transport must be designed. The manager and its
+access interface are part of the server stack. The existing client portal is a possible host or route
+to investigate, not a settled choice: it currently serves client identity through authserver, while
+world operations belong to worldserver and process control to the supervisor (`0003-portal-host.md`).
 
 GM commands are a way to call the API, not a separate implementation. Callers supply the information
 the function needs; a caller without a player session can specify a target where the operation supports
@@ -31,13 +33,21 @@ watcher. Configuration means program settings in JSON; world content and player 
 existing storage and repositories (`04-configuration.md`). The requested control panel also includes
 research, recording and content workflows in `12-research-and-control-panel.md`.
 
+The web manager is the primary operator interface; authorized in-game chat is second. The embedded
+console, standalone CLI and API are additional access paths. The manager sends world operations to
+the world server and service lifecycle operations to the supervisor. The connections and their
+authentication remain to be designed; the same owners serve other supported callers.
+
 ## 2. Current state
 
 - `game/src/Chat/Commands.rs` reads command rows and resolves `execution` to a closed `Operation` enum;
-  `game/src/Handlers/ChatHandler.rs` dispatches them using a session. This is not yet an extensible
-  registry or a shared API callable by all surfaces.
+  `game/src/Handlers/ChatHandler.rs` dispatches them using a session. `game/src/Chat/Operations.rs` now
+  registers read-only world status and map-list functions for the embedded console. The chat and
+  console map-list paths call the same map-list function; chat dispatch still uses the enum, so the
+  two are not yet one registry or an API callable by all surfaces.
 - `tools/supervisor/src/main.rs` starts and watches services, but says it has no control channel or
-  restart policy. `worldserver` has program arguments, not an interactive operator console.
+  restart policy. `worldserver` has an embedded interactive console with `help`, `server info` and
+  `maps`; it queues those commands for the world update. It has no standalone CLI or shared API.
 - `tools/manage` is an existing application over the repositories. Its settings page reads and displays
   configuration; it does not edit settings. Its content pages already offer some database edits.
 - Lua integration, API bindings and script-defined commands are planned, not implemented. Existing
@@ -67,9 +77,9 @@ The contract must specify, before implementation:
   dispatcher, another function or every caller. The underlying mechanic may still require engine work.
 - Invocation from another process: `tools/manage` and the running world do not share memory. Specify
   a control path to the world and a response path, distinct from the supervisor's own process control.
-  External tools must be supported. Transport and authentication remain to be designed; remote access
-  is desirable but optional. Assess the existing portal and the reference's remote access interface
-  against ownership and security before choosing a host; no extra central service is assumed.
+  External tools must be supported. Transport and authentication remain to be designed; direct remote
+  API access is desirable but optional for the first delivery. Section 8 evaluates the portal and the
+  reference's remote access interface and proposes the host and process boundaries.
 
 The existing `commands.json` reader limits rows to one argument string and uses enum matching; both are
 current limitations, not the desired final function registry. Whether every API function has a command
@@ -77,24 +87,30 @@ name, and how non-command callers discover functions, are design questions rathe
 
 ## 4. CLI, GM commands and access
 
-The local world console is a recommended starting point, informed by AzerothCore's `CliRunnable`,
-`CliHandler` and world command queue. The supervisor's process control is a separate responsibility.
-Whether a standalone CLI is needed remains open. The server today has startup arguments but no
-interactive console or API connection for a separate CLI. If several services read a terminal, the
-console design must decide who receives its input.
+The owner requires an embedded server console, a standalone CLI, and access to CLI command capabilities
+from authorized in-game chat. These are entry points to the same operations, not separate implementations;
+the design must account for target context and report when an operation cannot be completed. Preserve
+ASURA's existing client-facing command behavior under Rule 0. The local world console is informed by
+AzerothCore's `CliRunnable`, `CliHandler` and world command queue. The supervisor's process control is
+a separate responsibility. The embedded console starts only on an interactive terminal. There is no
+API connection for a separate CLI yet.
 
 A command's availability to a caller and the caller's authorization are distinct facts. The plan must
 not reject a row merely because it is console-enabled and also has a chat permission. Decide the
 initial access model before exposing privileged operations. The owner wants an initial `admin` account
 with password `admin`, kept in a server-restricted file, with administrators able to change passwords.
 Operators are server administrators and can perform every operation the server allows; a finer privilege
-system can be designed later. Only authorized operators may use in-game operator features. Credential
-storage, file protection, bootstrap, password change and recovery still need design. ASURA does not establish a new GM permission policy; `account_access` and RBAC
+system can be designed later. Administrators sign in to the manager and can create other administrator
+accounts, change passwords and remove access. An administrator links a game account to an administrator
+identity to use in-game operator features; only authorized operators may use them. The default password
+must be changed before remote access is enabled. Credential storage, file protection, bootstrap, account
+linking and recovery still need design. ASURA does not establish a new GM permission policy; `account_access` and RBAC
 are reference research, not an adopted schema. Do not invent new client-visible refusals under Rule 0.
 
-Access by third-party tools is required. Remote access is a desirable addition and requires a design
-for identity, authorization, credential protection, audit records and transport. The default credentials
-must be changed or otherwise secured before remote access is enabled. Local access also requires an
+Access by third-party tools is required. Remote browser access to the manager is required; direct remote
+access by third-party tools and the CLI is desirable. Remote access requires a design for identity,
+authorization, credential protection, audit records and transport. The default password must be changed
+before remote access is enabled. Local access also requires an
 explicit trust boundary.
 
 ## 5. Configuration manager and control panel
@@ -102,7 +118,10 @@ explicit trust boundary.
 The manager is a web application and the operator's comprehensive assistant for accessing and managing
 the server, with scope growing as the server gains features. It includes server operation, settings,
 game content, research and the workflows in `12-research-and-control-panel.md`. Its settings editor
-must use the same configuration validation and storage rules as the programs. The design must cover:
+must use the same configuration validation and storage rules as the programs. The owner approved a
+workflow that saves edits, identifies whether each change can be applied live or needs a restart, and
+lets the operator choose when to apply or restart. Player-affecting events are announced in chat;
+saving alone does not restart a service. The design must cover:
 
 - Choosing the program and actual configuration path; displaying descriptions, types, current saved
   values and validation failures. Preserve unknown data or refuse to save it rather than silently
@@ -119,8 +138,9 @@ must use the same configuration validation and storage rules as the programs. Th
 - Using the supervisor for process control and the world API for running-world operations. Define
   browser request protections.
 
-The existing web-based `tools/manage` is a candidate starting point. Local versus remote access and
-profile packaging remain open in `12-research-and-control-panel.md`.
+The existing web-based `tools/manage` is a candidate starting point. The manager must be accessible
+from the server computer and remotely through a browser. Hosting, network exposure and profile
+packaging remain to be designed; the manager is part of the server stack.
 
 ## 6. Research: applications and limitations
 
@@ -349,20 +369,129 @@ exit|restart|shutdown|idlerestart|idleshutdown`, `server set loglevel|motd|close
 `server info|debug|corpses`, `cs_server.cpp:55-94`), each row carrying an RBAC permission and
 `Console::Yes`.
 
-## 8. Delivery plan and proof
+## 8. Technical design and first implementation slice
+
+This section is the design of the first slice. **The first slice has landed**: the operation registry,
+the world queue, the embedded console adapter, the loopback control endpoint and the manager's `/status`
+page exist, and `docs/port/01-structure.md` and `docs/port/05-tooling.md` carry the status and the live
+proofs. What the rest of this section still describes ahead of the code is the typed contract (arguments
+and caller identity), the supervisor's control channel, and administrator authentication.
+
+### Reference and existing boundaries
+
+- At reference revision `30a36ec4d`, `src/server/apps/worldserver/CommandLine/CliRunnable.cpp:231`
+  queues console commands; `src/server/apps/worldserver/ACSoap/ACSoap.cpp:81-140` authenticates a
+  remote command, queues it and waits for its result. `src/server/game/World/World.cpp:1350,1721-1736`
+  processes the queue in the world update and invokes completion. `Main.cpp:338-342,400-408` starts
+  the reference's SOAP and console threads. These establish ownership and execution order, not a
+  requirement to copy SOAP's protocol or credentials into the manager.
+- `tools/manage/src/main.rs:639-653,812-822` starts Kryta's existing HTTP manager with its own
+  settings. `tools/supervisor/stack.json.dist` currently lists auth and world only, and
+  `tools/supervisor/src/main.rs:185-200,212` owns child processes and stack shutdown. The manager's
+  current local token mechanism is not the planned administrator login or a remote security model.
+- `docs/decisions/0008-administration-tool.md` records the current separate, loopback-only tool.
+  The planned remote manager and live-operation connections extend that decision. When implemented,
+  correct the decision and configuration documentation in the same change; do not claim the current
+  tool already supports them. Keep the existing client portal for client identity, rather than adding
+  administration routes to it; this preserves its boundary and avoids another dependency in login.
+  `tools/manage` is the web-facing component of the stack and the supervisor starts it as a configured
+  service. World and supervisor control endpoints remain owned by their respective processes.
+
+### Operation contract
+
+The game library owns a registry of named operations and their metadata; worldserver constructs it
+and the world owns execution. Each registration supplies one implementation, stable name, help,
+input specification and required context. Command names and aliases in `data/commands.json` resolve
+to those registrations; reject duplicate names and unknown mappings during validation. Add an operation
+by registering its implementation, without adding a dispatcher match arm or changing other callers.
+The command adapter owns command-line parsing; API calls carry structured input. Neither changes the
+existing client command parser or frames until that subject is ported against ASURA.
+
+An invocation contains an operation name, structured arguments, authenticated caller identity and
+caller type, plus any context required by the operation. Identity is supplied by a trusted adapter,
+never accepted as an unverified claim from a browser. An operation validates its own inputs and
+context and returns structured success data or an error code and safe message. The adapter renders
+the result for its surface. Missing context, unknown operation and invalid input are distinct errors.
+Operation-specific targets and game behavior belong to the relevant game subject, not this contract.
+
+For a world operation, a bounded queue carries the invocation and a response channel to the world
+update. The world executes it and completes the response. Queue full, world unavailable and shutdown
+are explicit errors; a timeout is an unknown completion state, not proof that a mutation failed.
+The initial status operation is read-only, so a retry has no game side effect. Queue sizes, timeouts,
+listener addresses and ports are settings in the owning program's JSON, with defaults documented
+in `04-configuration.md` as part of implementation. A request ID correlates logs and responses;
+credentials and sensitive arguments are excluded from logs.
+
+### Connections and authentication
+
+Keep `tools/manage` as the browser-facing web application and make it a supervised stack service.
+Expose a separate, local-only HTTP/JSON control interface in worldserver, analogous in ownership to
+the reference's worldserver SOAP endpoint. The manager calls it for world operations; the standalone
+CLI uses the same control contract. A separate local supervisor control interface handles only service
+status and lifecycle. Its control path is not implemented by the world or by spawning a second watcher.
+The exact endpoint names, schemas, connection limits and settings are specified with the first slice
+below and refined in the implementation's own documentation; no default port is established here.
+
+The manager authenticates administrators and presents authenticated requests to the control interfaces.
+Local process-to-process authentication must be independently enforced; loopback alone is not identity.
+Use a randomly generated service credential in a server-restricted file and compare it on each request;
+do not pass it in URLs or logs. Protect the credential file with operating-system access controls and
+fail closed if protection or credential loading fails. Operator identities forwarded to the world and
+supervisor must be accepted only over that trusted channel. API clients authenticate independently;
+the manager must not let a browser submit an arbitrary operator identity.
+
+For browser access, use HTTPS for non-loopback access, a protected session cookie, CSRF protection,
+login throttling and audit records. Store salted password hashes rather than plaintext passwords in the
+restricted administrator file. Bootstrap the requested `admin` / `admin` only on first initialization;
+never reset an existing account. Force a password change before non-loopback access and retain a local
+recovery procedure. Server-side sessions are invalidated on password change or account removal. Full
+operator access is the initial policy; game-account linking is required before admin chat commands.
+Exact cryptographic libraries, deployment certificates and recovery steps must be validated in their
+implementation stage. Direct remote API and CLI access remains a later extension.
+
+### First slice: local manager reads world status
+
+1. Add the operation registry and invocation/result types under `game/src/`, following the reference's
+   `game/Chat/ChatCommands/` and world ownership; expose an operation `world.status` with no inputs.
+   Its result contains the world identity and the existing status information already available to
+   `World`; do not fabricate unavailable fields. Register it during world initialization.
+2. Add a world-owned request queue and process it from the existing world update. The embedded console
+   adapter can submit the same operation when it has an interactive input stream; a supervisor-started
+   process must not compete for terminal input. No gameplay handler or chat packet changes in this slice.
+3. Add the worldserver local control listener. `POST /v1/operations` takes JSON with `request_id`,
+   `operation` and `arguments`; for `world.status`, arguments are `{}`. It returns the same request ID
+   and either `{ "ok": true, "result": ... }` or `{ "ok": false, "error": { "code": ..., "message": ... } }`.
+   Require the local service credential, validate input and enqueue the invocation; never execute a
+   world operation on the HTTP worker. Define the complete schema and HTTP status mapping alongside
+   the implementation, including rejected, timed-out and shutdown requests.
+4. Add a manager status page backed by that endpoint; show unavailable/error separately from a valid
+   empty result. Add the manager to the supervisor's configured services and readiness reporting.
+   Keep the page on loopback until administrator authentication and remote protections are complete.
+5. Prove the same `world.status` implementation through the queue and manager, including an unknown
+   operation, rejected credential, unavailable world and shutdown. Confirm stack start/stop leaves no
+   extra processes. Tests do not establish player-visible behavior, and this slice changes none.
+
+The standalone CLI, supervisor operations, administrator login and remote browser access follow as
+separate slices. Chat and Lua adapters use the same operation contract when their own prerequisites
+are satisfied. Before modifying a client-facing handler or exposing new in-game behavior, read the
+matching ASURA implementation, `docs/game-rules.md` for the subject and `09-parity-audit.md`; port the
+whole applicable behavior or stop where Rule 0 requires an owner decision. The current command and
+chat implementation must be compared with ASURA before changing client-facing behavior; this plan does
+not establish its correctness or live-client status.
+
+## 9. Delivery plan and proof
 
 Each subject below needs its own implementation scope and appropriate commits. Ordering is dependency
 based, not permission to implement. Research features remain part of the requested panel, without
 blocking the API and settings manager on playback or a map renderer.
 
-1. **Contract and inventory.** Specify function registration, inputs, output, context, ownership,
-   authorization and cross-process invocation. Inventory existing and future functions by capability;
-   distinguish absent mechanics. Proof: a reviewable contract and at least one complete call traced
-   through each intended caller, including failure and a missing target.
-2. **Shared execution.** Implement the chosen registry and first existing operation, preserving its
-   client behaviour. Proof: the same registered implementation runs for each supported caller; a new
-   alias requires only a mapping, and a new function does not require a dispatcher edit. Compare client
-   frames and behaviour with ASURA and the real client where applicable.
+1. **Local status slice.** Implement the registry, world queue, local control interface and manager
+   status page described above. Proof: the manager reaches the running world and receives a real result,
+   and failure paths are reported. No client-facing change is authorized by this slice.
+2. **Shared execution.** Add the remaining caller adapters and existing operations by subject. Proof:
+   each supported caller invokes the same registered implementation; an alias needs only a mapping,
+   and a new function does not need a dispatcher edit. Compare client frames and behavior with ASURA
+   and the real client where applicable.
 3. **Service control and CLI.** Design and implement supervisor control and console access with clear
    process ownership, target selection and completion reporting. Proof: status, a supervised restart,
    clean shutdown and failures observed from the requested callers without duplicate processes.
@@ -377,16 +506,18 @@ blocking the API and settings manager on playback or a map renderer.
    against `12-research-and-control-panel.md`. A reader, a recording comparison and a replay that
    sends inputs are different features; define the selected one and its evidence before implementation.
 
-## 9. Open decisions
+## 10. Remaining design work
 
-- Exact API signature, registry, transport and how separate processes authenticate to each owner.
+- Complete the endpoint schemas, JSON settings and implementation-level types for the first slice;
+  apply the contract above and document any necessary deviation from the reference.
 - Administrator credential storage, bootstrap, password change and recovery, audit detail and remote
   access design; initial `admin` / `admin` and full operator access are the owner's direction. Finer
   privileges are future work.
-- Console delivery and whether a separate CLI binary is needed; target selection for operations on
-  players, maps, districts and instances.
-- Manager implementation and initial delivery order, settings and content editing workflow. Its web
-  delivery and comprehensive server-management scope are settled.
+- Console and standalone CLI delivery, chat invocation, and target selection for operations on players,
+  maps, districts and instances; all three entry points are required.
+- Manager hosting within the server stack, remote access design and initial delivery order, settings
+  and content editing workflow. Web delivery and remote browser access are required; use of the existing
+  portal remains an open architectural question.
 - Lua runtime and bindings, script-defined commands and the form of interactive execution; Lua support
   is required and `11` owns its plan.
 - Profile storage and selection, map visualization, recording comparison and replay scope; `11` and

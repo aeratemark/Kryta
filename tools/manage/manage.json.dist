@@ -86,6 +86,19 @@
     "doc": "The profession sets a creation screen may choose from. The content page lists them, which set carries what."
   },
 
+  "ControlPort": {
+    "value": 0,
+    "doc": "The running world's local control port (`Control.Port` in its own settings), for the status page. Zero leaves the status page saying no endpoint is configured, which is not an empty result."
+  },
+  "ControlCredentialFile": {
+    "value": "",
+    "doc": "The service credential file the world program requires (`Control.CredentialFile` in its settings). Create it with `cargo run -p worldserver --bin kryta-cli -- init-credential <file>`; the tool only reads it."
+  },
+  "ControlTimeoutSeconds": {
+    "value": 5,
+    "doc": "How long the status page waits for the world before reporting it unavailable. The world executes the operation on its own update thread, so a timeout is not proof the request was refused."
+  },
+
   "LogsDir": {
     "value": "",
     "doc": "Where the appender writes. Empty means the working directory."

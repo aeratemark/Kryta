@@ -151,7 +151,9 @@ impl WorldSession {
                         // because the answer now has a channel (`GmChat.c:116-143`,
                         // `Channel_Global`). The table itself stays in the log, which is where a person
                         // reads it.
-                        let answer = crate::chat::maps_answer(&self.maps);
+                        // ASURA: crates/asura-world/src/chat.rs:288-324, the same
+                        // operation also used by the operator console.
+                        let answer = crate::chat::operations::map_targets(&self.maps);
                         for line in &answer.chat {
                             self.answer_line(io, peer, crypt, line).await;
                         }

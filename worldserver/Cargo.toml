@@ -1,5 +1,6 @@
 [package]
 name = "worldserver"
+default-run = "worldserver"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,6 +13,10 @@ workspace = true
 name = "worldserver"
 path = "src/main.rs"
 
+[[bin]]
+name = "kryta-cli"
+path = "src/CommandLine/client.rs"
+
 # Reference: `target_link_libraries(worldserver PUBLIC modules scripts game ...)`. `modules`
 # appears when the first mod-* crate exists. `database` is reached through `game` in the reference's
 # graph; here it is named because this program opens its own two pools (stage 5, `StartDB`).
@@ -23,6 +28,8 @@ common = { path = "../common" }
 database = { path = "../database" }
 # The reference's signal handler, which is what its io loop returns on.
 ctrlc = "3"
+serde_json = "1"
+getrandom = "0.2"
 
 # The tests make and drop a database of their own, so they speak to the server directly.
 [dev-dependencies]

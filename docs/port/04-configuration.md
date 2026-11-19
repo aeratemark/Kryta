@@ -1,5 +1,17 @@
 # Configuration: settings in JSON
 
+`worldserver` reads `Console.Enable` (default `true`): when enabled and standard input is an
+interactive terminal, it starts the embedded console. Supervised non-interactive input is not consumed.
+`Console.QueueCapacity` (default `64`) limits pending console requests and must be greater than zero.
+
+`worldserver` reads `Control.Enable` (default `false`), `Control.Port` (default `7878`, always bound to
+`127.0.0.1`), `Control.CredentialFile` (default empty) and `Control.TimeoutSeconds` (default `5`, must be
+positive): the local control endpoint a separate manager or CLI asks for world operations. It refuses to
+start when enabled without a credential file or with a non-positive timeout. `tools/manage` reaches it
+through its own `ControlPort`, `ControlCredentialFile` and `ControlTimeoutSeconds`; the credential file is
+created on this machine with `cargo run -p worldserver --bin kryta-cli -- init-credential <file>`, which
+also restricts it to the service user. Neither program logs the credential.
+
 Settings go in a JSON file: one per program, read by one handler. This file says how one is written and
 which files there are. `docs/decisions/0005-json-configuration.md` records why the format is JSON rather
 than the reference's `Key = value`.

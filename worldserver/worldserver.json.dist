@@ -11,6 +11,24 @@
     "doc": "Where gameplay connections are accepted. The login names this address and port in its 0x0009, and the front door copies a client's gameplay connection here."
   },
 
+  "Console": {
+    "Enable": {
+      "value": true,
+      "doc": "Enable the embedded world console when standard input is an interactive terminal."
+    },
+    "QueueCapacity": {
+      "value": 64,
+      "doc": "Maximum number of console requests waiting for the world update; must be positive."
+    }
+  },
+
+  "Control": {
+    "Enable": { "value": false, "doc": "Enable authenticated local world control for the standalone CLI." },
+    "Port": { "value": 7878, "doc": "Local control port; always binds to 127.0.0.1." },
+    "CredentialFile": { "value": "", "doc": "Path to a restricted file containing at least 32 ASCII letters or digits." },
+    "TimeoutSeconds": { "value": 5, "doc": "Maximum wait for a local control request or world response; must be positive." }
+  },
+
   "StatusInterval": {
     "value": 30,
     "doc": "How often the program says what it is doing: up time, accepted connections, the maps it hosts and the instances it holds open. The auth program's timer reads the same key."

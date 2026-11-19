@@ -78,6 +78,7 @@ rather than starting nothing.
 | `/content` | the maps and their spawn points (editable), each map's own party cap (editable, R15), the item templates, the profession sets a creation screen may choose from, and the copies the world has open | done - the load's own rows, edited where they matter; the running-instances table is the world's `instance` rows, the same ones its tick disposes; `0` clears a map's cap so the world's `PartySizeCap` applies; the sets are read from `data/equipment.json` through the noun's own loader (`InventoryFile`/`EquipmentFile` in `manage.json`) |
 | `/schema` | each database's own record of what its updater has applied, against the files on disk | done - read only; `changed` is the one to act on before a server refuses to start |
 | `/settings` | each program's own JSON, key by key, as the file states it | done - read only, passwords masked by the reader; `WorldConfigFile` and `AuthConfigFile` in `manage.json` say where the files are |
+| `/status` | the running world's own answer to `world.status`, asked of its local control endpoint | done - one operation carried by the world's own queue (`docs/port/14-operator-surfaces.md`); a world that is unavailable or refuses is drawn differently from an empty answer, and `ControlPort`/`ControlCredentialFile` in `manage.json` configure it |
 
 Proved end to end on this machine: the page lists both accounts, `POST /accounts/eula` set a version and
 the row read back as `version 26`, `POST /accounts/create` wrote a row and `POST /accounts/delete` removed
@@ -89,6 +90,16 @@ passwords masked. The writes were exercised too: `POST /content/spawn` wrote a s
 `POST /content/spawn/remove` removed it, and `POST /content/party-cap` set a map's cap to 12 and cleared
 it with 0. The last full check fetched every page - `/`, `/accounts`, `/characters`, `/worlds`,
 `/content`, `/settings`, `/schema` - and each answered 200.
+
+`/status` was proved against a live world on this machine, three ways. With the world running and
+`Control.Enable` on, `kryta-cli 7878 worldserver/control.credential world.status` answered
+`World 2: 265 map(s) loaded.` and the same operation through `kryta-cli` with a wrong 32-character
+credential answered `authentication failed` with exit 1; `GET /status` on the manager rendered
+`World 2: 265 map(s) loaded.` from the world's own queue; and with the world stopped the same page
+answered "The running world did not answer. This is not an empty result" naming the refused connection.
+`kryta-supervisor --check` then started `auth`, `world` and `manage` together and reported
+`the stack is up: auth on 6112, world on 6113, manage on 6602`, so the manager is a stack service and
+not a program started by hand.
 
 The EULA itself is a column now (`data/sql/base/db_auth/account_eula.sql`): the version an account
 accepted, or 0 for none. The auth program's answer reports it, so a client that has accepted stops asking.

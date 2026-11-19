@@ -179,6 +179,17 @@ every message in both directions is the arrangement this project exists to avoid
 
 ## What is next, and what stops it
 
+The first operator slice has landed: an embedded world console that accepts `help`, `server info` and
+`maps` on an interactive terminal and queues them to the world update; a game-owned operation registry
+serving `world.status` and the map list; a loopback, credential-authenticated control endpoint in
+worldserver (`POST /v1/operations`); a standalone `kryta-cli`; and a `/status` page in `tools/manage`
+that reads the running world through that endpoint, with `tools/manage` now a supervised stack service.
+`cargo test -p worldserver` covers the queue, the console and every control answer and refusal, and
+`docs/port/05-tooling.md` records the live proofs. What remains in
+`docs/port/14-operator-surfaces.md` is the shared registry for chat dispatch (which still matches the
+`Operation` enum), operations that take arguments and caller identity, the supervisor's control channel,
+and administrator authentication before the manager leaves loopback.
+
 The current implementation and its evidence are in the status table above. The outstanding
 client-facing work and its port order are in `docs/port/09-parity-audit.md`; the world subjects
 and their dependencies are in `docs/port/06-world-plan.md`. The `Gw.dat` reader and pathfinder

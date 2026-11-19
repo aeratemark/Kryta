@@ -26,10 +26,40 @@ fn page(title: &str, body: &str) -> Response {
          </style></head><body>\n\
          <nav><a href=\"/\">overview</a><a href=\"/accounts\">accounts</a>\
          <a href=\"/characters\">characters</a><a href=\"/worlds\">worlds</a>\
-         <a href=\"/content\">content</a><a href=\"/settings\">settings</a><a href=\"/schema\">schema</a></nav>\n\
+         <a href=\"/content\">content</a><a href=\"/settings\">settings</a><a href=\"/schema\">schema</a>\
+         <a href=\"/status\">status</a></nav>\n\
          <h1>{title}</h1>\n{body}\n</body></html>\n"
     );
     Response::html(200, html)
+}
+
+/// The running world's own answer, asked of its control endpoint.
+///
+/// Three states are drawn differently, because an operator needs to tell them apart: the endpoint is
+/// not configured, it could not be reached or refused, or it answered. An empty answer is a valid
+/// result and says so, rather than looking like a failure.
+pub fn world_status(manage: &Manage) -> Response {
+    match manage.world_status() {
+        Ok(answer) if answer.trim().is_empty() => page(
+            "world status",
+            "<p class=\"note\">The world answered the status operation, and its result is empty.</p>",
+        ),
+        Ok(answer) => page(
+            "world status",
+            &format!(
+                "<p>The running world answered:</p><pre>{}</pre>",
+                escape(&answer)
+            ),
+        ),
+        Err(error) => page(
+            "world status",
+            &format!(
+                "<p class=\"note\">The running world did not answer. This is not an empty result: \
+                 the world is unavailable or refused the request.</p><p><code>{}</code></p>",
+                escape(&error)
+            ),
+        ),
+    }
 }
 
 /// The overview: what this tool holds, and what it knows about.

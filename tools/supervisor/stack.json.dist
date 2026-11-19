@@ -17,6 +17,12 @@
       "program": "worldserver",
       "args": ["-c", "worldserver/worldserver.json"],
       "port": 6113
+    },
+    {
+      "name": "manage",
+      "program": "kryta-manage",
+      "args": ["-c", "tools/manage/manage.json"],
+      "port": 6602
     }
   ]
 }

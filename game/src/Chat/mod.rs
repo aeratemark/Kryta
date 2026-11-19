@@ -16,6 +16,9 @@
 #[path = "Commands.rs"]
 pub mod commands;
 
+#[path = "Operations.rs"]
+pub mod operations;
+
 use crate::maps::travel_targets::{TRAVEL_TARGETS, TravelTarget};
 use crate::world::MapEntry;
 

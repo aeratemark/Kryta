@@ -41,9 +41,11 @@ client research runner operates on the client machine and should not be a depend
 server operation. ASURA's historical plan documents capture tool and hook limitations; check the
 current tools before carrying any specific command or capability forward.
 
-The owner selected a web application for the comprehensive server manager. Local versus remote
-operation, initial capture concurrency, first reader coverage, storage format and profile packaging
-remain open design choices. The requested
+The owner selected a web application for the comprehensive server manager, accessible locally and
+remotely and delivered as part of the server stack. Its hosting and the possible use of the existing
+portal remain to be designed; `docs/port/14-operator-surfaces.md` records the access decisions.
+Initial capture concurrency, first reader coverage, storage format and profile packaging remain open.
+The requested
 research and content workflows are part of the intended panel, while their implementation order and
 initial scope require a concrete plan. Profile isolation and script ownership are described in
 `docs/port/11-content-and-behaviour.md`.

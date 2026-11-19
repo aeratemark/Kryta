@@ -13,7 +13,10 @@
 
 mod pages;
 
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use common::configuration::{Config, Policy};
 use common::logging::{Log, LogLevel};
@@ -62,8 +65,21 @@ pub struct Manage {
     /// The creation record lists' paths: the content page shows the profession sets they hold.
     inventory_file: Option<String>,
     equipment_file: Option<String>,
+    /// The running world's local control endpoint, when `manage.json` names one: the status page asks
+    /// it for `world.status`. This is the manager's connection to the world, never a second world.
+    control: Option<Control>,
     token: Option<String>,
     log: Log,
+}
+
+/// Where the running world answers operator operations: `worldserver`'s loopback control endpoint.
+pub struct Control {
+    /// The loopback port the world program listens on (`Control.Port` in its own settings).
+    port: u16,
+    /// The service credential the world program requires, read from its restricted file.
+    credential: String,
+    /// How long the status page waits for the world before reporting it unavailable.
+    timeout: Duration,
 }
 
 impl Manage {
@@ -75,6 +91,7 @@ impl Manage {
 
         match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/") => pages::dashboard(self),
+            ("GET", "/status") => pages::world_status(self),
             ("GET", "/accounts") => pages::accounts(self),
             ("GET", "/characters") => pages::characters(self),
             ("GET", "/worlds") => pages::worlds(self),
@@ -117,6 +134,64 @@ impl Manage {
                     .any(|cookie| cookie.trim() == format!("auth={expected}"))
             })
             .unwrap_or(false)
+    }
+
+    /// The running world's own status, asked of its control endpoint.
+    ///
+    /// One operation, carried by the world's request queue and executed on the world's update thread,
+    /// so a page can read the world without becoming a second owner of its state
+    /// (`docs/port/14-operator-surfaces.md`, "First slice: local manager reads world status").
+    pub fn world_status(&self) -> Result<String, String> {
+        let Some(control) = self.control.as_ref() else {
+            return Err(
+                "no world control endpoint is configured: set ControlPort and ControlCredentialFile \
+                 in manage.json, and Control.Enable with a credential file in worldserver.json"
+                    .into(),
+            );
+        };
+        let body = serde_json::json!({
+            "request_id": "manage-status",
+            "operation": "world.status",
+            "arguments": {}
+        })
+        .to_string();
+        let request = format!(
+            "POST /v1/operations HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {}\r\n\
+             Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            control.credential,
+            body.len()
+        );
+        let address = SocketAddr::from(([127, 0, 0, 1], control.port));
+        let mut stream = TcpStream::connect_timeout(&address, control.timeout)
+            .map_err(|error| format!("the world control endpoint at {address} is unavailable: {error}"))?;
+        stream
+            .set_read_timeout(Some(control.timeout))
+            .map_err(|error| error.to_string())?;
+        stream
+            .write_all(request.as_bytes())
+            .map_err(|error| format!("the request to the world failed: {error}"))?;
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .map_err(|error| format!("the world's answer could not be read: {error}"))?;
+        let (_, body) = response
+            .split_once("\r\n\r\n")
+            .ok_or("the world answered with something that is not an HTTP response")?;
+        let value: serde_json::Value = serde_json::from_str(body)
+            .map_err(|_| "the world answered with something that is not JSON")?;
+        if value.get("ok").and_then(|ok| ok.as_bool()) == Some(true) {
+            return Ok(value
+                .get("result")
+                .and_then(|result| result.as_str())
+                .unwrap_or_default()
+                .to_string());
+        }
+        Err(value
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .and_then(|message| message.as_str())
+            .unwrap_or("the world refused the operation")
+            .to_string())
     }
 
     fn set_eula(&self, request: &Request) -> Response {
@@ -797,6 +872,34 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         Some(equipment_file)
     };
 
+    let (control_port, _) = config
+        .value::<u16>("ControlPort", 0)
+        .map_err(|error| error.to_string())?;
+    let (control_credential_file, _) = config
+        .value_string("ControlCredentialFile", "")
+        .map_err(|error| error.to_string())?;
+    let (control_timeout, _) = config
+        .value::<u64>("ControlTimeoutSeconds", 5)
+        .map_err(|error| error.to_string())?;
+    let control = if control_port == 0 || control_credential_file.is_empty() {
+        None
+    } else {
+        let credential = std::fs::read_to_string(&control_credential_file)
+            .map_err(|error| format!("cannot read ControlCredentialFile {control_credential_file}: {error}"))?
+            .trim()
+            .to_owned();
+        if credential.len() < 32 {
+            return Err(format!(
+                "ControlCredentialFile {control_credential_file} must hold at least 32 characters"
+            ));
+        }
+        Some(Control {
+            port: control_port,
+            credential,
+            timeout: Duration::from_secs(control_timeout.max(1)),
+        })
+    };
+
     let manage = Arc::new(Manage {
         accounts,
         characters,
@@ -809,6 +912,7 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         auth_config,
         inventory_file,
         equipment_file,
+        control,
         token: Some(token),
         log: log.clone(),
     });
@@ -825,7 +929,9 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         log.out(
             LogLevel::Info,
             "manage",
-            format!("READY: http://{bind}:{port}/ - the administration tool"),
+            // The supervisor treats `READY: listening on` as a service being up (`stack.json`), which
+            // is how this tool becomes a stack service rather than a program started by hand.
+            format!("READY: listening on http://{bind}:{port}/ - the administration tool"),
         );
 
         loop {

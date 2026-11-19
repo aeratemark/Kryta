@@ -20,3 +20,8 @@
 # The reference's client archive is never committed
 *.dat
 tools/manage/manage.json
+
+# The world program's loopback control credential: a secret every local caller must present.
+# `cargo run -p worldserver --bin kryta-cli -- init-credential <file>` creates it, restricted to the
+# service user; it is never committed and never leaves the machine.
+/worldserver/control.credential

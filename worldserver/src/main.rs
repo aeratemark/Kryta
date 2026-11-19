@@ -592,9 +592,37 @@ fn run(args: &[String]) -> Result<(), String> {
     // The world is up, so its scripts are told (`sScriptMgr->OnStartup()`, `Main.cpp:398`).
     world.on_startup();
 
-    // Stages after this one, in the reference's order, and none exists yet:
-    //   CliRunnable                   the console, when `Console.Enable`
-    //   ACSoapThread                  the SOAP endpoint, when `SOAP.Enabled`, port 7878
+    // Reference: Main.cpp:400-408 and CliRunnable.cpp:231: submit to the world update.
+    let (console_enabled, notes) = config.value_bool("Console.Enable", true)
+        .map_err(|error| error.to_string())?;
+    for note in notes { report(&note); }
+    let (queue_capacity, notes) = config.value::<usize>("Console.QueueCapacity", 64)
+        .map_err(|error| error.to_string())?;
+    for note in notes { report(&note); }
+    if queue_capacity == 0 { return Err("Console.QueueCapacity must be greater than zero".into()); }
+    let (command_sender, command_receiver) = std::sync::mpsc::sync_channel(queue_capacity);
+    let console = console_enabled && command_line::start(command_sender.clone());
+    let mut operations = game::chat::operations::Registry::new();
+    operations.register("world.status", game::chat::operations::world_status)?;
+    operations.register("ListTargets", game::chat::operations::list_targets)?;
+    let (control_enabled, _) = config.value_bool("Control.Enable", false).map_err(|error| error.to_string())?;
+    let control = if control_enabled {
+        let (port, _) = config.value::<u16>("Control.Port", 7878).map_err(|error| error.to_string())?;
+        let (path, _) = config.value_string("Control.CredentialFile", "").map_err(|error| error.to_string())?;
+        let (timeout, _) = config.value::<u64>("Control.TimeoutSeconds", 5).map_err(|error| error.to_string())?;
+        if path.is_empty() || timeout == 0 { return Err("Control requires a credential file and positive timeout".into()); }
+        let server = remote_access::Server::start(port, std::path::Path::new(&path), std::time::Duration::from_secs(timeout), command_sender.clone())?;
+        log.out(LogLevel::Info, "server.worldserver", format!("Local world control listening on 127.0.0.1:{port}."));
+        Some(server)
+    } else { None };
+    drop(command_sender);
+    log.out(LogLevel::Info, "server.worldserver", if console {
+        "World console enabled."
+    } else {
+        "World console unavailable or disabled."
+    });
+
+    // ACSoapThread, the reference's remote endpoint, is not yet ported.
     // On shutdown, in the reference's order: `sWorldSessionMgr->KickAll` and the `UpdateSessions(1)`
     // pass that unloads what it kicked, then `sWorldSocketMgr::StopNetwork` (`Main.cpp:370-374`) -
     // `sockets.stop` does all three here - then `sScriptMgr->OnShutdown` once the network is gone
@@ -630,6 +658,7 @@ fn run(args: &[String]) -> Result<(), String> {
                         continue;
                     }
                     previous = now;
+                    command_line::process(&command_receiver, &operations, &update_world);
                     for (map_id, district) in update_world.update(diff) {
                         let hold = update_world.settings().explorable_disconnect_hold;
                         log.out(
@@ -676,6 +705,7 @@ fn run(args: &[String]) -> Result<(), String> {
     };
 
     wait_for_shutdown();
+    if let Some(control) = control { control.stop(); }
     stop_update.store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = world_loop.join();
     log.out(
