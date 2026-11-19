@@ -61,9 +61,13 @@ neighbours; the measurement wins, and this record says so.
   typed `/maps`, and read the answer in chat: the composed sentences rendered. That is the first
   authored text observed on `0x005E`, and it is what licenses `answer_line` rather than a string id.
   The log line is kept beside the send.
-- **The player's own line (`0x005D`* + `0x0061`) is not yet confirmed in this tree.** The pair renders
-  in the reference's own measurement (channel 3, `Test Warrior: hello`), but this tree's client was only
-  driven on the command path. A message typed on the client's All channel closes it.
+- **The player's own line (`0x005D`* + `0x0061`): settled on a live client.** The owner connected the
+  real client to this tree's world and typed a line in chat; it rendered, and `/maps` rendered its
+  answer. The frames the world sent for that line were captured (`CaptureFile`) and read back with
+  `tools/capture/read.py`: the body is twenty bytes, `5d 00 | 08 00 | 08 01 | 07 01 | hello as UTF-16 |
+  01 00`, and the tag is five, `61 00 | 01 00 | 03` - `[u16 player, u8 channel]`, on `Channel_All`. The
+  count is eight because it counts the two wrapper units, the five of "hello" and the terminator, which
+  is what this record's measured bytes already said.
 - **Channels 11 and 12 use the same body framing as channel 3.** That framing is measured on channel 3
   only; no group or trade body was ever captured, and Rurik's own server drops those sigils rather than
   guess. This tree keeps accepting them, with the framing stated as an assumption rather than a
@@ -95,5 +99,7 @@ neighbours; the measurement wins, and this record says so.
    fragment first, then one `0x0061`, with the channel byte and the sender id.
 3. A live client: `/maps` and an unknown command display their text; a `!` line displays as
    `name: text`. This is the only step that establishes client acceptance, and no test above substitutes
-   for it. **Half done, by the owner's run:** the answers display - `/maps` was typed on a live client
-   and its text was read in chat. The player's own line is still to be driven.
+   for it. **Done, by the owner's runs:** `/maps` was typed on a live client and its text was read in
+   chat, and then a line typed in chat rendered the player's own message and `/maps` rendered a list of
+   maps. The frames of the latter were captured and read back (see above), so the acceptance is recorded
+   with its bytes.

@@ -944,27 +944,26 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         let mut ask = speak("!hello");
         sending.apply(&mut ask);
         stream.write_all(&ask).expect("a spoken line");
-        // `0x005D` is the text ("hello": 2 + 2 + 10) and `0x0061` is ten bytes.
-        let mut said = read_exact(&mut stream, 14 + 10);
+        // The measured pair (`docs/decisions/0012-chat-text-is-sent.md`, and captured from this tree and
+        // read with `tools/capture/read.py`): the body is `5d 00` + the unit count + `0108 0107` + the
+        // text + `0001`, twenty bytes, and the tag is five - `61 00` + the player's u16 + the channel.
+        // The count is eight because it counts the two wrapper units, the five of "hello" and the
+        // terminator, which is what the owner's client rendered.
+        let mut said = read_exact(&mut stream, 20 + 5);
         reading.apply(&mut said);
         assert_eq!(&said[..2], &[0x5D, 0x00], "the text of the line");
         assert_eq!(
             u16::from_le_bytes([said[2], said[3]]),
-            5,
-            "five units, the marker stripped"
+            8,
+            "eight units: two wrapper units, the five of \"hello\", and the terminator (0012)"
         );
-        assert_eq!(
-            u16::from_le_bytes([said[4], said[5]]),
-            u16::from(b'h'),
-            "the line itself"
-        );
-        assert_eq!(&said[14..16], &[0x61, 0x00], "who spoke it");
-        assert_eq!(&said[16..20], &1u32.to_le_bytes(), "the speaker");
-        assert_eq!(
-            &said[20..24],
-            &3u32.to_le_bytes(),
-            "Channel_All, the channel `!` speaks on"
-        );
+        assert_eq!(&said[4..6], &0x0108u16.to_le_bytes(), "the All-chat body wrapper");
+        assert_eq!(&said[6..8], &0x0107u16.to_le_bytes(), "the literal mark");
+        assert_eq!(&said[8..18], b"h\0e\0l\0l\0o\0", "the line itself, as UTF-16");
+        assert_eq!(&said[18..20], &0x0001u16.to_le_bytes(), "the terminator");
+        assert_eq!(&said[20..22], &[0x61, 0x00], "who spoke it");
+        assert_eq!(u16::from_le_bytes([said[22], said[23]]), 1, "the speaker");
+        assert_eq!(said[24], 3, "Channel_All, the channel `!` speaks on");
 
         // The commands the reference answers in its log and nowhere else, and a channel it drops:
         // `/maps` prints the alias table, `/tp ascalon` is the command's own "You are already here."

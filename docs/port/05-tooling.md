@@ -100,6 +100,13 @@ onto the registry, and `python tools/capture/read.py <capture> --header 0x005D` 
 answers the identical two records both times (`5d00 0800 0108 0107 hello 0001`, then `6100 0100 03`).
 The console still answers `server info`, and the API refuses `chat.stuck` with "needs a player session",
 which is the outcome mapping working over the wire.
+
+**Accepted on a live client after that move**: the owner connected `Gw.custom.exe` to this tree's world,
+typed a line in chat and saw it rendered, and typed `/maps` and saw a list of maps. The line's frames are
+`5d 00 08 00 08 01 07 01 h e l l o 01 00` and `61 00 01 00 03` in the capture, which is what
+`docs/decisions/0012-chat-text-is-sent.md` records as measured - the body's count is eight because it
+counts the two wrapper units, the text and the terminator.
+
 The recovered control-panel and research requirements are in `docs/port/12-research-and-control-panel.md`.
 The research and plan for the operator's surfaces - the command line, a console over the same command
 table in-game chat uses, and a control console over recordings, analysis and maps - are in
