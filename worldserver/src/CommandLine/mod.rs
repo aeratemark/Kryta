@@ -124,6 +124,31 @@ pub fn execute(table: &Table, registry: &Registry, world: &game::world::World, l
     }
 }
 
+/// The operations this world registers, one a line: what `kryta-cli list` asks for.
+///
+/// The registry is the world's, so the answer cannot disagree with what the world would accept - the
+/// list is not a second table kept beside it.
+pub fn list_operations(
+    _invocation: &Invocation,
+    world: &game::world::World,
+    _agent: Option<&game::agents::Agent>,
+) -> Result<game::chat::operations::Outcome, Refusal> {
+    let mut rows: Vec<String> = world
+        .operations()
+        .rows()
+        .map(|row| {
+            let values = if row.arguments.is_empty() {
+                "no values".to_string()
+            } else {
+                row.arguments.join(", ")
+            };
+            format!("{:<18} {:<44} {values}", row.name, row.help)
+        })
+        .collect();
+    rows.sort();
+    Ok(game::chat::operations::Outcome::text(rows.join("\n")))
+}
+
 /// Ask the world to stop normally: the reference's `server exit` (`cs_server.cpp:89`,
 /// `HandleServerExitCommand`), which stops the world and leaves the exit code `0`.
 pub fn world_exit(

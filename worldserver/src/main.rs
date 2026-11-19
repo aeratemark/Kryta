@@ -341,6 +341,14 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     )?;
     operations.register(
         game::chat::operations::Registration {
+            name: "world.operations",
+            help: "the operations this world registers, one a line",
+            arguments: &[],
+        },
+        command_line::list_operations,
+    )?;
+    operations.register(
+        game::chat::operations::Registration {
             name: "world.exit",
             help: "stop this world; the process exits 0",
             arguments: &[],

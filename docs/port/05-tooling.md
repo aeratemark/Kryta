@@ -32,7 +32,7 @@ Two consequences:
 | `tools/capture/read.py` | reads a capture back in the layer it declares - `--describe`, `--header`, `--limit`, `--assume-layer`, `--self-test` - and refuses a file that states no layer | nothing; it is Python 3 and standard library only | ASURA `tools/capture-read.py` |
 | `tools/capture/diff.py` | compares two captures message by message: agreement count, then the first divergences with both payloads; refuses a struct-layer file against a wire-layer one, because the two widen fields differently | nothing; standard library only | new; the comparison workflow `0012-chat-text-is-sent.md` used by hand |
 | `tools/capture/capture_file.py` | the one implementation of the layer rules both of the above use | nothing | ASURA `tools/capture-read.py`'s layer half |
-| `worldserver --bin kryta-cli` | the standalone operator client: `init-credential <file>` creates and restricts the world's control credential; `<port> <credential> <operation>` sends one operation to a running world and prints its answer | a running world with `Control.Enable` | new; the client ASURA's supervisor verbs are the precedent for |
+| `worldserver --bin kryta-cli` | the standalone operator client: `list` asks the world which operations it registers, `<operation> [--arg name=value]...` calls one, `help` prints the usage, and `init-credential <file>` creates and restricts the service credential. The port and credential come from `Control.Port`/`Control.CredentialFile` in `worldserver/worldserver.json`, so no plumbing is typed per call | a running world with `Control.Enable` and a credential file | new; the client ASURA's supervisor verbs are the precedent for |
 
 ## Capturing the server
 
@@ -200,6 +200,14 @@ answered "The running world did not answer. This is not an empty result" naming 
 `the stack is up: auth on 6112, world on 6113, manage on 6602`, so the manager is a stack service and
 not a program started by hand.
 
+`kryta-cli` was proved against a live world with the settings doing the plumbing: `kryta-cli list` printed
+all eight registrations with their help and their values (`ListTargets`, `chat.maps`, `chat.stuck`,
+`chat.transfer destination`, `world.exit`, `world.operations`, `world.restart`, `world.status`);
+`kryta-cli world.status` answered `World 2: 265 map(s) loaded.`; `kryta-cli chat.stuck` refused with
+`needs a player session ... (refused)`; and `kryta-cli world.status --arg x=y` refused with
+`argument "x" is not one this operation takes (invalid_arguments)`. All four read the port and the
+credential from `worldserver/worldserver.json`, and the client names no command of its own - `list` asks
+the world for `world.operations`, whose answer is the registry itself.
 The endpoint's contract was then exercised live, one raw request per case: `world.status` answered
 `{"ok":true,"result":"World 2: 265 map(s) loaded."}`; an unregistered name answered 404 with
 `"code":"unknown_operation"`; an argument the operation does not take answered 400 with
