@@ -29,6 +29,11 @@
     "TimeoutSeconds": { "value": 5, "doc": "Maximum wait for a local control request or world response; must be positive." }
   },
 
+  "CaptureFile": {
+    "value": "",
+    "doc": "Where to record the wire: every game message both directions, as plaintext JSONL with two-byte headers. Empty is off. The file is evidence, and it holds payloads unsanitised, so it belongs under recordings/ or a scratch path, and a reader takes its layer from the file's own header (docs/port/02-wire.md, Three kinds of capture)."
+  },
+
   "StatusInterval": {
     "value": 30,
     "doc": "How often the program says what it is doing: up time, accepted connections, the maps it hosts and the instances it holds open. The auth program's timer reads the same key."

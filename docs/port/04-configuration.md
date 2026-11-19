@@ -12,6 +12,13 @@ through its own `ControlPort`, `ControlCredentialFile` and `ControlTimeoutSecond
 created on this machine with `cargo run -p worldserver --bin kryta-cli -- init-credential <file>`, which
 also restricts it to the service user. Neither program logs the credential.
 
+`worldserver` reads `CaptureFile` (default empty, which is off): where to record the wire, every game
+message both directions as plaintext JSONL with two-byte headers (`game/Server/Capture.rs`). It is a
+setting rather than a command-line flag because a diagnostic run should be able to name its file in the
+same place as everything else it runs with; the file is evidence and unsanitised, so it belongs under
+`recordings/` or a scratch path, and its reader takes the layer from the file's own header
+(`tools/capture/read.py`).
+
 Settings go in a JSON file: one per program, read by one handler. This file says how one is written and
 which files there are. `docs/decisions/0005-json-configuration.md` records why the format is JSON rather
 than the reference's `Key = value`.

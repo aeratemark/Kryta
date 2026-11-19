@@ -10,6 +10,8 @@
 //! `WorldSocketMgr` (the listener). The world socket object itself, with its socket options and its
 //! packet queue, arrives with the map that needs them.
 
+#[path = "Capture.rs"]
+pub mod capture;
 #[path = "Packets/mod.rs"]
 pub mod packets;
 #[path = "Protocol/mod.rs"]

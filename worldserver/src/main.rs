@@ -319,6 +319,23 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
         report(&note);
     }
     world.load_commands(&commands_file, &log)?;
+    // The server-side wire capture (`game/Server/Capture.rs`): every game message, both directions, as
+    // plaintext JSONL. Empty leaves it off, which is the default; a path is a setting, so a diagnostic
+    // run names its own file (`docs/port/04-configuration.md`).
+    let (capture_file, notes) = config
+        .value_string("CaptureFile", "")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    if !capture_file.is_empty() {
+        game::server::capture::install(&capture_file)?;
+        log.out(
+            LogLevel::Info,
+            "server.worldserver",
+            format!("Capturing the wire to {capture_file} (layer wire, two-byte headers)."),
+        );
+    }
     // The world's own numbers: every threshold an instance, a district or a spawn uses, read from this
     // program's file with the game's value as the default (R53, and docs/game-rules.md for each row).
     let (world_settings, notes) = game::world::world_config::WorldConfig::read(&config)?;
@@ -796,6 +813,9 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
         "server.worldserver",
         format!("Stopped. {accepted} connection(s) were accepted while it ran."),
     );
+    // The capture's last records must reach the disk before the process ends: it is evidence, and a
+    // diagnostic session usually ends with a kill (`game/Server/Capture.rs`, FLUSH_EVERY).
+    game::server::capture::stop();
     log.shutdown();
     Ok(exit)
 }

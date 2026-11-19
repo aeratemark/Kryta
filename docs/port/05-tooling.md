@@ -29,6 +29,32 @@ Two consequences:
 | `tools/client/hosts-redirect.py` | sends the client's seven baked-in names to this machine, or puts them back; recognises a block an earlier tool left | an elevated shell to write the hosts file | ASURA `client-patcher/hosts-redirect.py`, itself from GWPS `tools/hosts-gwps.ps1` |
 | `tools/adapt-protocol-table.py` | moved the ported message table into `game/src/Server/Protocol/Tables.rs`, once | nothing; it is the record of the move | ASURA `crates/asura-protocol/src/packets.rs` |
 | `tools/import-creation-inventory.py` | imported the bags, items and profession sets into `data/*.json`, once | a checkout of ASURA to read | ASURA `state/inventory/seed.rs` and `default_equipment.rs` |
+| `tools/capture/read.py` | reads a capture back in the layer it declares - `--describe`, `--header`, `--limit`, `--assume-layer`, `--self-test` - and refuses a file that states no layer | nothing; it is Python 3 and standard library only | ASURA `tools/capture-read.py` |
+
+## Capturing the server
+
+`worldserver`'s `CaptureFile` names where to record the wire: every game message, both directions, as
+plaintext JSONL with two-byte headers, after ARC4 on the way in and before it on the way out
+(`game/Server/Capture.rs`, ported from ASURA `crates/asura-world/src/capture.rs`). Empty is off. The
+record is `{seq, t, direction, header, size, data}` after a header record that states the layer, so a
+reader never has to guess; the writer flushes after every batch it sends and every 200 ms otherwise, and
+flushes when a connection ends and when the program stops, because the last frames of a session are what
+a capture is for.
+
+```powershell
+# in worldserver.json: "CaptureFile": { "value": "recordings/asura/world/session.jsonl" }
+python tools/capture/read.py recordings/asura/world/session.jsonl --describe
+python tools/capture/read.py recordings/asura/world/session.jsonl --header 0x005D
+```
+
+Proved against a live session on this machine: the end-to-end test's world, run with
+`AC_CAPTURE_FILE` set, wrote 564 records of a real creation-and-load conversation; the reader described
+the file (`tool: worldserver`, `layer: wire`, `header_len: 2`) and printed the load head `0x017C`, the
+inventory stream `0x0161`, the chat body `0x005D` and its tag `0x0061`. **That last pair is also how a
+fault was read rather than guessed**: the body's declared unit count is `0800` (8) where the assertion in
+`worldserver/tests/end_to_end.rs:951` expects 5, and `docs/decisions/0012-chat-text-is-sent.md` records
+the measured bytes as `5d00 0800 0108 0107 ...` - so the frame matches the measurement and the test's
+expectation is the thing to settle.
 
 The recovered control-panel and research requirements are in `docs/port/12-research-and-control-panel.md`.
 The research and plan for the operator's surfaces - the command line, a console over the same command

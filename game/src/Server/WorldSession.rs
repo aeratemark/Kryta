@@ -883,6 +883,9 @@ impl WorldSession {
                 };
                 let message: Vec<u8> = pending.drain(..used).collect();
 
+                // One complete incoming frame: the capture records the wire layer, after ARC4 came off.
+                crate::server::capture::record("CToS", header, &message);
+
                 self.log.out(
                     LogLevel::Debug,
                     "network.trace",
@@ -1278,6 +1281,9 @@ impl WorldSession {
                     }
                 };
                 let message: Vec<u8> = pending.drain(..used).collect();
+
+                // One complete incoming frame: the capture records the wire layer, after ARC4 came off.
+                crate::server::capture::record("CToS", header, &message);
 
                 match header {
                     // The items ask: the inventory stream and the map's record, measured in one
@@ -1774,6 +1780,13 @@ impl WorldSession {
         frames: &[Vec<u8>],
         what: &str,
     ) -> bool {
+        // The capture records the wire layer: the plaintext frame, header first, before ARC4
+        // (`game/Server/Capture.rs`, and `docs/port/02-wire.md` for why the layer is stated).
+        for frame in frames {
+            if frame.len() >= 2 {
+                crate::server::capture::record("StoC", u16::from_le_bytes([frame[0], frame[1]]), frame);
+            }
+        }
         let mut answer = Vec::new();
         for frame in frames {
             answer.extend_from_slice(frame);
@@ -1781,6 +1794,10 @@ impl WorldSession {
         crypt.encrypt(&mut answer);
         match io.write_all(&answer).await {
             Ok(()) => {
+                // The batch the client has just been handed is evidence the moment it is sent: put it
+                // on the disk now, so a program killed moments later still holds its last messages
+                // (`server/Capture.rs`, FLUSH_EVERY is the bound for everything else).
+                crate::server::capture::flush();
                 self.log.out(
                     LogLevel::Debug,
                     "network.trace",
@@ -1827,6 +1844,10 @@ impl Session for WorldSession {
             // copy itself stays open - R37 holds an outpost for 15 minutes of inactivity and R40
             // disposes exactly as the lifecycle says - so this only keeps the count honest.
             self.leave_district();
+            // The last frames of a connection are the ones a diagnostic capture exists for, and a
+            // session that ends quietly would leave them in the capture's buffer until the process is
+            // killed (`server/Capture.rs`, FLUSH_EVERY). Flush them here, where the connection ends.
+            crate::server::capture::flush();
         })
     }
 }

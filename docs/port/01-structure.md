@@ -197,7 +197,9 @@ service and `Stdio::null()` to the rest, so two programs cannot read one termina
 
 `cargo test -p worldserver`, `-p game` and `-p kryta-supervisor` cover the queue, the console, every
 control answer and refusal, the registry, and the channel's verbs; `docs/port/05-tooling.md` records the
-live proofs. What remains in `docs/port/14-operator-surfaces.md` is chat dispatch moved onto the registry
+live proofs. The recordings loop is in too: `worldserver`'s `CaptureFile` records the wire in both
+directions (`game/Server/Capture.rs`), and `tools/capture/read.py` reads a capture in the layer it
+declares. What remains in `docs/port/14-operator-surfaces.md` is chat dispatch moved onto the registry
 (it still matches the closed `Operation` enum), richer argument types and target context, and
 administrator authentication before the manager leaves loopback.
 
