@@ -135,7 +135,7 @@ fn ensure_built(program: &str) -> Result<(), String> {
 }
 
 /// Start one service, and hand every line it prints to the supervisor.
-fn start(service: &Service, lines: Sender<(String, String)>) -> Result<Child, String> {
+fn start(service: &Service, lines: Sender<ServiceLine>) -> Result<Child, String> {
     ensure_built(&service.program)?;
     let exe = exe_of(&service.program);
     let mut child = Command::new(&exe)
@@ -148,8 +148,8 @@ fn start(service: &Service, lines: Sender<(String, String)>) -> Result<Child, St
     let name = service.name.clone();
     let stdout = child.stdout.take().expect("the program's stdout is piped");
     let stderr = child.stderr.take().expect("the program's stderr is piped");
-    let streams: [Box<dyn std::io::Read + Send>; 2] = [Box::new(stdout), Box::new(stderr)];
-    for stream in streams {
+    let streams: [(Box<dyn std::io::Read + Send>, bool); 2] = [(Box::new(stdout), false), (Box::new(stderr), true)];
+    for (stream, is_error) in streams {
         let lines = lines.clone();
         let name = name.clone();
         std::thread::spawn(move || {
@@ -157,7 +157,7 @@ fn start(service: &Service, lines: Sender<(String, String)>) -> Result<Child, St
                 let Ok(line) = line else {
                     return;
                 };
-                if lines.send((name.clone(), line)).is_err() {
+                if lines.send((name.clone(), is_error, line)).is_err() {
                     return;
                 }
             }
@@ -166,9 +166,52 @@ fn start(service: &Service, lines: Sender<(String, String)>) -> Result<Child, St
     Ok(child)
 }
 
+/// One line a service printed, what printed it, and whether it was its standard error.
+type ServiceLine = (String, bool, String);
+
+/// The last lines a service printed, kept so a failure can be read without a `--logs` run.
+///
+/// A stack's console is not a log tail: with a thousand connections the service log is on disk
+/// (`Server.log`, `Errors.log`) and the terminal carries the stack's own lifecycle. What is kept here
+/// is what an operator needs when a service dies: the words it died with.
+type Tails = std::collections::BTreeMap<String, std::collections::VecDeque<String>>;
+
+/// The number of lines a tail holds.
+const TAIL_LINES: usize = 30;
+
+/// Keep one line in its service's tail.
+fn keep(tails: &mut Tails, name: &str, line: &str) {
+    let tail = tails.entry(name.to_string()).or_default();
+    if tail.len() == TAIL_LINES {
+        tail.pop_front();
+    }
+    tail.push_back(line.to_string());
+}
+
 /// Print one line under its service's name.
 fn report(name: &str, line: &str) {
     println!("{name:>6} | {line}");
+}
+
+/// Show a service's line if it should be shown, and keep it for a failure's tail either way.
+///
+/// The rule is the whole point of this file's console: a service's standard error is always printed,
+/// and its standard output only with `--logs`. A stack with a thousand connections must not print its
+/// log to the terminal; the log is on disk, and the terminal is for the stack's own lifecycle.
+fn show(tails: &mut Tails, logs: bool, name: &str, is_error: bool, line: &str) {
+    if is_error || logs {
+        report(name, line);
+    }
+    keep(tails, name, line);
+}
+
+/// Print a service's kept tail, after the line that says why it is being printed.
+fn dump_tail(tails: &mut Tails, name: &str) {
+    if let Some(tail) = tails.remove(name) {
+        for line in tail {
+            report(name, &line);
+        }
+    }
 }
 
 /// The state word a control client reads for one service.
@@ -186,21 +229,25 @@ fn state_all(state: &control::State, services: &[Service], value: &str) {
 
 /// Start every service and wait for the ones that have not said READY yet.
 ///
-/// Answers whether each one's READY line was seen. Every line a service prints is printed here, so
-/// a service that fails says why through its own words.
+/// Answers whether each one's READY line was seen. A service's standard error is printed whatever the
+/// mode - it carries nothing but problems - and its standard output only with `--logs` or from the tail
+/// a failure dumps; the service writes its own log to disk (`Server.log`, `Errors.log`), and the stack's
+/// console is for the stack's lifecycle.
 fn wait_ready(
     services: &[Service],
     ready: &mut [bool],
     children: &mut [(Service, Child)],
-    lines: &Receiver<(String, String)>,
+    lines: &Receiver<ServiceLine>,
     state: &control::State,
+    tails: &mut Tails,
+    logs: bool,
 ) -> bool {
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         match lines.recv_timeout(remaining.min(Duration::from_millis(200))) {
-            Ok((name, line)) => {
-                report(&name, &line);
+            Ok((name, is_error, line)) => {
+                show(tails, logs, &name, is_error, &line);
                 if line.contains("READY: listening on")
                     && let Some(index) = services.iter().position(|service| service.name == name)
                 {
@@ -212,11 +259,12 @@ fn wait_ready(
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
         }
 
-        // A service that died while starting is reported with its own lines above; the others are
+        // A service that died while starting is reported with the words it died with; the others are
         // stopped so the whole command fails as one thing.
         for (service, child) in children.iter_mut() {
             if let Ok(Some(status)) = child.try_wait() {
                 report(&service.name, &format!("exited with {status}"));
+                dump_tail(tails, &service.name);
                 state_word(state, &service.name, &format!("exited {}", status.code().unwrap_or(1)));
                 return false;
             }
@@ -260,9 +308,11 @@ fn stop_all(children: &mut [(Service, Child)]) {
 fn restart(
     service: &Service,
     children: &mut Vec<(Service, Child)>,
-    lines: &Sender<(String, String)>,
-    received: &Receiver<(String, String)>,
+    lines: &Sender<ServiceLine>,
+    received: &Receiver<ServiceLine>,
     state: &control::State,
+    tails: &mut Tails,
+    logs: bool,
 ) -> Result<(), String> {
     let child = start(service, lines.clone())?;
     state_word(state, &service.name, "restarting");
@@ -270,8 +320,8 @@ fn restart(
     let deadline = Instant::now() + READY_TIMEOUT;
     while Instant::now() < deadline {
         match received.recv_timeout(Duration::from_millis(200)) {
-            Ok((name, line)) => {
-                report(&name, &line);
+            Ok((name, is_error, line)) => {
+                show(tails, logs, &name, is_error, &line);
                 if name == service.name && line.contains("READY: listening on") {
                     state_word(state, &service.name, &format!("up on {}", service.port));
                     return Ok(());
@@ -290,6 +340,7 @@ fn usage() {
     println!("  -h [ --help ]             print usage message");
     println!("  -c [ --config ] arg       use <arg> as the service list (default: {DEFAULT_STACK})");
     println!("  --check                   start, wait for every READY line, stop, and say so");
+    println!("  -l [ --logs ]             also print each service's standard output (its log is on disk)");
     println!("  status                    ask a running stack what it is doing");
     println!("  stop [service]            stop one service, or every service");
     println!("  restart <service>         start one service again");
@@ -345,6 +396,7 @@ fn main() -> std::process::ExitCode {
 
     let mut config_path = std::path::PathBuf::from(DEFAULT_STACK);
     let mut check_only = false;
+    let mut logs = false;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -360,6 +412,7 @@ fn main() -> std::process::ExitCode {
                 config_path = std::path::PathBuf::from(value);
             }
             "--check" => check_only = true,
+            "-l" | "--logs" => logs = true,
             other => {
                 eprintln!("unknown option: {other}");
                 usage();
@@ -384,6 +437,7 @@ fn main() -> std::process::ExitCode {
     }
 
     let (lines, received) = channel();
+    let mut tails: Tails = std::collections::BTreeMap::new();
     let (actions, requests) = channel::<control::Request>();
     let state: control::State = Arc::new(std::sync::Mutex::new(BTreeMap::new()));
     state_all(&state, &services, "starting");
@@ -411,7 +465,7 @@ fn main() -> std::process::ExitCode {
     }
 
     let mut ready = vec![false; services.len()];
-    let mut all_up = wait_ready(&services, &mut ready, &mut children, &received, &state);
+    let mut all_up = wait_ready(&services, &mut ready, &mut children, &received, &state, &mut tails, logs);
     if all_up {
         let list: Vec<String> = services
             .iter()
@@ -431,8 +485,8 @@ fn main() -> std::process::ExitCode {
     if check_only || !all_up {
         stop_all(&mut children);
         state_all(&state, &services, "stopped");
-        for (name, line) in received.try_iter() {
-            report(&name, &line);
+        for (name, is_error, line) in received.try_iter() {
+            show(&mut tails, logs, &name, is_error, &line);
         }
         return if all_up {
             std::process::ExitCode::SUCCESS
@@ -448,8 +502,8 @@ fn main() -> std::process::ExitCode {
     let mut restarts: BTreeMap<String, u32> = BTreeMap::new();
     let mut stopped: BTreeSet<String> = BTreeSet::new();
     loop {
-        for (name, line) in received.try_iter() {
-            report(&name, &line);
+        for (name, is_error, line) in received.try_iter() {
+            show(&mut tails, logs, &name, is_error, &line);
         }
         for request in requests.try_iter() {
             let answer = match request.action {
@@ -478,7 +532,7 @@ fn main() -> std::process::ExitCode {
                                 let _ = child.wait();
                             }
                             stopped.remove(&name);
-                            match restart(&service, &mut children, &lines, &received, &state) {
+                            match restart(&service, &mut children, &lines, &received, &state, &mut tails, logs) {
                                 Ok(()) => format!("restarted {name}"),
                                 Err(error) => error,
                             }
@@ -539,7 +593,7 @@ fn main() -> std::process::ExitCode {
                 let _ = child.wait();
             }
             if let Some(service) = services.iter().find(|service| service.name == name).cloned()
-                && let Err(error) = restart(&service, &mut children, &lines, &received, &state)
+                && let Err(error) = restart(&service, &mut children, &lines, &received, &state, &mut tails, logs)
             {
                 report(&name, &error);
             }
@@ -548,8 +602,8 @@ fn main() -> std::process::ExitCode {
     }
 
     stop_all(&mut children);
-    for (name, line) in received.try_iter() {
-        report(&name, &line);
+    for (name, is_error, line) in received.try_iter() {
+        show(&mut tails, logs, &name, is_error, &line);
     }
     if exit_code == 0 {
         std::process::ExitCode::SUCCESS

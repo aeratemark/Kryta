@@ -229,6 +229,12 @@ pub struct WorldSession {
     /// the same body to every client. `None` until a real map is loaded - the creation instance has no
     /// population to be told apart in.
     id: std::sync::Mutex<Option<u32>>,
+    /// How many times this connection has sent a message this world does not answer, per header.
+    ///
+    /// A client retries an ask it got no answer to, so a line per arrival is one line per retry, per
+    /// connection - unbounded. The first sighting of a header is the report; the rest are a count
+    /// (`WorldSession::report_unanswered`).
+    unanswered: std::sync::Mutex<std::collections::BTreeMap<u16, u32>>,
     /// The world this connection answers for: its operation registry is what a command resolves
     /// through, so the session holds the world and not only copies of its parts.
     pub(crate) world: std::sync::Arc<World>,
@@ -269,6 +275,7 @@ impl WorldSession {
             outbox: std::sync::Mutex::new(None),
             closing: None,
             id: std::sync::Mutex::new(None),
+            unanswered: std::sync::Mutex::new(std::collections::BTreeMap::new()),
         }
     }
 
@@ -428,6 +435,37 @@ impl WorldSession {
 
     pub(crate) fn say(&self, level: LogLevel, text: impl Into<String>) {
         self.log.out(level, "server.worldserver", text);
+    }
+
+    /// Report a message this world does not answer: once per header per connection, then a count.
+    ///
+    /// Reference: the reference names a message only where it has a handler for it, and the gap this
+    /// line reports is a gap to fill, not an event - the first sighting says the client asked, and a
+    /// client that got no answer asks again. Logging every arrival made one stuck ask into the whole
+    /// log (`docs/port/03-tracing.md`); the count is kept beside the first sighting, and later sightings
+    /// are a `Trace` line, below both the console and the default log file.
+    fn report_unanswered(&self, peer: &str, header: u16, what: &str, bytes: usize) {
+        let mut unanswered = match self.unanswered.lock() {
+            Ok(unanswered) => unanswered,
+            Err(_) => return,
+        };
+        let seen = unanswered.entry(header).or_insert(0);
+        *seen += 1;
+        let sighting = *seen;
+        match sighting {
+            1 => self.say(
+                LogLevel::Info,
+                format!(
+                    "Gameplay connection from {peer}: message {what} ({bytes} bytes), which this world does not answer yet."
+                ),
+            ),
+            _ => self.say(
+                LogLevel::Trace,
+                format!(
+                    "Gameplay connection from {peer}: message {what} ({bytes} bytes) again - sighting {sighting}; it is not answered yet."
+                ),
+            ),
+        }
     }
 
     /// The whole conversation, as far as it goes.
@@ -911,14 +949,9 @@ impl WorldSession {
                     Some(true) => {}
                     Some(false) => return,
                     None => {
-                        // A message this world does not answer: say so, and keep the connection.
-                        self.say(
-                            LogLevel::Info,
-                            format!(
-                                "Gameplay connection from {peer}: message 0x{header:04X} with {} bytes, which this world does not answer yet.",
-                                message.len()
-                            ),
-                        );
+                        // A message this world does not answer: say so once per header, and keep the
+                        // connection (`WorldSession::report_unanswered`).
+                        self.report_unanswered(&peer, header, &format!("0x{header:04X}"), message.len());
                     }
                 }
             }
@@ -1598,15 +1631,10 @@ impl WorldSession {
                         self.answer_equip_item(io, peer, &message, crypt, sheet).await;
                     }
                     other => {
-                        self.log.out(
-                            LogLevel::Info,
-                            "server.worldserver",
-                            format!(
-                                "Gameplay connection from {peer}: message {} ({} bytes) during the load, which this world does not answer yet.",
-                                crate::server::protocol::label(other),
-                                message.len()
-                            ),
-                        );
+                        // Once per header, with the protocol's own name for it; repeats are a count
+                        // (`WorldSession::report_unanswered`).
+                        let what = crate::server::protocol::label(other);
+                        self.report_unanswered(peer, other, &what, message.len());
                     }
                 }
             }
@@ -1798,7 +1826,8 @@ impl WorldSession {
         self.send_with(LogLevel::Info, io, peer, crypt, frames, what).await
     }
 
-    /// Send a batch whose report is routine: a periodic frame, which is a `Debug` line.
+    /// Send a batch whose report is routine: a periodic frame, which is a `Trace` line - below both
+    /// the console (`Info`) and the default log file (`Debug`), so it appears only when asked for.
     pub(crate) async fn send_quiet(
         &self,
         io: &mut SessionIo,
@@ -1807,7 +1836,7 @@ impl WorldSession {
         frames: &[Vec<u8>],
         what: &str,
     ) -> bool {
-        self.send_with(LogLevel::Debug, io, peer, crypt, frames, what).await
+        self.send_with(LogLevel::Trace, io, peer, crypt, frames, what).await
     }
 
     async fn send_with(
