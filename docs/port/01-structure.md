@@ -187,11 +187,19 @@ whose refusals carry a stable code; rows that bind a typed name to a registratio
 loopback, credential-authenticated control endpoint in worldserver (`POST /v1/operations`) answering
 200/400/401/404/503 with those codes; a standalone `kryta-cli`; and a `/status` page in `tools/manage`
 that reads the running world through that endpoint, with `tools/manage` a supervised stack service.
-`cargo test -p worldserver` covers the queue, the console and every control answer and refusal, and
-`docs/port/05-tooling.md` records the live proofs. What remains in
-`docs/port/14-operator-surfaces.md` is chat dispatch moved onto the registry (it still matches the
-closed `Operation` enum), richer argument types and target context, the supervisor's control channel and
-exit-code contract, and administrator authentication before the manager leaves loopback.
+
+The supervisor's half has landed too: a loopback control channel (`status`, `stop [service]`,
+`restart <service>`, `quit`), the reference's exit-code contract ported into the world
+(`0`, `1`, `2`, `Main.cpp:434-439`), the console rows that ask for it (`server exit`, `server restart`),
+and the policy that turns exit code `2` into a fresh process - so a console can restart the world and
+the stack keeps one world in it, not two. `console_service` in `stack.json` gives the terminal to one
+service and `Stdio::null()` to the rest, so two programs cannot read one terminal.
+
+`cargo test -p worldserver`, `-p game` and `-p kryta-supervisor` cover the queue, the console, every
+control answer and refusal, the registry, and the channel's verbs; `docs/port/05-tooling.md` records the
+live proofs. What remains in `docs/port/14-operator-surfaces.md` is chat dispatch moved onto the registry
+(it still matches the closed `Operation` enum), richer argument types and target context, and
+administrator authentication before the manager leaves loopback.
 
 The current implementation and its evidence are in the status table above. The outstanding
 client-facing work and its port order are in `docs/port/09-parity-audit.md`; the world subjects

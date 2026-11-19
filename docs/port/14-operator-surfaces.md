@@ -511,16 +511,24 @@ Each subject below needs its own implementation scope and appropriate commits. O
 based, not permission to implement. Research features remain part of the requested panel, without
 blocking the API and settings manager on playback or a map renderer.
 
-1. **Local status slice.** Implement the registry, world queue, local control interface and manager
-   status page described above. Proof: the manager reaches the running world and receives a real result,
-   and failure paths are reported. No client-facing change is authorized by this slice.
+1. **Local status slice.** **Landed.** The registry, world queue, local control interface and manager
+   status page exist; the manager reaches the running world and receives a real result, and the failure
+   paths - unknown operation, invalid arguments, refused credential, full queue, no answer - are proven
+   (`docs/port/05-tooling.md`). No client-facing change was made.
 2. **Shared execution.** Add the remaining caller adapters and existing operations by subject. Proof:
    each supported caller invokes the same registered implementation; an alias needs only a mapping,
    and a new function does not need a dispatcher edit. Compare client frames and behavior with ASURA
-   and the real client where applicable.
-3. **Service control and CLI.** Design and implement supervisor control and console access with clear
-   process ownership, target selection and completion reporting. Proof: status, a supervised restart,
-   clean shutdown and failures observed from the requested callers without duplicate processes.
+   and the real client where applicable. **Part landed**: the console and the control endpoint already
+   share it; chat dispatch still matches the closed enum.
+3. **Service control and CLI.** **Landed.** The supervisor's loopback control channel answers `status`,
+   `stop [service]`, `restart <service>` and `quit`; the world ports the reference's exit-code contract
+   (`0`, `1`, `2`, `Main.cpp:434-439`) and carries it out through the rows `server exit` and
+   `server restart`; the supervisor restarts a service that exits `2`, bounded to five requests, and
+   `console_service` gives the terminal to one service only. Proof observed on this machine: `status`
+   listed every service; `restart world` replaced its process; `world.restart` through the world's own
+   control endpoint produced "asked to restart (exit 2), request 1 of 5", a new world process, the
+   stack still up with one world in it, and the restarted world answering again; `quit` stopped
+   everything and left no process behind.
 4. **Configuration manager.** Specify and implement supported settings, validation, safe saving,
    effective versus saved state, and restart/reload indications. Proof: a valid change survives restart,
    an invalid or conflicting edit is refused, unknown data is preserved or save is refused, and secrets

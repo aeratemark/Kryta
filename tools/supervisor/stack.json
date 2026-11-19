@@ -5,6 +5,8 @@
     "where the binaries come from": "target/debug/<program>.exe, so `cargo build` runs before the first start (the supervisor says which one is missing, and how to build it).",
     "what this file does not say": "the databases. They are checked by the programs themselves, never started here - a database server is an operating-system service, managed elsewhere."
   },
+  "control_port": 7612,
+  "console_service": "world",
   "services": [
     {
       "name": "auth",

@@ -29,7 +29,9 @@ const DEFAULT_CONFIG: &str = "worldserver.json";
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match run(&args) {
-        Ok(()) => ExitCode::SUCCESS,
+        // The reference's own exit-code contract (`Main.cpp:434-439`): the world answers with the
+        // code it stopped under, so whoever supervises it can tell a restart from a shutdown.
+        Ok(code) => ExitCode::from(code as u8),
         Err(reason) => {
             eprintln!("worldserver: {reason}");
             ExitCode::from(1)
@@ -37,18 +39,18 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(args: &[String]) -> Result<(), String> {
+fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     // Stage 1. Reference: `GetConsoleArguments(argc, argv, configFile)`.
     let options = Options::parse(args)?;
 
     // Reference: `if (vm.count("help") || vm.count("version")) return 0;`
     if options.help {
         print_usage();
-        return Ok(());
+        return Ok(game::world::ExitCode::Normal);
     }
     if options.version {
         println!("Kryta worldserver {}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
+        return Ok(game::world::ExitCode::Normal);
     }
 
     // Stage 2. Reference: `sConfigMgr->Configure(...)` then `LoadAppConfigs()`.
@@ -621,6 +623,22 @@ fn run(args: &[String]) -> Result<(), String> {
         },
         game::chat::operations::list_targets,
     )?;
+    operations.register(
+        game::chat::operations::Registration {
+            name: "world.exit",
+            help: "stop this world; the process exits 0",
+            arguments: &[],
+        },
+        command_line::world_exit,
+    )?;
+    operations.register(
+        game::chat::operations::Registration {
+            name: "world.restart",
+            help: "stop this world and exit 2, so a supervisor starts it again",
+            arguments: &[],
+        },
+        command_line::world_restart,
+    )?;
     let operations = std::sync::Arc::new(operations);
     let console_table = std::sync::Arc::new(world.commands().clone());
     let console = console_enabled
@@ -683,6 +701,13 @@ fn run(args: &[String]) -> Result<(), String> {
                     }
                     previous = now;
                     command_line::process(&command_receiver, &operations, &update_world);
+                    // A console operation may have asked the world to stop (`World::StopNow`); the
+                    // program's own loop is what notices, and the exit code it answers with is the
+                    // world's (`Main.cpp:434-439`).
+                    if update_world.stop_requested() {
+                        stop_update.store(true, std::sync::atomic::Ordering::Relaxed);
+                        break;
+                    }
                     for (map_id, district) in update_world.update(diff) {
                         let hold = update_world.settings().explorable_disconnect_hold;
                         log.out(
@@ -728,7 +753,8 @@ fn run(args: &[String]) -> Result<(), String> {
             .map_err(|error| format!("the world loop could not start: {error}"))?
     };
 
-    wait_for_shutdown();
+    wait_for_shutdown(&world);
+    let exit = world.exit_code();
     if let Some(control) = control { control.stop(); }
     stop_update.store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = world_loop.join();
@@ -771,14 +797,15 @@ fn run(args: &[String]) -> Result<(), String> {
         format!("Stopped. {accepted} connection(s) were accepted while it ran."),
     );
     log.shutdown();
-    Ok(())
+    Ok(exit)
 }
 
-/// Block until the operator stops the program.
+/// Block until the operator stops the program, or the world is asked to stop.
 ///
 /// Reference: `ioContext->run()` returning when the signal handler stopped it. A Ctrl-C is that
-/// signal here, the same as the auth program's.
-fn wait_for_shutdown() {
+/// signal here, the same as the auth program's; a console operation asks through the world instead
+/// (`World::StopNow`, and `Main.cpp:434-439` for the exit code that follows).
+fn wait_for_shutdown(world: &game::world::World) {
     let (sender, receiver) = std::sync::mpsc::channel::<()>();
     if ctrlc::set_handler(move || {
         let _ = sender.send(());
@@ -787,7 +814,12 @@ fn wait_for_shutdown() {
     {
         return;
     }
-    let _ = receiver.recv();
+    while !world.stop_requested() {
+        match receiver.recv_timeout(std::time::Duration::from_millis(100)) {
+            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+        }
+    }
 }
 
 /// Print a complaint at the severity the policy gave it.

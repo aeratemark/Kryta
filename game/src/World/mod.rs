@@ -147,7 +147,28 @@ pub struct World {
     /// reference's `WorldUpdateTimer` arrangement - the program's loop says how much time passed and
     /// this decides whether a thing that does not run every tick is due (`World.cpp:1131`).
     sweep_elapsed: Mutex<std::time::Duration>,
+    /// Why the world was asked to stop, once it was: the reference's `World::m_stopEvent` and
+    /// `World::GetExitCode()` (`World.cpp`, `World.h`). `None` until something asks.
+    stop: std::sync::atomic::AtomicU8,
 }
+
+/// Why a world stopped, as the exit code the reference's `main` returns.
+///
+/// Reference: `src/server/apps/worldserver/Main.cpp:434-439` - `0` a normal shutdown, `1` shutdown at
+/// error, `2` a restart was commanded, and the comment there says the code exists so an external
+/// restarter can act on it. The program does not restart itself; the supervisor reads this code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitCode {
+    /// A normal shutdown: the operator asked, or the signal arrived.
+    Normal = 0,
+    /// A shutdown because something failed.
+    Failure = 1,
+    /// A restart was asked for; the process exits and whoever supervises it starts it again.
+    Restart = 2,
+}
+
+/// The setting that records no stop request.
+const NO_STOP: u8 = 0xFF;
 
 /// The world's clock, as the district rows are stamped with it: the epoch second the hold is
 /// measured against (`unix_now` in the programs is the same reading).
@@ -194,6 +215,35 @@ impl World {
             peers: Arc::new(Mutex::new(crate::districts::Peers::new())),
             scripts: Arc::new(Mutex::new(crate::scripting::ScriptMgr::new())),
             sweep_elapsed: Mutex::new(std::time::Duration::ZERO),
+            stop: std::sync::atomic::AtomicU8::new(NO_STOP),
+        }
+    }
+
+    /// Ask the world to stop, and say why. Reference: `World::StopNow(code)` (`World.cpp`).
+    ///
+    /// The first request wins: a later one does not rewrite the exit code, which is what the
+    /// reference's `StopNow` does behind its own guard.
+    pub fn request_stop(&self, code: ExitCode) {
+        let _ = self.stop.compare_exchange(
+            NO_STOP,
+            code as u8,
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+
+    /// Whether something asked the world to stop.
+    pub fn stop_requested(&self) -> bool {
+        self.stop.load(std::sync::atomic::Ordering::Relaxed) != NO_STOP
+    }
+
+    /// The exit code this world answers with: the reference's `World::GetExitCode()`, `0` when it was
+    /// stopped normally or not stopped at all.
+    pub fn exit_code(&self) -> ExitCode {
+        match self.stop.load(std::sync::atomic::Ordering::Relaxed) {
+            x if x == ExitCode::Failure as u8 => ExitCode::Failure,
+            x if x == ExitCode::Restart as u8 => ExitCode::Restart,
+            _ => ExitCode::Normal,
         }
     }
 
@@ -489,6 +539,22 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+
+    /// The exit-code contract the reference's `main` states (`Main.cpp:434-439`): a stop is asked for
+    /// once, the first request decides the code, and a world that was never asked answers `0`.
+    #[test]
+    fn a_stop_is_requested_once_and_the_first_code_stands() {
+        let world = World::new(7);
+        assert!(!world.stop_requested());
+        assert_eq!(world.exit_code(), ExitCode::Normal, "a world nobody stopped answers 0");
+
+        world.request_stop(ExitCode::Restart);
+        assert!(world.stop_requested());
+        assert_eq!(world.exit_code(), ExitCode::Restart);
+
+        world.request_stop(ExitCode::Normal);
+        assert_eq!(world.exit_code(), ExitCode::Restart, "the first request wins");
+    }
 
     /// A script that writes down the world's moments it was told about, in order.
     struct Witness {

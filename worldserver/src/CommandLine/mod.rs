@@ -131,6 +131,21 @@ pub fn execute(table: &Table, registry: &Registry, world: &game::world::World, l
     }
 }
 
+/// Ask the world to stop normally: the reference's `server exit` (`cs_server.cpp:89`,
+/// `HandleServerExitCommand`), which stops the world and leaves the exit code `0`.
+pub fn world_exit(_invocation: &Invocation, world: &game::world::World) -> Result<String, Refusal> {
+    world.request_stop(game::world::ExitCode::Normal);
+    Ok("Stopping the world.".to_string())
+}
+
+/// Ask the world to stop so that a supervisor starts it again: the reference's `server restart`
+/// (`cs_server.cpp:68`), whose exit code `2` its own `main` documents for "restarter"
+/// (`Main.cpp:434-439`). The world does not restart itself; the supervisor reads the code.
+pub fn world_restart(_invocation: &Invocation, world: &game::world::World) -> Result<String, Refusal> {
+    world.request_stop(game::world::ExitCode::Restart);
+    Ok("Restarting: this process stops and the supervisor starts it again.".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

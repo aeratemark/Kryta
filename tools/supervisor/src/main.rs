@@ -5,19 +5,29 @@
 //! waits for its READY line, and keeps them alive together. Ctrl+C stops them all; a service that
 //! dies on its own stops the rest and the supervisor answers that service's exit code.
 //!
-//! This is the tree's own arrangement, taken from ASURA's `asura-supervisor` (one command for a
+//! It also owns the control channel (`Control.rs`): a loopback line protocol with `status`,
+//! `stop [service]`, `restart <service>` and `quit`, so a running stack can be asked what it is
+//! doing and told to restart one thing without a second owner of its processes. And it reads the
+//! reference's exit-code contract (`Main.cpp:434-439`): a world that exits `2` asked to be restarted,
+//! and this program - the restarter the reference's comment names - starts it again.
+//!
+//! This arrangement is this tree's own, taken from ASURA's `asura-supervisor` (one command for a
 //! stack that is otherwise several windows) rather than from the reference, which has no such
-//! program. What it does *not* do yet, and says so: no restart policy, no health checks beyond the
-//! READY line, and no control channel.
+//! program. What it still does not do, and says so: health checks beyond the READY line.
 //!
 //! Run it from the repository root:
 //!
 //! ```text
 //! cargo run -p kryta-supervisor                      # start the stack; Ctrl+C stops it
 //! cargo run -p kryta-supervisor -- --check           # start, wait for every READY, stop, exit
-//! cargo run -p kryta-supervisor -- -c tools/supervisor/stack.json
+//! cargo run -p kryta-supervisor -- status            # ask the running stack (control channel)
+//! cargo run -p kryta-supervisor -- restart world     # restart one service
 //! ```
 
+#[path = "Control.rs"]
+mod control;
+
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,6 +41,8 @@ use common::configuration::json::Document;
 const DEFAULT_STACK: &str = "tools/supervisor/stack.json";
 /// How long a service may take to print its READY line.
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
+/// How many times one service may ask to be restarted (exit code `2`) before the stack is stopped.
+const MAX_RESTARTS: u32 = 5;
 
 /// One service, as `stack.json` states it.
 #[derive(Debug, Clone)]
@@ -43,11 +55,33 @@ struct Service {
     args: Vec<String>,
     /// The port it binds, for the up-report.
     port: u16,
+    /// Whether it inherits the terminal's standard input: the one service whose console is the
+    /// operator's. Every other service is given no input at all, so two programs cannot read one
+    /// terminal (`docs/port/14-operator-surfaces.md`).
+    stdin: bool,
+}
+
+/// The whole list and the supervisor's own settings.
+#[derive(Debug, Clone)]
+struct Stack {
+    /// The services, in the file's order.
+    services: Vec<Service>,
+    /// The loopback port the control channel binds; `0` leaves it off.
+    control_port: u16,
 }
 
 /// Read the list.
-fn load(path: &std::path::Path) -> Result<Vec<Service>, String> {
+fn load(path: &std::path::Path) -> Result<Stack, String> {
     let document = Document::read(path).map_err(|error| error.to_string())?;
+    let (settings, _) = document.settings();
+    let control_port: u16 = match settings.get("control_port").map(String::as_str) {
+        Some(value) if !value.trim().is_empty() => value
+            .trim()
+            .parse()
+            .map_err(|_| format!("{}: 'control_port' is not a number", path.display()))?,
+        _ => 0,
+    };
+    let console_service = settings.get("console_service").cloned().unwrap_or_default();
     let records = document.records("services")?;
     let mut services = Vec::with_capacity(records.len());
     for record in records {
@@ -55,14 +89,17 @@ fn load(path: &std::path::Path) -> Result<Vec<Service>, String> {
             .required("port")?
             .parse()
             .map_err(|_| format!("{}: 'port' is not a number", record.at()))?;
+        let name = record.required("name")?;
+        let stdin = name == console_service;
         services.push(Service {
-            name: record.required("name")?,
+            name,
             program: record.required("program")?,
             args: record.strings("args")?.unwrap_or_default(),
             port,
+            stdin,
         });
     }
-    Ok(services)
+    Ok(Stack { services, control_port })
 }
 
 /// The built binary of a service, beside the repository root.
@@ -103,6 +140,7 @@ fn start(service: &Service, lines: Sender<(String, String)>) -> Result<Child, St
     let exe = exe_of(&service.program);
     let mut child = Command::new(&exe)
         .args(&service.args)
+        .stdin(if service.stdin { Stdio::inherit() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -133,6 +171,19 @@ fn report(name: &str, line: &str) {
     println!("{name:>6} | {line}");
 }
 
+/// The state word a control client reads for one service.
+fn state_word(state: &control::State, name: &str, value: &str) {
+    if let Ok(mut state) = state.lock() {
+        state.insert(name.to_string(), value.to_string());
+    }
+}
+
+fn state_all(state: &control::State, services: &[Service], value: &str) {
+    for service in services {
+        state_word(state, &service.name, value);
+    }
+}
+
 /// Start every service and wait for the ones that have not said READY yet.
 ///
 /// Answers whether each one's READY line was seen. Every line a service prints is printed here, so
@@ -142,6 +193,7 @@ fn wait_ready(
     ready: &mut [bool],
     children: &mut [(Service, Child)],
     lines: &Receiver<(String, String)>,
+    state: &control::State,
 ) -> bool {
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
@@ -153,6 +205,7 @@ fn wait_ready(
                     && let Some(index) = services.iter().position(|service| service.name == name)
                 {
                     ready[index] = true;
+                    state_word(state, &name, &format!("up on {}", services[index].port));
                 }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return ready.iter().all(|up| *up),
@@ -164,6 +217,7 @@ fn wait_ready(
         for (service, child) in children.iter_mut() {
             if let Ok(Some(status)) = child.try_wait() {
                 report(&service.name, &format!("exited with {status}"));
+                state_word(state, &service.name, &format!("exited {}", status.code().unwrap_or(1)));
                 return false;
             }
         }
@@ -174,6 +228,7 @@ fn wait_ready(
             for (index, service) in services.iter().enumerate() {
                 if !ready[index] {
                     report(&service.name, &format!("no READY line within {READY_TIMEOUT:?}"));
+                    state_word(state, &service.name, "no READY line");
                 }
             }
             return false;
@@ -201,15 +256,93 @@ fn stop_all(children: &mut [(Service, Child)]) {
     }
 }
 
+/// Start one service again after a stop or a restart request, and wait for its READY line.
+fn restart(
+    service: &Service,
+    children: &mut Vec<(Service, Child)>,
+    lines: &Sender<(String, String)>,
+    received: &Receiver<(String, String)>,
+    state: &control::State,
+) -> Result<(), String> {
+    let child = start(service, lines.clone())?;
+    state_word(state, &service.name, "restarting");
+    children.push((service.clone(), child));
+    let deadline = Instant::now() + READY_TIMEOUT;
+    while Instant::now() < deadline {
+        match received.recv_timeout(Duration::from_millis(200)) {
+            Ok((name, line)) => {
+                report(&name, &line);
+                if name == service.name && line.contains("READY: listening on") {
+                    state_word(state, &service.name, &format!("up on {}", service.port));
+                    return Ok(());
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    state_word(state, &service.name, "restarted, no READY line");
+    Err(format!("{} restarted but said no READY line in {READY_TIMEOUT:?}", service.name))
+}
+
 fn usage() {
     println!("Allowed options:");
     println!("  -h [ --help ]             print usage message");
     println!("  -c [ --config ] arg       use <arg> as the service list (default: {DEFAULT_STACK})");
     println!("  --check                   start, wait for every READY line, stop, and say so");
+    println!("  status                    ask a running stack what it is doing");
+    println!("  stop [service]            stop one service, or every service");
+    println!("  restart <service>         start one service again");
+    println!("  quit                      stop every service and exit");
 }
 
+/// The verbs a client sends to a running supervisor (`Control.rs`).
+fn client_line(args: &[String]) -> Option<String> {
+    match (args.first().map(String::as_str), args.len()) {
+        (Some("status"), 1) => Some("status".into()),
+        (Some("stop"), 1) => Some("stop".into()),
+        (Some("quit"), 1) => Some("quit".into()),
+        (Some("stop"), 2) => Some(format!("stop {}", args[1])),
+        (Some("restart"), 2) => Some(format!("restart {}", args[1])),
+        _ => None,
+    }
+}
 
 fn main() -> std::process::ExitCode {
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+
+    // A verb is a client of a running stack; everything else starts one.
+    if client_line(&raw).is_some() {
+        let mut config_path = std::path::PathBuf::from(DEFAULT_STACK);
+        if let Some(rest) = raw.iter().position(|argument| argument == "-c" || argument == "--config")
+            && let Some(value) = raw.get(rest + 1)
+        {
+            config_path = std::path::PathBuf::from(value);
+        }
+        let control_port = match load(&config_path) {
+            Ok(stack) => stack.control_port,
+            Err(error) => {
+                eprintln!("the service list cannot be read: {error}");
+                return std::process::ExitCode::FAILURE;
+            }
+        };
+        if control_port == 0 {
+            eprintln!("the control channel is off: give stack.json a control_port");
+            return std::process::ExitCode::FAILURE;
+        }
+        let line = client_line(&raw).expect("a verb was matched");
+        return match control::request(control_port, &line) {
+            Ok(answer) => {
+                println!("{answer}");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
+
     let mut config_path = std::path::PathBuf::from(DEFAULT_STACK);
     let mut check_only = false;
     let mut arguments = std::env::args().skip(1);
@@ -235,13 +368,14 @@ fn main() -> std::process::ExitCode {
         }
     }
 
-    let services = match load(&config_path) {
-        Ok(services) => services,
+    let stack = match load(&config_path) {
+        Ok(stack) => stack,
         Err(error) => {
             eprintln!("the service list cannot be read: {error}");
             return std::process::ExitCode::FAILURE;
         }
     };
+    let services = stack.services;
 
     let stop = Arc::new(AtomicBool::new(false));
     {
@@ -250,6 +384,19 @@ fn main() -> std::process::ExitCode {
     }
 
     let (lines, received) = channel();
+    let (actions, requests) = channel::<control::Request>();
+    let state: control::State = Arc::new(std::sync::Mutex::new(BTreeMap::new()));
+    state_all(&state, &services, "starting");
+    if stack.control_port != 0 {
+        if let Err(error) = control::serve(stack.control_port, Arc::clone(&state), actions.clone()) {
+            eprintln!("{error}");
+            return std::process::ExitCode::FAILURE;
+        }
+        println!(
+            "the control channel is listening on 127.0.0.1:{} - `status`, `restart <service>`",
+            stack.control_port
+        );
+    }
     let mut children: Vec<(Service, Child)> = Vec::with_capacity(services.len());
     for service in &services {
         match start(service, lines.clone()) {
@@ -263,7 +410,7 @@ fn main() -> std::process::ExitCode {
     }
 
     let mut ready = vec![false; services.len()];
-    let mut all_up = wait_ready(&services, &mut ready, &mut children, &received);
+    let mut all_up = wait_ready(&services, &mut ready, &mut children, &received, &state);
     if all_up {
         let list: Vec<String> = services
             .iter()
@@ -282,6 +429,7 @@ fn main() -> std::process::ExitCode {
 
     if check_only || !all_up {
         stop_all(&mut children);
+        state_all(&state, &services, "stopped");
         for (name, line) in received.try_iter() {
             report(&name, &line);
         }
@@ -292,25 +440,121 @@ fn main() -> std::process::ExitCode {
         };
     }
 
-    // Supervise: Ctrl+C stops everything; a service that dies stops the rest.
+    // Supervise: Ctrl+C stops everything; a service that dies stops the rest; a service that asks to
+    // be restarted (exit code `2`, the reference's `Main.cpp:434-439`) is started again here, which is
+    // the "restarter" that comment names. The control channel asks for the same verbs.
+    let mut exit_code = 0u8;
+    let mut restarts: BTreeMap<String, u32> = BTreeMap::new();
+    let mut stopped: BTreeSet<String> = BTreeSet::new();
     loop {
         for (name, line) in received.try_iter() {
             report(&name, &line);
         }
+        for request in requests.try_iter() {
+            let answer = match request.action {
+                control::Action::Stop(name) => {
+                    if let Some(index) = children.iter().position(|(service, _)| service.name == name) {
+                        let (_, mut child) = children.remove(index);
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        stopped.insert(name.clone());
+                        state_word(&state, &name, "stopped");
+                        format!("stopped {name}")
+                    } else if services.iter().any(|service| service.name == name) {
+                        format!("{name} is not running")
+                    } else {
+                        format!("no such service: {name}")
+                    }
+                }
+                control::Action::Restart(name) => {
+                    let service = services.iter().find(|service| service.name == name).cloned();
+                    match service {
+                        None => format!("no such service: {name}"),
+                        Some(service) => {
+                            if let Some(index) = children.iter().position(|(running, _)| running.name == name) {
+                                let (_, mut child) = children.remove(index);
+                                let _ = child.kill();
+                                let _ = child.wait();
+                            }
+                            stopped.remove(&name);
+                            match restart(&service, &mut children, &lines, &received, &state) {
+                                Ok(()) => format!("restarted {name}"),
+                                Err(error) => error,
+                            }
+                        }
+                    }
+                }
+                control::Action::StopAll | control::Action::Quit => {
+                    state_all(&state, &services, "stopped");
+                    let _ = request.reply.send("stopped every service".into());
+                    all_up = false;
+                    exit_code = 0;
+                    break;
+                }
+            };
+            let _ = request.reply.send(answer);
+        }
+        if !all_up {
+            break;
+        }
+        let mut asked: Vec<String> = Vec::new();
         for (service, child) in children.iter_mut() {
             if let Ok(Some(status)) = child.try_wait() {
-                report(&service.name, &format!("exited with {status}; stopping the rest"));
-                all_up = false;
-                break;
+                let code = status.code().unwrap_or(1);
+                state_word(&state, &service.name, &format!("exited {code}"));
+                if code == 2 {
+                    let count = restarts.entry(service.name.clone()).or_insert(0);
+                    *count += 1;
+                    let request = *count;
+                    if request > MAX_RESTARTS {
+                        report(
+                            &service.name,
+                            &format!("asked to restart more than {MAX_RESTARTS} times; stopping the stack"),
+                        );
+                        all_up = false;
+                        exit_code = 2;
+                    } else {
+                        report(
+                            &service.name,
+                            &format!("asked to restart (exit 2), request {request} of {MAX_RESTARTS}"),
+                        );
+                        asked.push(service.name.clone());
+                    }
+                } else {
+                    report(&service.name, &format!("exited with {status}; stopping the rest"));
+                    all_up = false;
+                    exit_code = code as u8;
+                }
             }
         }
         if !all_up || stop.load(Ordering::Relaxed) {
             break;
         }
+        // A restart the loop noticed: the service that asked is started again and the stack keeps
+        // running with a new process in it, never two (`Main.cpp:434-439` names this restarter).
+        for name in asked {
+            if let Some(index) = children.iter().position(|(service, _)| service.name == name) {
+                let (_, mut child) = children.remove(index);
+                let _ = child.wait();
+            }
+            if let Some(service) = services.iter().find(|service| service.name == name).cloned()
+                && let Err(error) = restart(&service, &mut children, &lines, &received, &state)
+            {
+                report(&name, &error);
+            }
+        }
         std::thread::sleep(Duration::from_millis(200));
     }
+
     stop_all(&mut children);
-    std::process::ExitCode::SUCCESS
+    for (name, line) in received.try_iter() {
+        report(&name, &line);
+    }
+    if exit_code == 0 {
+        std::process::ExitCode::SUCCESS
+    } else {
+        std::process::ExitCode::from(exit_code)
+    }
 }
 
 #[cfg(test)]
@@ -330,17 +574,20 @@ mod tests {
     #[test]
     fn the_list_is_read_as_rows_with_their_arguments() {
         let path = write_stack(
-            "{\"services\": [\
+            "{\"control_port\": 7612, \"console_service\": \"world\", \"services\": [\
              {\"name\": \"auth\", \"program\": \"authserver\", \"args\": [\"-c\", \"authserver/authserver.json\"], \"port\": 6112},\
              {\"name\": \"world\", \"program\": \"worldserver\", \"args\": [\"-c\", \"worldserver/worldserver.json\"], \"port\": 6113}\
              ]}",
         );
-        let services = load(&path).expect("the list reads");
+        let stack = load(&path).expect("the list reads");
         let _ = std::fs::remove_file(&path);
-        assert_eq!(services.len(), 2);
-        assert_eq!(services[0].name, "auth");
-        assert_eq!(services[1].args, vec!["-c", "worldserver/worldserver.json"]);
-        assert_eq!(services[1].port, 6113);
+        assert_eq!(stack.services.len(), 2);
+        assert_eq!(stack.control_port, 7612);
+        assert_eq!(stack.services[0].name, "auth");
+        assert_eq!(stack.services[1].args, vec!["-c", "worldserver/worldserver.json"]);
+        assert_eq!(stack.services[1].port, 6113);
+        assert!(!stack.services[0].stdin, "only the named service inherits the terminal");
+        assert!(stack.services[1].stdin);
     }
 
     #[test]
@@ -349,5 +596,30 @@ mod tests {
         let error = load(&path).expect_err("refused");
         let _ = std::fs::remove_file(&path);
         assert!(error.contains("port"), "{error}");
+    }
+
+    #[test]
+    fn a_stack_without_a_control_port_leaves_the_channel_off() {
+        let path = write_stack("{\"services\": [{\"name\": \"a\", \"program\": \"p\", \"port\": 1}]}");
+        let stack = load(&path).expect("the list reads");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(stack.control_port, 0);
+        assert!(!stack.services[0].stdin, "no service is named the terminal's");
+    }
+
+    #[test]
+    fn the_client_verbs_are_the_ones_the_channel_takes() {
+        let verbs = |args: &[&str]| {
+            let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+            client_line(&args)
+        };
+        assert_eq!(verbs(&["status"]), Some("status".into()));
+        assert_eq!(verbs(&["stop"]), Some("stop".into()));
+        assert_eq!(verbs(&["stop", "world"]), Some("stop world".into()));
+        assert_eq!(verbs(&["restart", "world"]), Some("restart world".into()));
+        assert_eq!(verbs(&["quit"]), Some("quit".into()));
+        assert_eq!(verbs(&[]), None);
+        assert_eq!(verbs(&["--check"]), None, "--check starts a stack, it does not ask one");
+        assert_eq!(verbs(&["restart"]), None, "restart needs a service");
     }
 }

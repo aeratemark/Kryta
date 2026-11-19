@@ -3,8 +3,12 @@
   "information": {
     "what starts first": "nothing here is ordered: every service is started at once, and the supervisor waits for each one's READY line. The login program needs no other service; the world program reads its own databases at start-up.",
     "where the binaries come from": "target/debug/<program>.exe, so `cargo build` runs before the first start (the supervisor says which one is missing, and how to build it).",
-    "what this file does not say": "the databases. They are checked by the programs themselves, never started here - a database server is an operating-system service, managed elsewhere."
+    "what this file does not say": "the databases. They are checked by the programs themselves, never started here - a database server is an operating-system service, managed elsewhere.",
+    "control_port": "the loopback port of the supervisor's control channel (`status`, `stop [service]`, `restart <service>`, `quit`). It is the only owner of these processes; the world's console asks the world to stop and exits with the reference's code 2 for a restart, and this program reads that code and starts the service again.",
+    "console_service": "the one service that inherits the terminal's standard input, so its embedded console is the operator's. Every other service gets no input at all, so two programs cannot read one terminal."
   },
+  "control_port": 7612,
+  "console_service": "world",
   "services": [
     {
       "name": "auth",

@@ -51,17 +51,29 @@ reaches the data through the nouns' own repositories, so what a page writes is w
 
 `tools/supervisor/` is the fourth binary, and it is the one command that runs the stack: it reads
 `tools/supervisor/stack.json` - a service per row, with the program, its arguments and the port it
-binds - starts every service, prints each one's output under its own name, waits for its READY line,
-and stops them all together on Ctrl+C. A service that dies on its own stops the rest and the command
-answers that service's exit code. The arrangement is ASURA's `asura-supervisor` (this tree's programs
-are several, and one command that runs them is what makes a stack a stack); the *list* is data, so a
-second world or a changed port is an edit in that file, not a program change. What it does not do yet,
-and says so in its own header: no restart policy, no health checks beyond the READY line, no control
-channel.
+binds, plus `control_port` and `console_service` - starts every service, prints each one's output under
+its own name, waits for its READY line, and stops them all together on Ctrl+C. A service that dies on
+its own stops the rest and the command answers that service's exit code. The arrangement is ASURA's
+`asura-supervisor` (this tree's programs are several, and one command that runs them is what makes a
+stack a stack); the *list* is data, so a second world or a changed port is an edit in that file, not a
+program change.
+
+It owns the control channel (`tools/supervisor/src/Control.rs`), a loopback line protocol with
+`status`, `stop [service]`, `restart <service>` and `quit`, so a running stack can be asked what it is
+doing and told to restart one thing without a second owner of its processes. And it reads the
+reference's exit-code contract (`Main.cpp:434-439`): a world that exits `2` asked to be restarted, and
+this program - the restarter that comment names - starts it again, up to five times before stopping the
+stack. `console_service` names the one service that inherits the terminal's standard input, so its
+embedded console is the operator's; every other service is given no input at all, because two programs
+reading one terminal is a race whose loser is silent. Health checks beyond the READY line are still
+not done, and the header says so.
 
 ```powershell
-cargo run -p kryta-supervisor                # the stack: both programs, stopped together on Ctrl+C
+cargo run -p kryta-supervisor                # the stack: every service, stopped together on Ctrl+C
 cargo run -p kryta-supervisor -- --check     # start, wait for every READY, stop, report
+cargo run -p kryta-supervisor -- status          # ask the running stack what it is doing
+cargo run -p kryta-supervisor -- restart world   # start one service again
+cargo run -p kryta-supervisor -- quit            # stop every service and exit
 ```
 
 The binaries it starts are `target/debug/<program>.exe`; one that is missing is built by the

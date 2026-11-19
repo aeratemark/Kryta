@@ -350,10 +350,10 @@ mod tests {
     fn the_shipped_table_binds_the_references_chat_commands_and_the_consoles_status() {
         let document = Document::read("../data/commands.json").expect("the shipped file parses");
         let records = document.records("commands").expect("commands is a record list");
-        assert_eq!(records.len(), 4);
+        assert_eq!(records.len(), 6);
 
         let table = Table::load("../data/commands.json", &Log::new()).expect("the shipped table reads");
-        assert_eq!(table.len(), 4);
+        assert_eq!(table.len(), 6);
         let tp = table.command("tp").expect("/tp is answered");
         assert_eq!(tp.chat_operation(), Some(Operation::Teleport));
         assert!(tp.takes_argument());
@@ -386,6 +386,17 @@ mod tests {
         assert!(values.is_empty());
         assert!(table.resolve_console("server info now").is_none(), "it takes no values");
         assert!(table.resolve_console("tp ascalon").is_none(), "a chat row is not console-visible");
+
+        // The two lifecycle rows the reference's console has (`cs_server.cpp:68,89`).
+        for (name, operation) in [
+            ("server exit", "world.exit"),
+            ("server restart", "world.restart"),
+        ] {
+            let row = table.command(name).expect("the console answers it");
+            assert_eq!(row.registered(), Some(operation));
+            assert!(!row.takes_argument());
+            assert!(row.serves(Surface::Console));
+        }
     }
 
     /// A console row may be more than one word, and the longest name wins.

@@ -34,6 +34,20 @@
       "parameters": [],
       "surfaces": ["console"],
       "doc": "what this world is running, answered on the console and to an operator client; the reference's own console name for it (cs_server.cpp:92), and it needs no player session"
+    },
+    {
+      "command": "server exit",
+      "operation": "world.exit",
+      "parameters": [],
+      "surfaces": ["console"],
+      "doc": "stop the world; the reference's own console name (cs_server.cpp:89), and the process exits with the reference's code 0 (Main.cpp:434-439)"
+    },
+    {
+      "command": "server restart",
+      "operation": "world.restart",
+      "parameters": [],
+      "surfaces": ["console"],
+      "doc": "stop the world so a supervisor starts it again; the reference's own console name (cs_server.cpp:68), and the process exits with the reference's code 2, which its main documents for a restarter (Main.cpp:434-439)"
     }
   ]
 }
