@@ -1,6 +1,6 @@
 # Rule coverage: where each of the owner's rules stands in this tree
 
-The owner's ledger (`docs/game-rules.md`) is what this port is measured against: 58 asserted rules. This
+The owner's ledger (`docs/game-rules.md`) is what this port is measured against: 67 asserted rules. This
 file answers, for each one, one question - what is there today? It is a statement of today, and it is
 updated in the same commit as the change that moves a rule.
 
@@ -44,6 +44,24 @@ The states are:
 | R23, R24, R25, R27, R28 heroes and henchmen | not started | `game/Heroes/` is a stub |
 | R15 the party cap is not a constant | data | `World.PartySizeCap` (8) and `map.party_cap` read by `DatabaseMaps::party_cap`; nothing applies it yet |
 | R26 an arrival at a smaller cap truncates the party | not started | needs parties |
+
+## Character creation
+
+The owner's description of the live creation screens is `docs/game-rules.md` R59-R67, with its own
+caveat that the screens are the client's and may send only once. `docs/port/02-wire.md`, "The creation
+screen's conversation", is the frames.
+
+| rule | state | where, and what proves it |
+|---|---|---|
+| R59 a character is created from an empty slot | in | the confirm writes the character against the account, and the list the slot belongs to is answered at login (`a_creation_confirm_writes_a_character_row`); the slot screen is the client's |
+| R60 role-playing or PvP is the first choice | partial | `characters.is_pvp` is written as the campaign byte being 0, which is E76's own split (a PvP create sends chapter 0); nothing else branches on it, and the PvP screens are not described |
+| R61 a role-playing character chooses a campaign | in | `0x8060`'s first byte is read into the creation state and written to `characters.campaign` |
+| R62 the campaign decides the profession list | data | `data/equipment.json` holds exactly the lists R62 names - campaign 1 (Prophecies) with professions 1-6, 2 (Factions) with 1-8, 3 (Nightfall) with 1-6, 9 and 10 (Paragon and Dervish), and the PvP campaign 0 with 1-10 - imported from the reference's `GetDefaultEquipments` (`tools/import-creation-inventory.py`); the list the screen draws is the client's own table |
+| R63 the screens run in one order | not started | the server sees `0x8089`, `0x8060` and `0x808B` and nothing else; the order is the client's, so nothing here enforces or observes it |
+| R64 two appearance screens, five armour colours and height | partial | the packed appearance word is read and stored whole (`sex`, `height`, `skin`, `hair colour`, `face`, `profession`, `campaign` - E74); the five armour-piece colours are stored nowhere and their wire form is unknown |
+| R65 the name is unique, 19/3, letters, first name and surname | partial | a taken name is refused with `GM_ERROR_CHARACTER_NAME_ALREADY_EXIST` and no row is written (the `characters.name` unique index, `game/Handlers/CharacterHandler.rs:30-37,302-310`); the length, alphabet and surname rule is the screen's and the server does not re-check it |
+| R66 three flags beside the name | not started | no column, and no source states where they travel |
+| R67 a cinematic, then the starter map its campaign history dictates | partial | the confirm answers `0x0188` and then `0x0099` with the map; that map is `World.StartingOutpost`, or the lowest-id outpost the world hosts when the row is absent (`WorldSession::starting_outpost`) - it is the same map for every campaign, and the cinematic is the client's |
 
 ## Characters, skills, movement
 

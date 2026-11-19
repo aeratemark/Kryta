@@ -125,6 +125,12 @@ The frames, with the reference's own wire sizes:
 - The inventory is the reference's own: six bags, the items it creates before a profession is chosen, and the chosen profession's starting set, imported from its rows by `tools/import-creation-inventory.py` into `data/inventory.json` and `data/equipment.json`. A creation screen is sent about 180 item messages in all for a profession's set; what this tree sends
   today is the reference's six bags, its pre-choice items and the chosen set, which is enough for the
   client to have an inventory model to draw.
+- The screens are the client's, and the wire carries their outcome: the campaign and profession go out as
+  `0x8060` as the choice changes (E76's preview is that same pair), and what the appearance and name
+  screens collect arrives in the confirm - the counted name, the packed word holding sex, height, skin,
+  hair colour, face, profession and campaign, and eight more bytes (E73, E74). The owner's description of
+  the screen order is `docs/game-rules.md` R59-R67. Where R64's five armour-piece colours and R66's three
+  flags travel is not recorded by any source here.
 - In this tree: `game/src/Server/Packets/`, the size table in `WorldSession`, and the row the confirm
   writes (`docs/decisions/0007-character-schema.md`).
 

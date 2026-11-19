@@ -120,6 +120,33 @@ Rules are never deleted. A contradicted rule keeps its row and its contradicting
 | R57 | **A named district is honoured.** When the travel request carries a district number (the game link's `177` with district 1..n), the player enters that district; a request with district 0 means the server assigns, which uses the first district with room (R22). The language travels with the request (Owner, 2026-11-02: 1:1 parity with the game; where R22 and Eden's evidence disagree, the client behaviour wins) |
 | R58 | **A district that is full or closing cannot be entered.** The client does not offer such a district, so the server does not place a character in it, and a travel that names one is refused rather than honoured (owner, 2026-11-02, on the wiki's rule in E8) |
 
+## Asserted by the owner (2026-11-19): character creation
+
+The owner described what creating a character does on the live client, screen by screen. These are
+assertions - the code must comply - and they are this ledger's creation subject.
+
+| # | rule |
+|---|---|
+| R59 | **A character is created from an empty slot**: the player selects an empty character slot on the select screen and presses create |
+| R60 | **The first choice is the character's kind** - role-playing or PvP - and the screens after it branch from that choice |
+| R61 | **A role-playing character then chooses a campaign**: Prophecies, Factions or Nightfall |
+| R62 | **The campaign decides the profession list**: Prophecies offers Warrior, Ranger, Monk, Necromancer, Mesmer and Elementalist; Factions offers those six **plus Assassin and Ritualist**; Nightfall offers those six **plus Paragon and Dervish in place of the Factions pair** |
+| R63 | **Role-playing creation runs in one order**: campaign -> profession -> sex (male or female) -> appearance -> body -> name -> create |
+| R64 | **Appearance is two screens**: the first chooses **hair style, hair colour, face and skin colour**; the second chooses **the five armour-piece colours - head, chest, hands, legs, feet - and the character's height** |
+| R65 | **The name is unique and limited**: at most **19** characters, at least **3**, **English letters only**, and a **first name and a surname** are both required |
+| R66 | **Three flags are offered beside the name**: Reforged, Dhuum's Covenant and Melandrus Accord |
+| R67 | **Create plays a cinematic and then spawns the character in its starter map** at the spawn point its campaign history dictates (R47, "history" is the campaign history), not back at character select |
+
+The owner's own caveat, recorded because it decides how these rows are read: the sequence "might not
+fully reflect the packets sent", because the creation screens are the client's and it may settle every
+choice before it sends one. What the wire is known to carry is the campaign and profession as the choice
+changes (`0x8060`, E76) and, in the confirm, the counted name, the packed word holding sex, height,
+skin, hair colour, face, profession and campaign, and eight more bytes (E73, E74). The rules above are
+the player's path through the screens, not one message per screen; no source states that any screen
+other than those two sends anything. Where the five armour-piece colours of R64 and the three flags of
+R66 travel is not recorded, and neither is the appearance value range, the refusal code the client shows
+for each cause, or the spawn point each campaign's history starts from (see "Still missing").
+
 ## Evidenced
 
 | # | fact | witness |
@@ -449,7 +476,7 @@ Py4GW Stealth gives the **client's view** (E22-E25). Eden's and Rurik's document
 | **Aggro** | the bubble radius (about 1012), the per-creature trait and observed leash outcomes are evidenced (E139-E155); **the exact leash model and per-creature bubble sizes beyond three definitions** are CLAIMED or unmeasured |
 | **Combat numbers** | the damage formula, energy and adrenaline encoding, timing and effect messages are evidenced (E176-E197); **per-skill cast/aftercast and cost values** are skill content, not the client model |
 | **Chat and social** | the send/receive path and the channel map are evidenced (E85-E93); **channel permissions, party-search rules and mail** remain |
-| **Character** | the creation, select, delete and rename paths and slot caps are evidenced (E72-E76, E162-E168); **which name and creation rules the server enforces** is not stated |
+| **Character** | the creation, select, delete and rename paths and slot caps are evidenced (E72-E76, E162-E168), and the owner has stated the screen flow with its name rule and its flags (R59-R67); **where the five armour-piece colours and the three flags travel on the wire**, **the range of each appearance field**, **the refusal code the client shows for each cause**, **whether the server re-checks the name rule the screen states**, and **the spawn point each campaign's history starts from** are not stated |
 | **Missions and story** | quest, goal, clock and reward messages are evidenced (E62-E70); **objectives content, bonus objectives, cutscenes, history flags and chaining** are content and rules |
 | **PvP** | out of the near term (R41) |
 | **Persistence** | the client expects its state to come back; **what the server must store versus regenerate** is our decision, informed by the client's lists |
