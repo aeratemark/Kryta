@@ -40,10 +40,15 @@ pub struct Request {
 /// How long a client waits for its answer.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// Bind the channel on loopback and answer requests on it.
-pub fn serve(port: u16, state: State, send: mpsc::Sender<Request>) -> Result<(), String> {
+/// Bind the channel on loopback and answer requests on it. Answers the port it bound, which is the
+/// port the caller asked for unless it asked for `0`.
+pub fn serve(port: u16, state: State, send: mpsc::Sender<Request>) -> Result<u16, String> {
     let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
         .map_err(|error| format!("the control channel cannot bind 127.0.0.1:{port}: {error}"))?;
+    let bound = listener
+        .local_addr()
+        .map_err(|error| format!("the control channel cannot read its own address: {error}"))?
+        .port();
     std::thread::Builder::new()
         .name("supervisor-control".into())
         .spawn(move || {
@@ -52,7 +57,7 @@ pub fn serve(port: u16, state: State, send: mpsc::Sender<Request>) -> Result<(),
             }
         })
         .map_err(|error| format!("the control thread cannot start: {error}"))?;
-    Ok(())
+    Ok(bound)
 }
 
 fn handle(mut stream: TcpStream, state: &State, send: &mpsc::Sender<Request>) {
@@ -132,6 +137,7 @@ pub fn request(port: u16, line: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     fn state() -> State {
         let mut map = BTreeMap::new();
@@ -174,6 +180,29 @@ mod tests {
             assert!(answer.starts_with("err: expected:"), "{line}: {answer}");
             assert!(requests.try_recv().is_err(), "{line} must not act");
         }
+    }
+
+    #[test]
+    fn a_client_and_the_supervisor_meet_over_the_channel() {
+        let state = state();
+        let (send, requests) = mpsc::channel();
+        let port = serve(0, Arc::clone(&state), send).expect("the channel binds");
+
+        // The supervisor's own loop, faked: it takes one action and answers it.
+        let supervisor = std::thread::spawn(move || {
+            let request = requests.recv().expect("an action arrives");
+            assert_eq!(request.action, Action::Stop("world".into()));
+            request.reply.send("stopped world".into()).expect("the answer is delivered");
+        });
+
+        assert_eq!(request(port, "stop world").expect("the action answers"), "stopped world");
+        supervisor.join().expect("the supervisor's loop finished");
+        assert_eq!(
+            request(port, "status").expect("status answers"),
+            "auth: up on 6112\nworld: up on 6113",
+            "one line per service, and the client reads all of them"
+        );
+        assert!(request(port, "nonsense").is_err(), "a line that is not a verb is an error");
     }
 
     #[test]

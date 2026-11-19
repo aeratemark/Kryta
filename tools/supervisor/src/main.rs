@@ -388,14 +388,15 @@ fn main() -> std::process::ExitCode {
     let state: control::State = Arc::new(std::sync::Mutex::new(BTreeMap::new()));
     state_all(&state, &services, "starting");
     if stack.control_port != 0 {
-        if let Err(error) = control::serve(stack.control_port, Arc::clone(&state), actions.clone()) {
-            eprintln!("{error}");
-            return std::process::ExitCode::FAILURE;
+        match control::serve(stack.control_port, Arc::clone(&state), actions.clone()) {
+            Ok(bound) => println!(
+                "the control channel is listening on 127.0.0.1:{bound} - `status`, `restart <service>`"
+            ),
+            Err(error) => {
+                eprintln!("{error}");
+                return std::process::ExitCode::FAILURE;
+            }
         }
-        println!(
-            "the control channel is listening on 127.0.0.1:{} - `status`, `restart <service>`",
-            stack.control_port
-        );
     }
     let mut children: Vec<(Service, Child)> = Vec::with_capacity(services.len());
     for service in &services {

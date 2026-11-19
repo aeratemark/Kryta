@@ -32,6 +32,7 @@ Two consequences:
 | `tools/capture/read.py` | reads a capture back in the layer it declares - `--describe`, `--header`, `--limit`, `--assume-layer`, `--self-test` - and refuses a file that states no layer | nothing; it is Python 3 and standard library only | ASURA `tools/capture-read.py` |
 | `tools/capture/diff.py` | compares two captures message by message: agreement count, then the first divergences with both payloads; refuses a struct-layer file against a wire-layer one, because the two widen fields differently | nothing; standard library only | new; the comparison workflow `0012-chat-text-is-sent.md` used by hand |
 | `tools/capture/capture_file.py` | the one implementation of the layer rules both of the above use | nothing | ASURA `tools/capture-read.py`'s layer half |
+| `worldserver --bin kryta-cli` | the standalone operator client: `init-credential <file>` creates and restricts the world's control credential; `<port> <credential> <operation>` sends one operation to a running world and prints its answer | a running world with `Control.Enable` | new; the client ASURA's supervisor verbs are the precedent for |
 
 ## Capturing the server
 
@@ -63,6 +64,26 @@ expectation is the thing to settle.
 divergences are named with both payloads - a fresh character's guid in `0x0188`, a scattered spawn point
 in `0x0196`, and a counter in `0x001F` that read 6 and 7. A pair whose layers differ is refused (exit 2)
 rather than compared, because a struct record and a wire record are not the same bytes.
+
+## The supervisor's channel and both exit codes
+
+The channel is tested over a real loopback socket, not only by hand: `Control.rs` binds port 0, connects
+a client, sends `stop world` and answers it the way the supervisor's loop does, then reads `status` and
+gets one line per service, then a line that is not a verb and gets an error. `cargo test -p
+kryta-supervisor` is the command.
+
+Both exit codes of the reference's contract (`Main.cpp:434-439`) were observed on this machine:
+
+- **`2` restarts the service.** `kryta-cli ... world.restart` answered "Restarting: this process stops
+  and the supervisor starts it again"; the supervisor logged `asked to restart (exit 2), request 1 of 5`,
+  the world's process id changed, the stack stayed up with one world in it, and the new world answered
+  `world.status` again.
+- **`0` stops the stack.** `kryta-cli ... world.exit` answered "Stopping the world"; the supervisor
+  logged `world | exited with exit code: 0; stopping the rest`, stopped `auth` and `manage`, and left no
+  process behind. That is the rule this file states: a service that ends on its own stops the rest.
+
+The clients' own codes were checked too: `kryta-supervisor status` answers 1 when nothing is listening,
+`--help` answers 0, and `kryta-cli` answers 1 with the reason when the world is not there.
 
 The recovered control-panel and research requirements are in `docs/port/12-research-and-control-panel.md`.
 The research and plan for the operator's surfaces - the command line, a console over the same command
