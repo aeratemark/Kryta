@@ -128,22 +128,32 @@ reaches the data through the nouns' own repositories, so what a page writes is w
 
 `tools/supervisor/` is the fourth binary, and it is the one command that runs the stack: it reads
 `tools/supervisor/stack.json` - a service per row, with the program, its arguments and the port it
-binds, plus `control_port` and `console_service` - starts every service, prints each one's output under
-its own name, waits for its READY line, and stops them all together on Ctrl+C. A service that dies on
-its own stops the rest and the command answers that service's exit code. The arrangement is ASURA's
-`asura-supervisor` (this tree's programs are several, and one command that runs them is what makes a
-stack a stack); the *list* is data, so a second world or a changed port is an edit in that file, not a
-program change.
+binds, plus `control_port` and `console_service` - starts every service, waits for its READY handshake,
+and stops them all together on Ctrl+C. A service that dies on its own stops the rest and the command
+answers that service's exit code. The arrangement is ASURA's `asura-supervisor` (this tree's programs
+are several, and one command that runs them is what makes a stack a stack); the *list* is data, so a
+second world or a changed port is an edit in that file, not a program change.
+
+**Its console is the stack's, not the services'.** A service's standard output is never shown: the
+supervisor reads it for the handshake, keeps a thirty-line tail for a failure report, and prints only
+its own lifecycle lines and a service's standard error. `--logs` mirrors the output when that is what is
+wanted. The services themselves log where their appenders say - `Server.log`, `Auth.log` and
+`Errors.log` - and `03-tracing.md`, "What reaches a screen", is the rule. The `READY: listening on ...`
+handshake is printed to standard output only when `KRYTA_STACK` is set, which this program sets; it is
+consumed here and never shown.
+
+`console_service` is empty, and that is deliberate: with a service's output hidden, an embedded console
+would answer into nothing. Run a program directly when you want its console, and use `kryta-cli` (or
+`kryta-supervisor status`) for one that is running under the stack. Set the key to a service name only
+if that service's output will not be hidden - whose only current reader is a terminal run of the
+supervisor with `--logs`.
 
 It owns the control channel (`tools/supervisor/src/Control.rs`), a loopback line protocol with
 `status`, `stop [service]`, `restart <service>` and `quit`, so a running stack can be asked what it is
 doing and told to restart one thing without a second owner of its processes. And it reads the
 reference's exit-code contract (`Main.cpp:434-439`): a world that exits `2` asked to be restarted, and
 this program - the restarter that comment names - starts it again, up to five times before stopping the
-stack. `console_service` names the one service that inherits the terminal's standard input, so its
-embedded console is the operator's; every other service is given no input at all, because two programs
-reading one terminal is a race whose loser is silent. Health checks beyond the READY line are still
-not done, and the header says so.
+stack. Health checks beyond the handshake are still not done, and the header says so.
 
 ```powershell
 cargo run -p kryta-supervisor                # the stack: every service, stopped together on Ctrl+C

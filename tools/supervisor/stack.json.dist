@@ -5,10 +5,10 @@
     "where the binaries come from": "target/debug/<program>.exe, so `cargo build` runs before the first start (the supervisor says which one is missing, and how to build it).",
     "what this file does not say": "the databases. They are checked by the programs themselves, never started here - a database server is an operating-system service, managed elsewhere.",
     "control_port": "the loopback port of the supervisor's control channel (`status`, `stop [service]`, `restart <service>`, `quit`). It is the only owner of these processes; the world's console asks the world to stop and exits with the reference's code 2 for a restart, and this program reads that code and starts the service again.",
-    "console_service": "the one service that inherits the terminal's standard input, so its embedded console is the operator's. Every other service gets no input at all, so two programs cannot read one terminal."
+    "console_service": "empty: no service inherits the terminal. A service's output is never shown under a supervisor, so an embedded console there would answer into nothing - run the service directly when you want its console, and use kryta-cli for a running world. Set this to a service name only if that service's output will not be hidden."
   },
   "control_port": 7612,
-  "console_service": "world",
+  "console_service": "",
   "services": [
     {
       "name": "auth",
