@@ -56,6 +56,11 @@
     "doc": "What a new character wears per campaign and profession - a record list of sets, read at start-up."
   },
 
+  "CommandsFile": {
+    "value": "data/commands.json",
+    "doc": "The chat command surface: the names a player may type, what each takes, and which server operation it runs. A record list, read at start-up; a name it grants with no operation behind it is refused then, not when a player types it (docs/decisions/0011-the-command-surface-is-content.md)."
+  },
+
   "World": {
     "DistrictAllotment": {
       "value": 100,

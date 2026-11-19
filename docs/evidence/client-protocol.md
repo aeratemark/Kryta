@@ -1,5 +1,10 @@
 # Client protocol
 
+This is historical ASURA protocol research. Its ASURA paths, commands and implementation status
+are not Kryta instructions or current Kryta status. For Kryta, use `docs/port/02-wire.md`,
+`docs/port/07-manual-test.md` and `docs/port/09-parity-audit.md`; check each observation against
+its cited source and capture layer.
+
 The wire facts the auth service has to reproduce. Everything here is derived from the client's own
 protocol and from captures of a working session; where a shape is only known approximately it is
 marked **unverified**, and the original code is named so the port can be checked byte for byte instead

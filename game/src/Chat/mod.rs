@@ -1,16 +1,20 @@
-//! `game/Chat/` - the reference's `src/server/game/Chat/`: the channel rule, and the command table.
+//! `game/Chat/` - the reference's `src/server/game/Chat/`: the channel rule, and the command surface.
 //!
 //! What a player types into a chat line arrives as `GAME_CMSG_SEND_CHAT_MESSAGE` (`0x8064`); the first
 //! unit of its text is the marker that decides what happens - `!` speaks on the all channel, `#` on the
 //! group channel, `$` on trade, `/` starts a command, and the reference drops `@`, `%` and `"` and
 //! refuses the rest (`GmChat.c`, as the working implementation ports it at
 //! `ASURA/crates/asura-world/src/chat.rs:193-353`). The connection reads that frame; this module holds
-//! the two tables it decides with, and the answer `/maps` prints.
+//! the alias rule and the answer `/maps` prints.
 //!
-//! The command surface is the reference's own two places: `GameSrv_TryHandleGmCommand` (`GmCommands.c`,
-//! which owns `/tp`, `/teleport` and `/maps`) and `GameSrv_HandleChatCommand` (`GmChat.c`, which owns
-//! `/stuck`). [`COMMANDS`] names them once, as the working implementation does
-//! (`chat.rs:141-160`), so the surface cannot drift from what the connection answers.
+//! **The command surface is a file, not this module.** Which names exist, what each takes and which
+//! operation it runs are rows in `data/commands.json`, read by [`commands::Table`]; the reference's own
+//! two dispatch points - `GameSrv_TryHandleGmCommand` (`GmCommands.c`, which owns `/tp`, `/teleport` and
+//! `/maps`) and `GameSrv_HandleChatCommand` (`GmChat.c`, which owns `/stuck`) - are that file's rows, and
+//! Rust keeps only the operations they name (`docs/decisions/0011-the-command-surface-is-content.md`).
+
+#[path = "Commands.rs"]
+pub mod commands;
 
 use crate::maps::travel_targets::{TRAVEL_TARGETS, TravelTarget};
 use crate::world::MapEntry;
@@ -33,52 +37,6 @@ pub fn alias_key(text: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-/// One chat command this world answers.
-///
-/// The table is the single place the command surface is written down, and the connection dispatches
-/// through it, so the surface cannot drift from what the code does. Each entry names the reference's own
-/// function, for a reader who wants to check.
-#[derive(Debug, Clone, Copy)]
-pub struct Command {
-    /// What a player types, without the slash. `GmCommands.c` accepts two names for one command.
-    pub names: &'static [&'static str],
-    /// Where the reference's own dispatch handles it.
-    pub reference: &'static str,
-    /// Whether the command takes an argument (`GameSrv_TryHandleGmCommand` splits on the first space).
-    pub takes_argument: bool,
-    /// What answering it does.
-    pub answer: &'static str,
-}
-
-/// Every chat command this world answers, in the reference's order.
-pub const COMMANDS: &[Command] = &[
-    Command {
-        names: &["tp", "teleport"],
-        reference: "GmCommands.c:184 GameSrv_TryHandleGmCommand -> GameSrv_HandleTeleportCommand",
-        takes_argument: true,
-        answer: "a server transfer, or one of the reference's three refusals (unknown map, no config, already here)",
-    },
-    Command {
-        names: &["maps"],
-        reference: "GmCommands.c:206 GameSrv_TryHandleGmCommand -> GmCommand_ListTargets",
-        takes_argument: false,
-        answer: "the alias table, printed: the reference's chat half is gated off, so nothing goes on the wire",
-    },
-    Command {
-        names: &["stuck"],
-        reference: "GmChat.c:243 GameSrv_HandleChatCommand",
-        takes_argument: false,
-        answer: "AGENT_UPDATE_POSITION for the agent -- a position, not AGENT_STOP_MOVING",
-    },
-];
-
-/// The command a player typed, if this world answers it.
-pub fn command(name: &str) -> Option<&'static Command> {
-    COMMANDS
-        .iter()
-        .find(|candidate| candidate.names.contains(&name))
 }
 
 /// The reference's `/tp` lookup: normalise the argument, find it in its table.
@@ -211,21 +169,6 @@ mod tests {
         assert!(travel_target("lakesidecounty").is_none());
         assert!(travel_target("").is_none());
         assert!(travel_target("   ").is_none());
-    }
-
-    #[test]
-    fn the_commands_are_the_references_three_and_its_two_names_for_one() {
-        assert!(command("tp").is_some());
-        assert!(command("teleport").is_some());
-        assert!(command("maps").is_some());
-        assert!(command("stuck").is_some());
-        assert!(command("").is_none());
-        assert!(command("say").is_none());
-        assert_eq!(
-            command("tp").map(|c| c.names),
-            command("teleport").map(|c| c.names)
-        );
-        assert_eq!(COMMANDS.len(), 3);
     }
 
     /// `/maps` with this world's one map: the table's own alias for it, and no row for the creation

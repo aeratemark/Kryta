@@ -152,6 +152,9 @@ pub struct WorldSession {
     pub(crate) realm: u32,
     /// The maps the world hosts, so a connection can be told what it may enter.
     pub(crate) maps: Vec<crate::world::MapEntry>,
+    /// The chat command surface: the names a player may type and the operation each one runs
+    /// (`data/commands.json`, `docs/decisions/0011-the-command-surface-is-content.md`).
+    pub(crate) commands: crate::chat::commands::Table,
     /// Where a character may stand on each map, for the entry placement of R13.
     spawns: Vec<crate::maps::MapSpawn>,
     /// The numbers this world runs by: the spawn scatter and the rest.
@@ -235,6 +238,7 @@ impl WorldSession {
             log,
             realm: world.realm(),
             maps: world.maps().to_vec(),
+            commands: world.commands().clone(),
             spawns: world.spawns().to_vec(),
             settings: world.settings().clone(),
             account: std::sync::Mutex::new([0u8; 16]),
@@ -1127,14 +1131,9 @@ impl WorldSession {
     ///
     /// R12 gives a new character exactly one unlock; R14 places a load at the character's last outpost.
     pub(crate) fn starting_outpost(&self) -> Option<&crate::world::MapEntry> {
-        let wanted = self.settings.starting_outpost;
-        if let Some(map) = self.maps.iter().find(|map| map.id == wanted && map.is_hostable()) {
-            return Some(map);
-        }
-        self.maps
-            .iter()
-            .filter(|map| map.kind == Some(crate::world::map_kind::OUTPOST))
-            .min_by_key(|map| map.id)
+        // The rule is the world's (`crate::world::first_outpost`); what the connection has is the
+        // copy of the maps it was built with, and the number from the settings.
+        crate::world::first_outpost(&self.maps, self.settings.starting_outpost)
     }
 
     /// The map this connection is in, as the graph lookup wants it.

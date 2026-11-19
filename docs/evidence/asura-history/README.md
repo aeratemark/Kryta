@@ -31,6 +31,9 @@ copies of the listed Git blobs.
 | Captures, initialization and parity | `docs/23-initialization-protocol.md`; `docs/24-stream-parity.md`; `docs/29-initialization-capture.md`; `docs/history/gwps-parity/`; `docs/reference/client-protocol.md` | `docs/evidence/`, `docs/port/02-wire.md`, and `docs/port/09-parity-audit.md` hold Kryta's present evidence and ledger. |
 | ASURA reengineering | `docs/work/re-engineering-plan.md`; `docs/research/azerothcore-structure.md`; `docs/37-rework-layers.md` | Compare with Kryta's `docs/port/01-structure.md` and decisions. |
 
+The ongoing cross-document audit and earlier-revision review are tracked in
+`docs/port/13-documentation-audit.md`.
+
 ## Findings from the first comparison
 
 - `docs/game-rules.md` began with the recovered ledger. It incorporates later ASURA corrections to R11/R12, R22, R27, E199 and E220, and the unresolved world-model questions.

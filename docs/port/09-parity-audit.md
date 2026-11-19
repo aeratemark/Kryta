@@ -151,9 +151,9 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x0048` | display cape | `agent_display_cape` | same | ported |
 | `0x0059` | player create (91) | `player_create` | same | ported |
 | `0x005A` | player destroy | `player_destroy` | `character_packets::player_destroy` | ported |
-| `0x005D` | chat: the body | `chat_message_core` | `chat_packets::chat_message_core` | ported |
-| `0x005E` | chat: the server speaking | `chat_message_server` | `chat_packets::chat_message_server` | ported thin: the builder is ASURA's, and ASURA itself never sends it |
-| `0x0061` | chat: which player spoke | `chat_message_local` | `chat_packets::chat_message_local` | ported |
+| `0x005D` | chat: the body, one fragment | `chat_message_core` | `chat_packets::chat_message_core` over `all_chat_body`, fragmented at 121 | ported: the body is a **coded string** (`0x0108 0x0107 text 0x0001`, `GmText.c:43-57` and `Rurik/studies/chat/FINDINGS.md:263`) and long text is fragmented, not truncated. ASURA's table and this tree before 0012 wrote bare text capped at 122, which is what left `/maps` past one frame |
+| `0x005E` | chat: the server speaking | `chat_message_server` | `chat_packets::chat_message_server(player, channel)` | ported: `[u16 player, u8 channel]`, **5 bytes** (`msgdefs.info` `GAME_SMSG_0094`; bytes `5e00 0100 06`, `FINDINGS.md:264`). ASURA wrote two dwords; **it is sent now** (`answer_line`, `Channel_Global`) as `GmChat.c:116-143` sends it, and the owner's live client read `/maps`'s answer off the screen - the first authored text rendered on this channel in either server |
+| `0x0061` | chat: which player spoke | `chat_message_local` | `chat_packets::chat_message_local(player, channel)` | ported: `[u16 player, u8 channel]`, **5 bytes** (`msgdefs.info` `GAME_SMSG_0097`; bytes `6100 0100 03`). ASURA wrote two dwords |
 | `0x006E` | visual equipment | `update_agent_visual_equipment` | same | ported |
 | `0x0070` | hard mode | `hard_mode_unlocked` | same | ported |
 | `0x008A` | cartography data (262) | `cartography_data` | `instance_packets::cartography_data` | ported |
@@ -227,7 +227,7 @@ setting that selects one.
 | the players ask | 34 frames, in one order (`player.rs:382-388` for the party) | the same 34, the same order | ported |
 | the travel | the redirect `0x01A6`, `0x0099` in its twelve-byte form, `0x00B0`, `0x00B1`, `0x005A`, `0x0021` (`travel.rs:480-518`) | the same eight, in the same order, out of `begin_transfer` | ported: the crossing starts it from a step (`cross_portal`) and hands its landing over; the seat reservation is 7.4's named difference |
 | a player joining a map others are in | `introduction` (`0x0059`, `0x00B0`, `0x00B1`, `0x0020`) and `farewell` (`0x005A`, `0x0021`) (`instance.rs:432-473`, `player.rs:499-532`) | the same, plus the worn items in the unnamed form and the agent's look, out of `game/Districts/Peers.rs` | ported |
-| chat | `0x005D` body plus `0x0061` who spoke, and every generated answer printed (`chat.rs:193-353`) | the same pair, and `/maps`, `/stuck`, `/tp` and `Unknown command` printed | ported |
+| chat | `0x005D` body plus `0x0061` who spoke, and every generated answer printed (`chat.rs:193-353`) | `0x005D`* then `0x0061`, broadcast to the map and district, and every generated answer **sent** as `0x005D`* + `0x005E` on `Channel_Global` | ported with one corrected divergence: ASURA prints the answers and its two tags are eight body bytes where the wire has three. The reference sends them (`GmChat.c:116-143`), the client renders the pair (`Rurik/studies/chat/FINDINGS.md:263-268`), and both frames go to the asker rather than the body to everyone plus a tag to one (`0012-chat-text-is-sent.md`) |
 | the exploration grid | `0x008B` then `0x008A`, 0.58-0.73 s into the load, once per instance (`cartography.rs`, `map.rs:22-48`) | the same two, right after the instance's record, with every band empty (`maps::cartography::init_frames`) | ported |
 | the instance table | `0x01A0` batches of fifteen pairs, in the same phase (`instance_table.rs`, `map.rs:49-58`) | the same batches, from every row with a value (`maps::instance_table::table_for`) | ported |
 
@@ -344,7 +344,7 @@ Three ways to give it one, and the owner picks - this is a decision, not a piece
    moves the substitution to the other side of the connection.
 
 While the answer is `None`, a client that asks the login for an explorable is answered with that
-explorable, and the world's load refuses a map it cannot host (R12's gate and `is_hostable`); the
+explorable, and the world's load refuses a map it cannot host (`is_hostable`); the
 substitution rule 3 describes is proved by `placement`'s own tests but is not in force.
 ## 7b. The walking subject, surveyed the way Rule 0a requires
 
@@ -478,7 +478,7 @@ keeps its traversal order, its tie-breaking and its quirks; the dump keeps its b
    a map with no graph is refused with `NoGraph`, the working implementation's own answer.
 2. **(done)** The doorway crossing (`portals.rs`, whole) and the travel's cycle, so a step through a
    map's own wall starts a transfer that lands on the receiving map's arrival. What is not here is
-   named in §7.4: ASURA's seat reservation, which is its own deployment accounting.
+   named in 7.4: ASURA's seat reservation, which is its own deployment accounting.
 3. **(done)** The catalogue and the instance table's content: every record ASURA's pack states is a row
    (265 of them: 145 with a type and an archive file - the maps this world puts a client in - and 120
    that state only an `instance_value`, which is a destination the client can resolve and this world
@@ -514,7 +514,7 @@ because the reference's structure is this tree's authority for how a thing is ar
 | `graph_dump.rs` | 473 | `game/Terrain/GraphDump.rs` | ported whole |
 | `gwdat.rs` | 431 | `game/Pack/Gwdat.rs` | ported whole |
 | `fa_compress.rs` | 402 | `game/Pack/FaCompress.rs` | ported whole |
-| `chat.rs` | 354 | `game/Chat/`, and `answer_chat_message` in `game/Handlers/ChatHandler.rs` | ported: the channel rule, the command table, `alias_key` |
+| `chat.rs` | 354 | `game/Chat/`, `data/commands.json`, and `answer_chat_message` + `answer_line` in `game/Handlers/ChatHandler.rs` | ported: the channel rule, `alias_key`; the command table is now **data** (`0011`) and the three text frames are **not** ASURA's - they are the measured ones (`0012-chat-text-is-sent.md`) |
 | `pathfind/directional.rs` | 320 | `game/Terrain/Pathfind/Directional.rs` | ported whole, its PROVISIONAL caveat kept |
 | `replay.rs` | 302 | nothing | ASURA's own capture-replay harness; this tree's equivalent is `recordings/` and the `--ignored` end-to-end tests |
 | `map_spawns.rs` | 264 | rows: `map_spawn` | ported as data (466 points, with the facing each states) |

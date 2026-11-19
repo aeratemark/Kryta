@@ -7,6 +7,7 @@ updated in the same commit as the change that moves a rule.
 The states are:
 
 - **in** - implemented and proven (the test or the live run is named).
+- **partial** - some behavior exists, but the whole rule or its acceptance is outstanding.
 - **data** - the rows or the setting exist, and the behaviour that consumes them waits on a capture or
   on a later step.
 - **blocked** - the next piece needs a measurement this tree does not have; `docs/port/06-world-plan.md`
@@ -19,20 +20,20 @@ The states are:
 |---|---|---|
 | R1 a map is a definition, an instance is a running copy | in | `game/Districts/`: `Districts::enter` opens and hands out a copy; `game/Maps/` holds the definition |
 | R2 outposts are shared copies | in | the same copy is handed out while it has room (`a_filled_district_is_left_for_the_first_with_room`) |
-| R3 explorables are private per party | in | with no parties, one connection is one party, so each entry opens a copy (`an_explorable_gets_a_copy_of_its_own`) |
+| R3 explorables are private per party | partial | with no parties, one connection is one party, so each entry opens a copy (`an_explorable_gets_a_copy_of_its_own`) |
 | R4 an outpost has numbered districts | in | copies are numbered and the load reports the number in `0x019A` |
 | R5 a new district opens at the allotment | in | `World.DistrictAllotment` (100) and the first-with-room rule; `a_filled_district_is_left_for_the_first_with_room` |
 | R16 one district is enough to begin | in | the first entry opens district 1 and the login answers the district list with exactly one (`authserver/tests/end_to_end.rs` checks the 29-byte answer at the program level: the transaction echoed, eleven language pairs, language 0 with one district) |
 | R22 default assignment takes the first district with room | in | `Districts::enter` with no named district |
 | R57 a named district is honoured | in | `enter` with a hint opens or joins that number; `a_named_district_is_honoured_even_before_it_exists` |
 | R58 a full district cannot be entered | data | `enter` refuses and the connection closes; the refusal's own wire is not captured |
-| R37/R38/R39/R40 teardown and the disconnect hold | in | an empty copy is held 900 s and disposed by the world's tick; a socket that ends is a disconnect (`a_copy_is_held_for_the_hold_and_then_disposed`). The reconnection itself is not built |
-| R32 an instance lives while a party is inside | in | the copy is held after it empties and disposed by the sweep |
-| R33 ticking is configurable | in | `World.InstanceTick` drives the world's sweep and the world's status says whether it ticks; `World.SimulationTickMs` (105 by default - the measured cadence) sets how often one connection is ticked, which is the `0x001E` the loop sends; `World.SweepIntervalMs` (1000 by default) sets how often the instance table is checked for copies to dispose |
-| R20/R12 world-map travel reaches unlocked outposts; the walk sets the unlock | in | `character_unlock` rows with the starting unlock written at the confirm, and the map a character **arrives in** unlocked when its players ask is answered (`ASURA/crates/asura-world/src/player.rs:442-471`: "the walk sets the bit, the bit never gates the walk", which is R12's own "a scripted/forced travel unlocks at arrival"). The server never refuses a load for an unlock - it did until 2026-11-20, and that refusal is what a doorway crossing met as the client's `007`. Proved by `a_step_through_ascalon_citys_arch_crosses_to_lakeside_county` (a walk through 148's arch redirects to 146, the arriving connection stands on map 146's arrival and unlocks it) and by `an_arrival_unlocks_the_map_it_reaches` (a load of a map outside the set proceeds and writes the bit). R20's own travel list still needs the answer's wire |
+| R37/R38/R39/R40 teardown and the disconnect hold | partial | an empty copy is held 900 s and disposed by the world's tick; a socket that ends is a disconnect (`a_copy_is_held_for_the_hold_and_then_disposed`). The reconnection itself is not built |
+| R32 an instance lives while a party is inside | partial | empty copies are disposed by the sweep; full party and re-entry behavior still needs implementation and verification |
+| R33 ticking is configurable | partial | `World.InstanceTick` controls the world's instance sweep; `World.SimulationTickMs` sets the session tick interval (100 ms in the distributed configuration). The session loop uses its own interval, so this setting does not establish that all instance simulation can be disabled. `World.SweepIntervalMs` sets the sweep interval |
+| R20/R12 world-map travel reaches unlocked outposts; the walk sets the unlock | partial | `character_unlock` rows with the starting unlock written at the confirm, and the map a character **arrives in** unlocked when its players ask is answered (`ASURA/crates/asura-world/src/player.rs:442-471`: "the walk sets the bit, the bit never gates the walk", which is R12's own "a scripted/forced travel unlocks at arrival"). The server never refuses a load for an unlock - it did until 2026-11-20, and that refusal is what a doorway crossing met as the client's `007`. Proved by `a_step_through_ascalon_citys_arch_crosses_to_lakeside_county` (a walk through 148's arch redirects to 146, the arriving connection stands on map 146's arrival and unlocks it) and by `an_arrival_unlocks_the_map_it_reaches` (a load of a map outside the set proceeds and writes the bit). R20's own travel list still needs the answer's wire |
 | R21 a portal crossing lands on the destination's arrival point | in | `map_arrival` is read into the world; `a_step_through_ascalon_citys_arch_crosses_to_lakeside_county` exercises the crossing and destination arrival |
 | R13 entry takes a random spawn point, scattered | in | `WorldSession::entry_point` and the load's `0x0196`; `An outpost connection is loaded with its entry point` |
-| R14 a load places the character at its last outpost | in | an **outpost** writes `last_outpost` (an explorable must not overwrite it, ASURA `player.rs:447`) and the login's list reports it; a map that is not an outpost resumes the saved position instead, written when the connection ends and cleared by a travel that is not a doorway crossing (`ASURA` `character.rs:213-294`, `agent.rs:531-545`) - proved by `a_reconnect_to_an_explorable_resumes_where_the_character_left` |
+| R14 a load places the character at its last outpost | partial | an **outpost** writes `last_outpost` (an explorable must not overwrite it, ASURA `player.rs:447`) and the login's list reports it; a map that is not an outpost resumes the saved position instead, written when the connection ends and cleared by a travel that is not a doorway crossing (`ASURA` `character.rs:213-294`, `agent.rs:531-545`) - proved by `a_reconnect_to_an_explorable_resumes_where_the_character_left` |
 
 ## The travel unit: party, heroes, henchmen
 
@@ -48,7 +49,7 @@ The states are:
 
 | rule | state | where, and what proves it |
 |---|---|---|
-| R29, R30, R31 what is in a map before anyone arrives | blocked | the agent-creation stream is not captured; the spawn rows for agents do not exist |
+| R29, R30, R31 what is in a map before anyone arrives | blocked | live initialization captures contain agent-creation observations (`docs/port/12-research-and-control-panel.md`); the map NPC population and its spawn rows are not implemented |
 | R34 the compass range gates spawns and ticks | blocked | needs agents; the range is a setting (`World.CompassRange` 10,000) |
 | R43 aggro is a bubble | not started | needs agents |
 | R44 death and the death penalty | not started | `game/Combat/` is a stub |
@@ -84,4 +85,4 @@ The states are:
 
 | rule | state | where, and what proves it |
 |---|---|---|
-| R53 every number and threshold stays configurable, with the game's value as the default | in | `game/World/WorldConfig.rs` reads them from `worldserver.json`'s `World` section and the program logs each one at start-up |
+| R53 every number and threshold stays configurable, with the game's value as the default | partial | `game/World/WorldConfig.rs` reads the implemented world settings from `worldserver.json`; this does not establish coverage for every future mechanic |

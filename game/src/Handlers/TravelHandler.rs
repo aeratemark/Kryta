@@ -358,23 +358,19 @@ impl WorldSession {
         argument: &str,
     ) {
         if crate::chat::alias_key(argument).is_empty() {
-            // `GmCommand_ToAscii` refuses an empty argument, and the answer is the invalid-command line.
-            self.say(
-                LogLevel::Info,
-                format!("Gameplay connection from {peer}: /tp without a map name."),
-            );
+            // `GmCommand_ToAscii` refuses an empty argument, and the answer is the invalid-command line
+            // (`GmChat.c:130-140`), which is the one server-composed sentence the reference sends.
+            self.answer_line(io, peer, crypt, "Unknown command").await;
             return;
         }
         // The alias table, not the map names: the reference accepts `lakeside` as well as
         // `lakeside county`, so matching against a map's own name would refuse half the aliases its
         // own `/maps` prints.
         let Some(target) = crate::chat::travel_target(argument) else {
-            // `GmCommands.c:172-177`: "Unknown map name. Type /maps." through the gated chat sender,
-            // which with the gate off is a log line.
-            self.say(
-                LogLevel::Info,
-                format!("Gameplay connection from {peer}: Unknown map name. Type /maps."),
-            );
+            // `GmCommands.c:172-177`: "Unknown map name. Type /maps." - the reference's own sentence,
+            // sent on the answer channel (`GmChat.c:116-143`).
+            self.answer_line(io, peer, crypt, "Unknown map name. Type /maps.")
+                .await;
             return;
         };
         if !target.hosted {
@@ -412,10 +408,7 @@ impl WorldSession {
             // client has already decided and a second opinion is a gate. A typed alias that names the
             // instance the character stands in is the reference's "You are already here." and nothing
             // more.
-            self.say(
-                LogLevel::Info,
-                format!("Gameplay connection from {peer}: You are already here."),
-            );
+            self.answer_line(io, peer, crypt, "You are already here.").await;
             return;
         }
         self.begin_transfer(io, peer, crypt, sheet, &destination, None).await;

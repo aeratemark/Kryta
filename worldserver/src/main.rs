@@ -307,6 +307,16 @@ fn run(args: &[String]) -> Result<(), String> {
     for note in notes {
         report(&note);
     }
+    // The chat command surface: the names a player may type and the operation each one runs. Content,
+    // not a setting - the file is where the surface lives, and `CommandsFile` says where that file is
+    // (`docs/decisions/0011-the-command-surface-is-content.md`).
+    let (commands_file, notes) = config
+        .value_string("CommandsFile", "data/commands.json")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    world.load_commands(&commands_file, &log)?;
     // The world's own numbers: every threshold an instance, a district or a spawn uses, read from this
     // program's file with the game's value as the default (R53, and docs/game-rules.md for each row).
     let (world_settings, notes) = game::world::world_config::WorldConfig::read(&config)?;

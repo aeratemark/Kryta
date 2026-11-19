@@ -31,6 +31,11 @@ Two consequences:
 | `tools/import-creation-inventory.py` | imported the bags, items and profession sets into `data/*.json`, once | a checkout of ASURA to read | ASURA `state/inventory/seed.rs` and `default_equipment.rs` |
 
 The recovered control-panel and research requirements are in `docs/port/12-research-and-control-panel.md`.
+The research and plan for the operator's surfaces - the command line, a console over the same command
+table in-game chat uses, and a control console over recordings, analysis and maps - are in
+`docs/port/14-operator-surfaces.md`, which also surveys research projects. Eden is a potential
+patchable client for debugging and automated research; its proposed role is recorded in
+`docs/port/12-research-and-control-panel.md`.
 
 ## The administration tool
 

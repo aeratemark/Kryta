@@ -1,4 +1,5 @@
 # Build output
+/research/
 /target
 **/*.rs.bk
 *.pdb

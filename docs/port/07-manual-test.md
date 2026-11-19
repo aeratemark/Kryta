@@ -71,15 +71,15 @@ being served.
 | 4 | click a character and enter | `the client asks to travel to map M (...)` from the world map, then the login's `told to dial 127.0.0.1:6113 as world 2`, and the world's `the travel record is claimed - map 148, district 1, language 0` |
 | 5 | create a character (the creation screen) | `the character '...' was created as ...`, `the character's N starting item row(s) are written`, `map 148 ('Ascalon City (pre-Searing)') is unlocked for the new character (R12)` |
 | 6 | the outpost loads | `Ascalon City (pre-Searing) (148) is loading - 7 message(s), 337 bytes`, then on the client's asks: `the ping pair`, `the inventory and the map's record`, `the character stands at X, Y (plane 0) on map 148` (one frame, then the ticks), `the player and the load's last message`, `map 148 is loaded - the character '...' is in it`; and the map the character arrives in is added to its unlocks: `map 148 'Ascalon City (pre-Searing)' is unlocked - the character arrived in it (R12)` - the server never refuses a load for an unlock, because the walk sets the bit (R12, `ASURA/crates/asura-world/src/player.rs:442-471`) |
-| 7 | stand still in the outpost | a `0x001E` tick every `World.SimulationTickMs` milliseconds (105 by default; visible with `Network.Trace` off as nothing, on as trace lines; the status line's `up` time climbing) |
+| 7 | stand still in the outpost | a `0x001E` tick every `World.SimulationTickMs` milliseconds (100 in the distributed configuration; visible with `Network.Trace` off as nothing, on as trace lines; the status line's `up` time climbing) |
 | 8 | click a point across the outpost, then hold a movement key | the click is answered from map 148's own graph - the finder's first waypoint in `0x0029`, so the character walks a path rather than through a wall - and the key's offset is followed through adjacent cells (`0x803D` -> `0x0029`); the world keeps ticking and the status line's `up` climbs |
 | 9 | walk into the walled arch at the edge of Ascalon City (the doorway that leads to Lakeside County) | `the character crossed the doorway of map 148 at (x, y) -> (x, y): crossing to 146 (arrival at (6602.0, 4485.0) facing -2.28)`, the redirect, and then the client reconnects into Lakeside County: `Lakeside County (146) is loading - 16 message(s), 1182 bytes`, `the character stands at 6602.00, 4485.00 (plane 0) on map 146`, `map 146 'Lakeside County' is unlocked - the character arrived in it (R12)` |
 | 10 | drag an item in the inventory | `the item's new place answered with 1 message(s), 11 bytes`; the item stays where you put it |
 | 11 | equip an item | the same placement answer, into the equipped bag's slot for that kind of item |
 | 12 | destroy an item | `the item's removal answered with 1 message(s), 8 bytes`; the item is gone |
 | 13 | say something on the all channel (`!hello`) | `... spoke "hello" on channel 3` and `a spoken line answered with 2 message(s), 24 bytes`; the client's chat box is the judge of whether the line renders - the bytes are ASURA's, and ASURA's own notes say no chat text has ever reached a screen in either server |
-| 14 | type `/maps`, then `/stuck`, then `/tp ascalon` | `/maps` prints `Teleport targets (2 aliases, every one with a map config):` and its two rows and sends nothing; `/stuck` is answered with `the agent's position` (16 bytes, `0x002C`); `/tp ascalon` says `You are already here.` because the character is in map 148 |
-| 15 | type `/tp kamadan` | `Kamadan, Jewel of Istan (449) is not hosted by this world; the teleport is refused.` - the alias is the reference's, and this world has no row for that map |
+| 14 | type `/maps`, then `/stuck`, then `/tp ascalon` | `/maps` prints the aliases for maps the world hosts and sends no chat reply; `/stuck` is answered with `the agent's position` (16 bytes, `0x002C`); `/tp ascalon` says `You are already here.` when the character is in map 148 |
+| 15 | type `/tp kamadan` | the result depends on the world's loaded map catalogue and the reference alias rule; record the server's response and whether the client completes the travel |
 | 16 | open a second client, or log a second character in, and stand in the outpost | each client is told about the other: the first logs `N other player(s) introduced` and the second draws the first's body; when the second leaves, the first is told the player and its agent are gone |
 | 17 | travel from the world map | `the redirect answered with 8 message(s), 114 bytes` and `the client is told to dial 127.0.0.1:6112 with token 0x...`; the client reconnects and loads the map it asked for |
 | 18 | reopen the world map | the district count answer again (step 3) |
@@ -89,8 +89,8 @@ being served.
 
 These are the plan's known gaps, each waiting on a capture rather than on work:
 
-- **Other players, NPCs and monsters in the outpost**: the map is drawn with no agents in it. The
-  agent-creation stream is not captured on this build; the load sends its own body and nothing else.
+- **NPCs and monsters in the outpost**: the map population is not supplied yet. Connected players
+  are introduced to each other as described in step 16; client rendering still needs verification.
 - **The map view's contents**: the grid that sizes its world map is sent (`0x008B`, `0x008A`) with
   nothing explored, and the map's own art and areas come from the client's archive.
 

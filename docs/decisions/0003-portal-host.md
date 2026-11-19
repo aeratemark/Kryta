@@ -32,9 +32,9 @@ The auth program hosts the portal: it opens the listener on 6601 beside its own 
 `authserver` links `game`, which the reference's dependency graph does not: its auth program links
 `shared` and nothing above it. This is the deviation, and it is the reason this record exists.
 
-The cost is bounded: `game` is a library, the auth program uses one module of it (`game::Portal`), and
-nothing in `game` may reach back into the auth program. If a later decision moves the portal to its
-own process, the move is one dependency line and one listener.
+`game` is a library and nothing in it reaches back into the auth program. Auth also uses game
+account and character types, map placement, travel records and the gameplay version parser.
+`docs/port/10-separation-guide.md` tracks those uses and the unresolved ownership of each.
 
 ## What it does not decide
 

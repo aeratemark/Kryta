@@ -111,6 +111,9 @@ impl MapEntry {
 pub struct World {
     realm: u32,
     maps: Vec<MapEntry>,
+    /// The chat command surface: the names a player may type and the operation each runs, read from
+    /// `data/commands.json` (`docs/decisions/0011-the-command-surface-is-content.md`).
+    commands: crate::chat::commands::Table,
     /// The bags, items and profession sets a character-creation screen is built from.
     creation: crate::creation::Tables,
     /// Where a character may stand on entry, per map (R13).
@@ -155,12 +158,31 @@ fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
+/// The outpost this world starts a fresh character in: `wanted` when the world hosts that row, and the
+/// lowest-id outpost it hosts when it does not.
+///
+/// R12 gives a new character exactly one unlock; R14 places a load at the character's last outpost. The
+/// number is a setting of a world (this tree's `World.StartingOutpost`) and the list is the catalogue
+/// the world hosts, which is why the rule takes both rather than reading them.
+pub fn first_outpost(maps: &[MapEntry], wanted: u32) -> Option<&MapEntry> {
+    if let Some(map) = maps
+        .iter()
+        .find(|map| map.id == wanted && map.is_hostable())
+    {
+        return Some(map);
+    }
+    maps.iter()
+        .filter(|map| map.kind == Some(map_kind::OUTPOST))
+        .min_by_key(|map| map.id)
+}
+
 impl World {
     /// An empty world, before its settings are read.
     pub fn new(realm: u32) -> Self {
         Self {
             realm,
             maps: Vec::new(),
+            commands: crate::chat::commands::Table::empty(),
             creation: crate::creation::Tables::default(),
             spawns: Vec::new(),
             arrivals: Vec::new(),
@@ -187,6 +209,46 @@ impl World {
         &self.maps
     }
 
+    /// The chat command surface: the names a player may type, and the operation each one runs.
+    ///
+    /// Read from `data/commands.json` at start-up (`docs/decisions/0011-the-command-surface-is-content.md`);
+    /// a world with no such file answers no command and said so when it started.
+    pub fn commands(&self) -> &crate::chat::commands::Table {
+        &self.commands
+    }
+
+    /// Read the chat command table.
+    ///
+    /// A file that is present but wrong is an error - an unknown operation, a name stated twice, a row
+    /// the parser cannot honour - because a command that cannot work is worse than one that does not
+    /// exist. A file that is missing leaves the table empty and is reported once.
+    pub fn load_commands(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        log: &Log,
+    ) -> Result<usize, String> {
+        self.commands = crate::chat::commands::Table::load(path, log)?;
+        log.out(
+            LogLevel::Info,
+            "server.worldserver",
+            format!(
+                "Chat commands: {} name(s) read: {}.",
+                self.commands.len(),
+                self.commands
+                    .rows()
+                    .iter()
+                    .map(|row| row.names().collect::<Vec<_>>().join("/"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+        Ok(self.commands.len())
+    }
+
+    /// Give the world its command table directly: what a test does.
+    pub fn set_commands(&mut self, commands: crate::chat::commands::Table) {
+        self.commands = commands;
+    }
     /// The item templates this world runs with.
     pub fn templates(&self) -> &[crate::data_stores::ItemDefinition] {
         &self.templates
@@ -246,6 +308,16 @@ impl World {
     /// The running district copies, shared by every session.
     pub fn districts(&self) -> Arc<Mutex<crate::districts::Districts>> {
         Arc::clone(&self.districts)
+    }
+
+    /// The outpost this world starts a fresh character in, and unlocks for it (R12, R14).
+    ///
+    /// `World.StartingOutpost` when this world hosts that row, and the lowest-id outpost it hosts when
+    /// it does not - a world whose configured outpost is missing still has to name one, and which one
+    /// it chose is the program's to say. The rule itself is `first_outpost`, because a session carries
+    /// a copy of the maps rather than the world and knows the number from its settings.
+    pub fn starting_outpost(&self) -> Option<&MapEntry> {
+        first_outpost(&self.maps, self.settings.starting_outpost)
     }
 
     /// The scripts this world runs (`game/Scripting/mod.rs`).
@@ -551,6 +623,54 @@ mod tests {
         }
         assert!(world.update(Duration::from_millis(1000)).is_empty());
         assert_eq!(world.districts().lock().unwrap().count_of(148), 1, "the copy is still held");
+    }
+
+    /// R12/R14: the outpost a fresh character starts in is the configured one when the world hosts it,
+    /// and the lowest-id outpost it hosts otherwise - a world whose configured row is missing still has
+    /// to name one.
+    #[test]
+    fn the_starting_outpost_is_the_configured_one_or_the_lowest_the_world_hosts() {
+        let outpost = |id: u32| MapEntry {
+            id,
+            kind: Some(map_kind::OUTPOST),
+            file_id: id * 100,
+            name: format!("outpost {id}"),
+            instance_value: Some(id),
+        };
+        let explorable = |id: u32| MapEntry {
+            id,
+            kind: Some(map_kind::EXPLORABLE),
+            file_id: id * 100,
+            name: format!("explorable {id}"),
+            instance_value: Some(id),
+        };
+        let mut world = World::new(1);
+        world.set_maps(vec![explorable(146), outpost(148), outpost(149)], Vec::new());
+        world.set_settings(crate::world::world_config::WorldConfig {
+            starting_outpost: 149,
+            ..crate::world::world_config::WorldConfig::default()
+        });
+        assert_eq!(
+            world.starting_outpost().map(|map| map.id),
+            Some(149),
+            "the configured outpost, when the world hosts it"
+        );
+
+        world.set_settings(crate::world::world_config::WorldConfig {
+            starting_outpost: 999,
+            ..crate::world::world_config::WorldConfig::default()
+        });
+        assert_eq!(
+            world.starting_outpost().map(|map| map.id),
+            Some(148),
+            "the lowest-id outpost the world hosts, when the configured one is missing"
+        );
+
+        world.set_maps(vec![explorable(146)], Vec::new());
+        assert!(
+            world.starting_outpost().is_none(),
+            "and a world with no outpost names none"
+        );
     }
 
     /// A map is named the way the working implementation names it: its name and its id, its id alone
