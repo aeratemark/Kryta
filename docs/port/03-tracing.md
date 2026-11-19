@@ -98,6 +98,28 @@ To watch one connection's detail live, give the world's console appender level `
 for the traces in the table above - in `worldserver.json`'s `Appender.Console`; to keep the record
 without the screen, read `Server.log`.
 
+## What reaches a screen
+
+**Nothing, unless the operator asked for it.** Logging is a configuration decision and the screen is not
+an implicit output channel:
+
+- A program writes where its appenders say. `Appender.Console` is at `Info` (level 4), so a program run
+  by hand prints its own state and its problems and not its traffic; `Appender.Server` at level 5
+  (`Debug`) keeps everything the levels above allow; `Appender.Errors` keeps the problems again. Set the
+  console appender to `0` (`Disabled`) and a program writes only to its files.
+- Under the supervisor, a service's standard output is **never shown**: the supervisor reads it for the
+  handshake and keeps a short tail for a failure report, and prints only its own lifecycle lines and a
+  service's standard error - which carries nothing but problems. `--logs` mirrors a service's output to
+  the stack console when that is what the operator wants.
+- The one line a service prints only for a supervisor is its `READY: listening on ...` handshake: it is
+  written to standard output only when `KRYTA_STACK` is set, which the supervisor sets, and it is
+  consumed there and never shown. A program run by hand does not print it at all - the same words go to
+  its log file.
+
+So a stack on a thousand-player machine fills its log files and leaves the terminal alone; the terminal
+carries the stack's own start, stop, restarts and failures, and the control channel answers the rest on
+request.
+
 ## The front door
 
 A gameplay connection is not a login, so it says different things. Both are on by default:

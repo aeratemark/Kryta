@@ -644,13 +644,17 @@ fn run(args: &[String]) -> Result<(), String> {
     }
     let status_interval = status_interval.max(1);
 
-    log.out(
-        LogLevel::Info,
-        "server.authserver",
-        format!(
-            "READY: listening on {bind}:{bound}; status reported every {status_interval} s."
-        ),
+    // The stack's handshake: printed only when a supervisor asked for it (`KRYTA_STACK`), because
+    // nothing this program says belongs on a screen the operator did not ask to fill. The record is
+    // the appenders (`Auth.log`), and these same words go there.
+    let ready = format!(
+        "READY: listening on {bind}:{bound}; status reported every {status_interval} s."
     );
+    if std::env::var_os("KRYTA_STACK").is_some() {
+        // Only ever read by the supervisor that set the variable, and never shown to anybody.
+        println!("{ready}");
+    }
+    log.out(LogLevel::Info, "server.authserver", ready);
 
     // A status line on a timer, so "is it alive and has anything reached it" is answerable from the
     // log alone. Without this the only way to learn whether a client connected was to look at the

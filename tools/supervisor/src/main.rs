@@ -140,6 +140,9 @@ fn start(service: &Service, lines: Sender<ServiceLine>) -> Result<Child, String>
     let exe = exe_of(&service.program);
     let mut child = Command::new(&exe)
         .args(&service.args)
+        // The only reason a service prints its handshake: this variable says a supervisor is reading
+        // it. Nothing a service says reaches the operator's screen; the screen is the stack's own.
+        .env("KRYTA_STACK", "1")
         .stdin(if service.stdin { Stdio::inherit() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -206,11 +209,21 @@ fn show(tails: &mut Tails, logs: bool, name: &str, is_error: bool, line: &str) {
 }
 
 /// Print a service's kept tail, after the line that says why it is being printed.
+///
+/// With the console appenders off (the shipped default) the tail holds only the handshake and any
+/// complaint a service printed directly, so the failure report names where the record is instead of
+/// pretending the screen is the log.
 fn dump_tail(tails: &mut Tails, name: &str) {
-    if let Some(tail) = tails.remove(name) {
-        for line in tail {
-            report(name, &line);
+    match tails.remove(name) {
+        Some(tail) if !tail.is_empty() => {
+            for line in tail {
+                report(name, &line);
+            }
         }
+        _ => report(
+            name,
+            "no output of its own; its log is Server.log (or Auth.log) in the working directory, and Errors.log beside it",
+        ),
     }
 }
 

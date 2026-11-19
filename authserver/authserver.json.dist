@@ -114,8 +114,8 @@
 
   "Appender": {
     "Console": {
-      "value": [1, 5, 0, "1 9 3 6 5 8"],
-      "doc": "Type, level, flags, then the type's own fields. Type 1 is the console and its last field is the colour list for fatal, error, warn, info, debug, trace. The levels are 1 fatal to 6 trace; 5 is debug."
+      "value": [1, 4, 0, "1 9 3 6 5 8"],
+      "doc": "Type, level, flags, then the type's own fields. Type 1 is the console and its last field is the colour list for fatal, error, warn, info, debug, trace. The levels are 1 fatal to 6 trace; 4 is info. A line about one connection is written at debug, so this level shows the login program's own state and its problems, not its traffic."
     },
     "Auth": {
       "value": [2, 5, 0, "Auth.log", "w"],

@@ -640,13 +640,18 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
             .map_err(|error| format!("the world listener could not start: {error}"))?;
     let bound = sockets.port().unwrap_or(port);
 
-    log.out(
-        LogLevel::Info,
-        "server.worldserver",
-        format!(
-            "READY: listening on {bind}:{bound} as world {realm}; a client's gameplay connection is copied here by the login program; status reported every {status_interval} s."
-        ),
+    // The stack's handshake: printed only when a supervisor asked for it (`KRYTA_STACK`), because
+    // nothing this program says belongs on a screen the operator did not ask to fill. The record is
+    // what the appenders are configured to take, and these same words go there
+    // (`docs/port/03-tracing.md`).
+    let ready = format!(
+        "READY: listening on {bind}:{bound} as world {realm}; a client's gameplay connection is copied here by the login program; status reported every {status_interval} s."
     );
+    if std::env::var_os("KRYTA_STACK").is_some() {
+        // Only ever read by the supervisor that set the variable, and never shown to anybody.
+        println!("{ready}");
+    }
+    log.out(LogLevel::Info, "server.worldserver", ready);
     // The world is up, so its scripts are told (`sScriptMgr->OnStartup()`, `Main.cpp:398`).
     world.on_startup();
 

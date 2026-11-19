@@ -926,13 +926,15 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         let listener = TcpListener::bind(format!("{bind}:{port}"))
             .await
             .map_err(|error| format!("cannot listen on {bind}:{port}: {error}"))?;
-        log.out(
-            LogLevel::Info,
-            "manage",
-            // The supervisor treats `READY: listening on` as a service being up (`stack.json`), which
-            // is how this tool becomes a stack service rather than a program started by hand.
-            format!("READY: listening on http://{bind}:{port}/ - the administration tool"),
-        );
+        // The stack's handshake: printed only when a supervisor asked for it (`KRYTA_STACK`), because
+        // nothing this tool says belongs on a screen the operator did not ask to fill. The record is
+        // the appenders, and these same words go there.
+        let ready = format!("READY: listening on http://{bind}:{port}/ - the administration tool");
+        if std::env::var_os("KRYTA_STACK").is_some() {
+            // Only ever read by the supervisor that set the variable, and never shown to anybody.
+            println!("{ready}");
+        }
+        log.out(LogLevel::Info, "manage", ready);
 
         loop {
             let (stream, peer) = match listener.accept().await {
