@@ -318,6 +318,45 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     for note in notes {
         report(&note);
     }
+    // The operations this world answers, before its rows are read: a row names one of them, and a name
+    // the registry does not have is refused at start-up (`docs/port/14-operator-surfaces.md`). The chat
+    // operations live in the game library and are registered here beside the world's own.
+    let mut operations = game::chat::operations::Registry::new();
+    game::chat::operations::register_chat(&mut operations)?;
+    operations.register(
+        game::chat::operations::Registration {
+            name: "world.status",
+            help: "what this world is running",
+            arguments: &[],
+        },
+        game::chat::operations::world_status,
+    )?;
+    operations.register(
+        game::chat::operations::Registration {
+            name: "ListTargets",
+            help: "the alias table this world answers",
+            arguments: &[],
+        },
+        game::chat::operations::list_targets,
+    )?;
+    operations.register(
+        game::chat::operations::Registration {
+            name: "world.exit",
+            help: "stop this world; the process exits 0",
+            arguments: &[],
+        },
+        command_line::world_exit,
+    )?;
+    operations.register(
+        game::chat::operations::Registration {
+            name: "world.restart",
+            help: "stop this world and exit 2, so a supervisor starts it again",
+            arguments: &[],
+        },
+        command_line::world_restart,
+    )?;
+    let operations = std::sync::Arc::new(operations);
+    world.set_operations(std::sync::Arc::clone(&operations));
     world.load_commands(&commands_file, &log)?;
     // The server-side wire capture (`game/Server/Capture.rs`): every game message, both directions, as
     // plaintext JSONL. Empty leaves it off, which is the default; a path is a setting, so a diagnostic
@@ -620,43 +659,6 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     for note in notes { report(&note); }
     if queue_capacity == 0 { return Err("Console.QueueCapacity must be greater than zero".into()); }
     let (command_sender, command_receiver) = std::sync::mpsc::sync_channel(queue_capacity);
-    // The operations this world answers, and the rows that name them. A door holds neither: the
-    // console and the control endpoint are handed both, and a new operation is a registration here
-    // plus a row in `data/commands.json` (`docs/port/14-operator-surfaces.md`).
-    let mut operations = game::chat::operations::Registry::new();
-    operations.register(
-        game::chat::operations::Registration {
-            name: "world.status",
-            help: "what this world is running",
-            arguments: &[],
-        },
-        game::chat::operations::world_status,
-    )?;
-    operations.register(
-        game::chat::operations::Registration {
-            name: "ListTargets",
-            help: "the alias table this world answers",
-            arguments: &[],
-        },
-        game::chat::operations::list_targets,
-    )?;
-    operations.register(
-        game::chat::operations::Registration {
-            name: "world.exit",
-            help: "stop this world; the process exits 0",
-            arguments: &[],
-        },
-        command_line::world_exit,
-    )?;
-    operations.register(
-        game::chat::operations::Registration {
-            name: "world.restart",
-            help: "stop this world and exit 2, so a supervisor starts it again",
-            arguments: &[],
-        },
-        command_line::world_restart,
-    )?;
-    let operations = std::sync::Arc::new(operations);
     let console_table = std::sync::Arc::new(world.commands().clone());
     let console = console_enabled
         && command_line::start(

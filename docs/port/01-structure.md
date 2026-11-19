@@ -196,13 +196,15 @@ the stack keeps one world in it, not two. `console_service` in `stack.json` give
 service and `Stdio::null()` to the rest, so two programs cannot read one terminal.
 
 `cargo test -p worldserver`, `-p game` and `-p kryta-supervisor` cover the queue, the console, every
-control answer and refusal, the registry, and the channel's verbs; `docs/port/05-tooling.md` records the
-live proofs. The recordings loop is in too: `worldserver`'s `CaptureFile` records the wire in both
-directions (`game/Server/Capture.rs`), `tools/capture/read.py` reads a capture in the layer it declares,
-and `tools/capture/diff.py` compares two captures message by message. What remains in
-`docs/port/14-operator-surfaces.md` is chat dispatch moved onto the registry
-(it still matches the closed `Operation` enum), richer argument types and target context, and
-administrator authentication before the manager leaves loopback.
+control answer and refusal, the registry, the rows' binding and the channel's verbs;
+`docs/port/05-tooling.md` records the live proofs. The chat line is on the same registry as every other
+surface: `data/commands.json` rows name registered operations (`chat.transfer`, `chat.maps`,
+`chat.stuck`, `world.status`, `world.exit`, `world.restart`), and the chat frames were captured before
+and after that move and are byte-identical. The recordings loop is in too: `worldserver`'s
+`CaptureFile` records the wire in both directions (`game/Server/Capture.rs`), `tools/capture/read.py`
+reads a capture in the layer it declares, and `tools/capture/diff.py` compares two captures message by
+message. What remains in `docs/port/14-operator-surfaces.md` is richer argument types and target
+context, and administrator authentication before the manager leaves loopback.
 
 The current implementation and its evidence are in the status table above. The outstanding
 client-facing work and its port order are in `docs/port/09-parity-audit.md`; the world subjects

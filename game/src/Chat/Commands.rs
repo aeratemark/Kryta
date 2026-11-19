@@ -1,4 +1,4 @@
-//! The chat command table: which names a player may type, and the operation each one runs.
+//! The command table: which names a player or an operator may type, and the operation each one runs.
 //!
 //! Reference: `docs/decisions/0011-the-command-surface-is-content.md`. The command surface is content,
 //! so the rows live in a file (`data/commands.json`) and Rust keeps only the operations. The reference's
@@ -7,81 +7,30 @@
 //! names that surface once in a Rust table (`ASURA/crates/asura-world/src/chat.rs:126-163`). This is
 //! that table, read from a file instead.
 //!
-//! **A row binds a name to an operation, and the binding is checked when the file is read.** An
-//! `execution` this server has no operation for is a refused row with a reason, so a typo in the data is
-//! reported at start-up rather than answering "Unknown command" to a player who typed a name the file
-//! promised. That is the same rule the profile loading follows: a missing required reference is a
-//! validation error, never a silent no-op.
+//! **A row binds a name to a registered operation, and the binding is checked when the file is read.**
+//! There is no enum of commands here and no match on one: the name is resolved through
+//! [`Registry`](super::operations::Registry), and a name it does not have - or a parameter list the
+//! operation does not declare - is a refused row with a reason, so a typo in the data is reported at
+//! start-up rather than answering "Unknown command" to a player who typed a name the file promised.
 
 use common::configuration::json::Document;
 use common::logging::{Log, LogLevel};
 
-/// A server operation a command may run. The names in the file are these names, exactly.
-///
-/// This is the boundary `docs/port/11-content-and-behaviour.md` describes: the file says *which*
-/// operation a name runs, and the operation itself - the transfer cycle, the alias table, the position
-/// broadcast - stays in Rust.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Operation {
-    /// A server transfer: `/tp`. `answer_teleport_command` carries it out.
-    Teleport,
-    /// The alias table: `/maps`.
-    ListTargets,
-    /// Where this agent stands: `/stuck`.
-    Position,
-}
-
-impl Operation {
-    /// Every name a file may write, in the order the refusals list them.
-    pub const NAMES: &'static [&'static str] = &["Teleport", "ListTargets", "Position"];
-
-    /// The operation a row names, or nothing when this server has no such operation.
-    pub fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "Teleport" => Some(Operation::Teleport),
-            "ListTargets" => Some(Operation::ListTargets),
-            "Position" => Some(Operation::Position),
-            _ => None,
-        }
-    }
-
-    /// The name a file writes for this operation.
-    pub fn name(self) -> &'static str {
-        match self {
-            Operation::Teleport => "Teleport",
-            Operation::ListTargets => "ListTargets",
-            Operation::Position => "Position",
-        }
-    }
-}
+use super::operations::Registry;
 
 /// One command row: the names it answers to, the operation it runs, and what it takes.
-///
-/// A row carries one of two bindings, because the two surfaces bind differently and always did:
-/// `execution` names one of the closed chat operations below, and `operation` names a registration in
-/// [`crate::chat::operations`](super::operations). A row may state `surfaces`; a row without it serves
-/// the surface its binding is for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
     /// What a player types, without the slash (`GmCommands.c` and `GmChat.c` take lowercase names).
     pub command: String,
     /// The other names the same command answers to: `GmCommands.c` accepts two names for one command.
     pub also: Vec<String>,
-    /// The chat operation it runs, or the registered operation it names.
-    pub execution: Execution,
+    /// The registered operation it names (`game/src/Chat/Operations.rs`).
+    pub operation: String,
     /// The values it takes, in order. Empty means it takes none.
     pub parameters: Vec<String>,
     /// The surfaces that may run it.
     pub surfaces: Vec<Surface>,
-}
-
-/// What a row binds its name to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Execution {
-    /// One of the chat operations: the reference's two dispatch points, as a closed set.
-    Chat(Operation),
-    /// A registered operation, by its stable name (`data/commands.json` says which).
-    Registered(String),
 }
 
 /// A surface a command may be typed at.
@@ -127,22 +76,6 @@ impl Command {
     pub fn serves(&self, surface: Surface) -> bool {
         self.surfaces.contains(&surface)
     }
-
-    /// The chat operation this row runs, if it runs one.
-    pub fn chat_operation(&self) -> Option<Operation> {
-        match &self.execution {
-            Execution::Chat(operation) => Some(*operation),
-            Execution::Registered(_) => None,
-        }
-    }
-
-    /// The registered operation this row names, if it names one.
-    pub fn registered(&self) -> Option<&str> {
-        match &self.execution {
-            Execution::Chat(_) => None,
-            Execution::Registered(name) => Some(name),
-        }
-    }
 }
 
 /// Every command a world answers.
@@ -165,7 +98,7 @@ impl Table {
     /// wrong is an error - a row without a name, a name stated twice, a parameter list the parser cannot
     /// honour, or an operation this server does not have - because a command that cannot work is worse
     /// than one that does not exist.
-    pub fn load(path: impl AsRef<std::path::Path>, log: &Log) -> Result<Self, String> {
+    pub fn load(path: impl AsRef<std::path::Path>, log: &Log, registry: &Registry) -> Result<Self, String> {
         let path = path.as_ref();
         if !path.exists() {
             log.out(
@@ -183,8 +116,7 @@ impl Table {
         for record in document.records("commands")? {
             let command = record.required("command")?;
             let also = record.strings("also")?.unwrap_or_default();
-            let execution = record.text("execution")?;
-            let registered = record.text("operation")?;
+            let operation = record.required("operation")?;
             let parameters = record.strings("parameters")?.unwrap_or_default();
             let surfaces = record.strings("surfaces")?.unwrap_or_default();
 
@@ -200,35 +132,30 @@ impl Table {
                     path.display()
                 ));
             }
-            // One binding, and the one its surface parses: a chat row runs a closed operation, a
-            // console row names a registration the console asks the registry for.
-            let (execution, default_surface) = match (execution, registered) {
-                (Some(_), Some(_)) => {
-                    return Err(format!(
-                        "{}: command {command:?} states both `execution` and `operation`; a row binds one or the other",
-                        path.display()
-                    ))
-                }
-                (Some(name), None) => {
-                    let Some(operation) = Operation::from_name(&name) else {
-                        return Err(format!(
-                            "{}: command {command:?} runs {name:?}, which is not an operation this server has; the operations are {}",
-                            path.display(),
-                            Operation::NAMES.join(", ")
-                        ));
-                    };
-                    (Execution::Chat(operation), Surface::Chat)
-                }
-                (None, Some(name)) => (Execution::Registered(name), Surface::Console),
-                (None, None) => {
-                    return Err(format!(
-                        "{}: command {command:?} states neither `execution` nor `operation`, so it runs nothing",
-                        path.display()
-                    ))
-                }
+            // The binding is the registry's: a row names an operation, and a name this world does not
+            // register is a refused row rather than a command that answers "Unknown command" to a
+            // player the file promised.
+            let Some(registration) = registry.get(&operation) else {
+                let known: Vec<&str> = registry.rows().map(|row| row.name).collect();
+                return Err(format!(
+                    "{}: command {command:?} runs {operation:?}, which is not an operation this world registers; the operations are {}",
+                    path.display(),
+                    known.join(", ")
+                ));
             };
+            if parameters.len() != registration.arguments.len() {
+                return Err(format!(
+                    "{}: command {command:?} states {} parameter(s) and {operation} declares {} ({}); a row must take what its operation takes",
+                    path.display(),
+                    parameters.len(),
+                    registration.arguments.len(),
+                    registration.arguments.join(", ")
+                ));
+            }
             let surfaces = if surfaces.is_empty() {
-                vec![default_surface]
+                // A row without a surface is a chat command, which is what the reference's own rows
+                // are; a console row states its surface.
+                vec![Surface::Chat]
             } else {
                 let mut resolved = Vec::with_capacity(surfaces.len());
                 for name in &surfaces {
@@ -242,15 +169,15 @@ impl Table {
                 }
                 resolved
             };
-            if matches!(execution, Execution::Chat(_)) && command.split_whitespace().count() != 1 {
+            if surfaces.contains(&Surface::Chat) && command.split_whitespace().count() != 1 {
                 return Err(format!(
                     "{}: a chat command is one word, and this row's is {command:?}",
                     path.display()
                 ));
             }
-            if matches!(execution, Execution::Chat(_)) && parameters.len() > 1 {
+            if surfaces.contains(&Surface::Chat) && parameters.len() > 1 {
                 return Err(format!(
-                    "{}: command {command:?} states {} parameters, and a chat line is split on its first space, so only one can be read",
+                    "{}: command {command:?} is typed on a chat line, which is split on its first space, so it can take at most one parameter and this row states {}",
                     path.display(),
                     parameters.len()
                 ));
@@ -258,7 +185,7 @@ impl Table {
             table.rows.push(Command {
                 command,
                 also,
-                execution,
+                operation,
                 parameters,
                 surfaces,
             });
@@ -297,6 +224,31 @@ impl Table {
     /// The rows, in the file's order.
     pub fn rows(&self) -> &[Command] {
         &self.rows
+    }
+
+    /// The chat row a typed line resolves to, and the values it carries.
+    ///
+    /// The reference splits a chat line on its first space: the name, then one argument if the row
+    /// takes one. A name the file grants but with the wrong shape resolves to nothing, which is the
+    /// reference's "Unknown command" rather than a partly-run command.
+    pub fn resolve_chat(&self, line: &str) -> Option<(&Command, Vec<String>)> {
+        let (name, argument) = match line.split_once(' ') {
+            Some((name, rest)) => (name, rest.trim_start()),
+            None => (line, ""),
+        };
+        let values: Vec<String> = if argument.is_empty() {
+            Vec::new()
+        } else {
+            vec![argument.to_string()]
+        };
+        self.rows
+            .iter()
+            .filter(|row| row.serves(Surface::Chat))
+            .find(|row| {
+                row.parameters.len() == values.len()
+                    && row.names().any(|candidate| candidate == name)
+            })
+            .map(|row| (row, values))
     }
 
     /// The console row a typed line resolves to, and the values it carries.
@@ -343,135 +295,216 @@ impl Table {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat::operations::{register_chat, Registry};
     use common::configuration::json::Document;
 
-    /// The file this tree ships, read as a world reads it.
-    #[test]
-    fn the_shipped_table_binds_the_references_chat_commands_and_the_consoles_status() {
-        let document = Document::read("../data/commands.json").expect("the shipped file parses");
-        let records = document.records("commands").expect("commands is a record list");
-        assert_eq!(records.len(), 6);
-
-        let table = Table::load("../data/commands.json", &Log::new()).expect("the shipped table reads");
-        assert_eq!(table.len(), 6);
-        let tp = table.command("tp").expect("/tp is answered");
-        assert_eq!(tp.chat_operation(), Some(Operation::Teleport));
-        assert!(tp.takes_argument());
-        assert!(tp.serves(Surface::Chat));
-        assert!(!tp.serves(Surface::Console), "a chat row is not a console row");
-        assert_eq!(
-            table.command("teleport").and_then(Command::chat_operation),
-            Some(Operation::Teleport),
-            "the reference accepts two names for one command"
-        );
-        assert_eq!(
-            table.command("maps").and_then(Command::chat_operation),
-            Some(Operation::ListTargets)
-        );
-        assert_eq!(
-            table.command("stuck").and_then(Command::chat_operation),
-            Some(Operation::Position)
-        );
-        assert!(!table.command("maps").unwrap().takes_argument());
-        assert!(table.command("say").is_none());
-
-        // The console row: the reference's own console name, bound to a registered operation.
-        let info = table.command("server info").expect("the console answers `server info`");
-        assert_eq!(info.registered(), Some("world.status"));
-        assert!(!info.takes_argument());
-        assert!(info.serves(Surface::Console));
-        assert!(!info.serves(Surface::Chat), "a console row is not a chat row");
-        let (row, values) = table.resolve_console("server info").expect("the console resolves it");
-        assert_eq!(row.command, "server info");
-        assert!(values.is_empty());
-        assert!(table.resolve_console("server info now").is_none(), "it takes no values");
-        assert!(table.resolve_console("tp ascalon").is_none(), "a chat row is not console-visible");
-
-        // The two lifecycle rows the reference's console has (`cs_server.cpp:68,89`).
-        for (name, operation) in [
-            ("server exit", "world.exit"),
-            ("server restart", "world.restart"),
-        ] {
-            let row = table.command(name).expect("the console answers it");
-            assert_eq!(row.registered(), Some(operation));
-            assert!(!row.takes_argument());
-            assert!(row.serves(Surface::Console));
-        }
-    }
-
-    /// A console row may be more than one word, and the longest name wins.
-    #[test]
-    fn the_console_resolves_the_longest_name_that_prefixes_the_line() {
-        let text = r#"{"commands":[
-            {"command":"server info","operation":"world.status","surfaces":["console"]},
-            {"command":"server","operation":"world.status","surfaces":["console"]}
-        ]}"#;
-        let path = scratch("longest-name");
-        std::fs::write(&path, text).unwrap();
-        let table = Table::load(&path, &Log::new()).unwrap();
-        let (row, _) = table.resolve_console("server info").unwrap();
-        assert_eq!(row.command, "server info");
-        let (row, _) = table.resolve_console("server").unwrap();
-        assert_eq!(row.command, "server");
-    }
-
-    /// A row that binds nothing, or binds both ways, or names a surface this tree lacks, is refused.
-    #[test]
-    fn a_row_must_bind_one_surface_and_one_operation() {
-        let cases = [
-            r#"{"commands":[{"command":"x"}]}"#,
-            r#"{"commands":[{"command":"x","execution":"Teleport","operation":"world.status"}]}"#,
-            r#"{"commands":[{"command":"x","execution":"Teleport","surfaces":["telnet"]}]}"#,
-        ];
-        for (index, text) in cases.iter().enumerate() {
-            let path = scratch(&format!("binding-{index}"));
-            std::fs::write(&path, text).unwrap();
-            assert!(Table::load(&path, &Log::new()).is_err(), "{text}");
-        }
-    }
-
-    /// An operation the server does not have is refused when the file is read, not when a player types
-    /// the name.
-    #[test]
-    fn a_row_naming_an_operation_this_server_lacks_is_refused() {
-        let text = r#"{"commands":[{"command":"tp","execution":"Teleport"},{"command":"warp","execution":"Warp"}]}"#;
-        let path = scratch("unknown-operation");
-        std::fs::write(&path, text).unwrap();
-        let error = Table::load(&path, &Log::new()).unwrap_err();
-        assert!(error.contains("Warp"), "{error}");
-        assert!(error.contains("Teleport"), "the refusal lists what exists: {error}");
-    }
-
-    /// Two rows answering one name would answer it twice.
-    #[test]
-    fn a_name_stated_twice_is_refused() {
-        let text = r#"{"commands":[{"command":"tp","execution":"Teleport"},{"command":"go","also":["tp"],"execution":"Position"}]}"#;
-        let path = scratch("duplicate-name");
-        std::fs::write(&path, text).unwrap();
-        let error = Table::load(&path, &Log::new()).unwrap_err();
-        assert!(error.contains("stated by two rows"), "{error}");
-    }
-
-    /// The parser splits a line on its first space, so more than one parameter cannot be read.
-    #[test]
-    fn more_than_one_parameter_is_refused() {
-        let text = r#"{"commands":[{"command":"warp","execution":"Teleport","parameters":["map","x"]}]}"#;
-        let path = scratch("two-parameters");
-        std::fs::write(&path, text).unwrap();
-        let error = Table::load(&path, &Log::new()).unwrap_err();
-        assert!(error.contains("first space"), "{error}");
-    }
-
-    /// A missing file is not an error: the world starts, answers no command, and says so.
-    #[test]
-    fn a_missing_file_leaves_the_table_empty() {
-        let table = Table::load("../data/no-such-command-file.json", &Log::new()).unwrap();
-        assert!(table.is_empty());
+    /// The registry a world builds: the chat operations plus the two a program registers itself.
+    fn registry() -> Registry {
+        let mut registry = Registry::new();
+        register_chat(&mut registry).expect("the chat operations register");
+        registry
+            .register(
+                crate::chat::operations::Registration {
+                    name: "world.status",
+                    help: "what this world is running",
+                    arguments: &[],
+                },
+                crate::chat::operations::world_status,
+            )
+            .expect("the status operation registers");
+        registry
+            .register(
+                crate::chat::operations::Registration {
+                    name: "world.exit",
+                    help: "stop this world",
+                    arguments: &[],
+                },
+                crate::chat::operations::world_status,
+            )
+            .expect("the exit operation registers");
+        registry
+            .register(
+                crate::chat::operations::Registration {
+                    name: "world.restart",
+                    help: "stop this world and exit 2",
+                    arguments: &[],
+                },
+                crate::chat::operations::world_status,
+            )
+            .expect("the restart operation registers");
+        registry
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!("kryta-commands-{name}.json"));
         let _ = std::fs::remove_file(&path);
         path
+    }
+
+    fn load(text: &str, name: &str, registry: &Registry) -> Result<Table, String> {
+        let path = scratch(name);
+        std::fs::write(&path, text).unwrap();
+        Table::load(&path, &Log::new(), registry)
+    }
+
+    /// The file this tree ships, read as a world reads it: one binding style, every row naming an
+    /// operation the registry has.
+    #[test]
+    fn the_shipped_table_binds_its_rows_to_registered_operations() {
+        let document = Document::read("../data/commands.json").expect("the shipped file parses");
+        let records = document.records("commands").expect("commands is a record list");
+        assert_eq!(records.len(), 6);
+
+        let registry = registry();
+        let table = Table::load("../data/commands.json", &Log::new(), &registry)
+            .expect("the shipped table reads");
+        assert_eq!(table.len(), 6);
+
+        let tp = table.command("tp").expect("/tp is answered");
+        assert_eq!(tp.operation, "chat.transfer");
+        assert!(tp.takes_argument());
+        assert!(tp.serves(Surface::Chat));
+        assert!(!tp.serves(Surface::Console), "a chat row is not a console row");
+        assert_eq!(
+            table.command("teleport").map(|row| row.operation.as_str()),
+            Some("chat.transfer"),
+            "the reference accepts two names for one command"
+        );
+        assert_eq!(table.command("maps").unwrap().operation, "chat.maps");
+        assert_eq!(table.command("stuck").unwrap().operation, "chat.stuck");
+        assert!(table.command("say").is_none());
+
+        // The console rows: the reference's own console names, bound the same way.
+        for (name, operation) in [
+            ("server info", "world.status"),
+            ("server exit", "world.exit"),
+            ("server restart", "world.restart"),
+        ] {
+            let row = table.command(name).expect("the console answers it");
+            assert_eq!(row.operation, operation);
+            assert!(!row.takes_argument());
+            assert!(row.serves(Surface::Console));
+            assert!(!row.serves(Surface::Chat), "a console row is not a chat row");
+            let (resolved, values) = table.resolve_console(name).expect("the console resolves it");
+            assert_eq!(resolved.command, name);
+            assert!(values.is_empty());
+        }
+
+        // The two resolvers keep the surfaces apart.
+        assert!(table.resolve_console("server info now").is_none(), "it takes no values");
+        assert!(table.resolve_console("tp ascalon").is_none(), "a chat row is not console-visible");
+        assert!(table.resolve_chat("server info").is_none(), "a console row is not chat-visible");
+        let (row, values) = table.resolve_chat("tp ascalon city").expect("a chat row resolves");
+        assert_eq!(row.command, "tp");
+        assert_eq!(values, vec!["ascalon city".to_string()], "the line after the name is one value");
+        assert!(table.resolve_chat("tp").is_none(), "a row that takes a value needs one");
+        assert!(table.resolve_chat("maps extra").is_none(), "a row that takes none refuses one");
+    }
+
+    /// A name the registry does not have is refused when the file is read, and the refusal lists what
+    /// this world does register.
+    #[test]
+    fn a_row_naming_an_unregistered_operation_is_refused() {
+        let registry = registry();
+        let error = load(
+            r#"{"commands":[{"command":"warp","operation":"chat.warp"}]}"#,
+            "unknown-operation",
+            &registry,
+        )
+        .unwrap_err();
+        assert!(error.contains("chat.warp"), "{error}");
+        assert!(error.contains("chat.transfer"), "the refusal lists what exists: {error}");
+    }
+
+    /// A row must take what its operation takes: the count is the registration's, not the file's.
+    #[test]
+    fn a_parameter_list_the_operation_does_not_declare_is_refused() {
+        let registry = registry();
+        let error = load(
+            r#"{"commands":[{"command":"warp","operation":"chat.maps","parameters":["map"]}]}"#,
+            "parameter-mismatch",
+            &registry,
+        )
+        .unwrap_err();
+        assert!(error.contains("chat.maps"), "{error}");
+        assert!(error.contains("declares 0"), "{error}");
+    }
+
+    /// A surface this tree does not have is refused, and a value the chat line cannot carry too.
+    #[test]
+    fn a_surface_and_a_chat_rows_second_parameter_are_refused() {
+        let world_ops = registry();
+        assert!(load(
+            r#"{"commands":[{"command":"x","operation":"chat.maps","surfaces":["telnet"]}]}"#,
+            "surface",
+            &world_ops,
+        )
+        .is_err());
+        // A row must take what its operation declares: `chat.maps` takes none, so two values are
+        // refused by the count before the line-splitting rule could be reached.
+        let error = load(
+            r#"{"commands":[{"command":"warp","operation":"chat.maps","parameters":["a","b"]}]}"#,
+            "two-parameters",
+            &world_ops,
+        )
+        .unwrap_err();
+        assert!(error.contains("declares 0"), "{error}");
+
+        // The line-splitting rule itself, for an operation that does declare two values: a chat line
+        // is split on its first space and can carry only one, so such a row cannot be a chat row.
+        let mut wide = registry();
+        wide.register(
+            crate::chat::operations::Registration {
+                name: "test.two",
+                help: "two values",
+                arguments: &["a", "b"],
+            },
+            crate::chat::operations::world_status,
+        )
+        .unwrap();
+        let error = load(
+            r#"{"commands":[{"command":"wide","operation":"test.two","parameters":["a","b"]}]}"#,
+            "first-space",
+            &wide,
+        )
+        .unwrap_err();
+        assert!(error.contains("first space"), "{error}");
+    }
+
+    /// Two rows answering one name would answer it twice.
+    #[test]
+    fn a_name_stated_twice_is_refused() {
+        let registry = registry();
+        let error = load(
+            r#"{"commands":[{"command":"tp","operation":"chat.transfer","parameters":["destination"]},{"command":"go","also":["tp"],"operation":"chat.maps"}]}"#,
+            "duplicate-name",
+            &registry,
+        )
+        .unwrap_err();
+        assert!(error.contains("stated by two rows"), "{error}");
+    }
+
+    /// A missing file is not an error: the world starts, answers no command, and says so.
+    #[test]
+    fn a_missing_file_leaves_the_table_empty() {
+        let table = Table::load("../data/no-such-command-file.json", &Log::new(), &registry()).unwrap();
+        assert!(table.is_empty());
+    }
+
+    /// A console row may be more than one word, and the longest name wins.
+    #[test]
+    fn the_console_resolves_the_longest_name_that_prefixes_the_line() {
+        let registry = registry();
+        let table = load(
+            r#"{"commands":[
+                {"command":"server info","operation":"world.status","surfaces":["console"]},
+                {"command":"server","operation":"world.status","surfaces":["console"]}
+            ]}"#,
+            "longest-name",
+            &registry,
+        )
+        .unwrap();
+        assert_eq!(table.resolve_console("server info").unwrap().0.command, "server info");
+        assert_eq!(table.resolve_console("server").unwrap().0.command, "server");
     }
 }

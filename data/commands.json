@@ -1,10 +1,10 @@
 {
-  "note": "The command table: which names an operator or a player may type, and the operation each one runs",
+  "note": "The command table: which names a player or an operator may type, and the operation each one runs",
 
   "information": {
-    "what": "One row per command. `command` is what a player types, without the slash. `also` holds the other names the same command answers to. A row binds its name one of two ways: `execution` names one of the closed chat operations (Teleport, ListTargets, Position) and defaults to the chat surface, or `operation` names a registered operation (for example world.status) and defaults to the console surface. `surfaces` may narrow or widen that: a row may name `chat`, `console`, or both. `parameters` names the values the command takes, in order; an empty list means the command takes none. A name this server cannot run is refused when the file is read, not when a player types it.",
+    "what": "One row per command. `command` is what a player types, without the slash. `also` holds the other names the same command answers to. `operation` names a registered operation (game/src/Chat/Operations.rs) - the one binding there is: there is no enum of commands and no match on one, and a name the registry does not have is refused when this file is read, not when a player types it. `parameters` names the values the command takes, in order, and must be exactly what the operation declares. `surfaces` says who may type it: `chat`, `console`, or both; a row without it is a chat command, which is what the reference's own rows are.",
     "why this is a file": "docs/decisions/0011-the-command-surface-is-content.md and docs/port/14-operator-surfaces.md. The command surface is content: the names, the argument rule and the binding to an operation are facts a server reads, and Rust keeps only the operation. A command is added or moved here without rebuilding the server, and no surface names a command in Rust.",
-    "where the rows come from": "the reference's own two dispatch points - GmCommands.c, which owns /tp, /teleport and /maps, and GmChat.c, which owns /stuck - as the working implementation ports them at ASURA crates/asura-world/src/chat.rs:126-163; the console row is the reference's console name from cs_server.cpp:92",
+    "where the rows come from": "the reference's own two dispatch points - GmCommands.c, which owns /tp, /teleport and /maps, and GmChat.c, which owns /stuck - as the working implementation ports them at ASURA crates/asura-world/src/chat.rs:126-163; the console rows are the reference's own console names from cs_server.cpp:68,89,92",
     "not here": "the answers a command gives, and the conditions it refuses on. Those are the operation's own, in Rust, until the scripting layer of docs/port/11-content-and-behaviour.md takes them."
   },
 
@@ -12,19 +12,19 @@
     {
       "command": "tp",
       "also": ["teleport"],
-      "execution": "Teleport",
+      "operation": "chat.transfer",
       "parameters": ["destination"],
       "doc": "a server transfer to the map the argument names, or one of the reference's refusals (unknown map, no config, already here)"
     },
     {
       "command": "maps",
-      "execution": "ListTargets",
+      "operation": "chat.maps",
       "parameters": [],
-      "doc": "the alias table, printed in the log and sent to the player"
+      "doc": "the alias table: the chat half is sent to the player, the table is logged for the operator"
     },
     {
       "command": "stuck",
-      "execution": "Position",
+      "operation": "chat.stuck",
       "parameters": [],
       "doc": "broadcast where this agent stands - a position, not AGENT_STOP_MOVING"
     },

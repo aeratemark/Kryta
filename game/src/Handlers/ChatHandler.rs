@@ -20,7 +20,7 @@ use common::logging::LogLevel;
 use shared::cryptography::AuthCrypt;
 use shared::network::socket::SessionIo;
 
-use crate::server::packets::{agent_packets, chat_packets};
+use crate::server::packets::chat_packets;
 use crate::server::world_session::{CharacterSheet, WorldSession};
 
 impl WorldSession {
@@ -110,66 +110,62 @@ impl WorldSession {
                 );
             }
             '/' => {
-                // The command surface is a file (`data/commands.json`): the name, whether it takes an
-                // argument, and the operation it runs are data, and Rust keeps the operations
+                // The command surface is a file (`data/commands.json`): the names, whether a name takes
+                // an argument, and the operation it runs are data, and Rust keeps the operations
                 // (`docs/decisions/0011-the-command-surface-is-content.md`). The reference's two
                 // dispatch points are that file's rows - `GmCommands.c` for `/tp`, `/teleport` and
-                // `/maps`, `GmChat.c` for `/stuck`.
+                // `/maps`, `GmChat.c` for `/stuck` - and every one of them names a registration in the
+                // world's own registry. There is no match on a command here.
                 let spoken = spoken.trim();
-                let (name, argument) = match spoken.split_once(' ') {
-                    Some((name, rest)) => (name, rest.trim_start()),
-                    None => (spoken, ""),
+                let Some((row, values)) = self.commands.resolve_chat(spoken) else {
+                    // `GameSrv_SendInvalidCommand`: the reference's text is "Unknown command"
+                    // (`GmChat.c:130-140`). A command asked with the wrong shape is this answer too:
+                    // the reference checks `argument.is_empty()` per command (`GmCommand_ToAscii`).
+                    self.answer_line(io, peer, crypt, "Unknown command").await;
+                    return;
                 };
-                // A command asked with the wrong shape is the unknown-command answer: the reference
-                // checks `argument.is_empty()` per command, and refuses the empty argument for `/tp`
-                // (`GmCommand_ToAscii`) as it refuses an argument for the two that take none.
-                let row = self
-                    .commands
-                    .command(name)
-                    .filter(|row| row.serves(crate::chat::commands::Surface::Chat))
-                    .filter(|row| row.takes_argument() == !argument.is_empty());
-                match row.and_then(|row| row.chat_operation()) {
-                    Some(crate::chat::commands::Operation::Position) => {
-                        // `GameSrv_HandleChatCommand`'s `stuck`: broadcast where the agent is now.
-                        // **Not** `AGENT_STOP_MOVING` - that is what `0x8028` answers - and the working
-                        // implementation sends the position alone (`chat.rs:260-287`); the tick it also
-                        // broadcasts is the ticker's own, so no second clock is invented.
-                        let Some(frame) = self.with_agent(|agent| {
-                            agent_packets::agent_update_position(
-                                agent.agent_id,
-                                agent.position,
-                                agent.plane,
-                            )
-                            .1
-                        }) else {
-                            return;
-                        };
-                        self.send(io, peer, crypt, &[frame], "where the agent stands")
-                            .await;
+                let Some(tag) = self.player_tag(peer) else {
+                    return;
+                };
+                let registry = self.world.operations();
+                let invocation = match registry.invocation(
+                    &row.operation,
+                    crate::chat::operations::Arguments::of(values),
+                    crate::chat::operations::Caller::chat(tag),
+                ) {
+                    Ok(invocation) => invocation,
+                    Err(refusal) => {
+                        self.answer_line(io, peer, crypt, &refusal.message).await;
+                        return;
                     }
-                    Some(crate::chat::commands::Operation::ListTargets) => {
-                        // `GmCommand_ListTargets`: the table is read and the chat half is **sent**,
-                        // because the answer now has a channel (`GmChat.c:116-143`,
-                        // `Channel_Global`). The table itself stays in the log, which is where a person
-                        // reads it.
-                        // ASURA: crates/asura-world/src/chat.rs:288-324, the same
-                        // operation also used by the operator console.
-                        let answer = crate::chat::operations::map_targets(&self.maps);
-                        for line in &answer.chat {
+                };
+                // The agent this connection holds, taken through `with_agent` so the standing it
+                // records stays recorded, and handed to the operation as the caller's own.
+                let agent = self.with_agent(|agent| (*agent).clone());
+                let outcome = match registry.invoke(&invocation, &self.world, agent.as_ref()) {
+                    Ok(outcome) => outcome,
+                    Err(refusal) => {
+                        self.answer_line(io, peer, crypt, &refusal.message).await;
+                        return;
+                    }
+                };
+                match outcome {
+                    // Text: the wire half is answered, the log half is logged - the reference's two
+                    // outputs for `/maps` (`chat.rs:288-324`).
+                    crate::chat::operations::Outcome::Text { wire, log } => {
+                        for line in &wire {
                             self.answer_line(io, peer, crypt, line).await;
                         }
-                        for line in &answer.table {
+                        for line in &log {
                             self.say(LogLevel::Info, format!("Gameplay connection from {peer}: {line}"));
                         }
                     }
-                    Some(crate::chat::commands::Operation::Teleport) => {
-                        self.answer_teleport_command(io, peer, crypt, sheet, argument)
-                            .await;
+                    crate::chat::operations::Outcome::Frames(frames) => {
+                        self.send(io, peer, crypt, &frames, "an operation's frames").await;
                     }
-                    None => {
-                        // `GameSrv_SendInvalidCommand`: the reference's text is "Unknown command"
-                        // (`GmChat.c:130-140`).
-                        self.answer_line(io, peer, crypt, "Unknown command").await;
+                    crate::chat::operations::Outcome::Transfer { argument } => {
+                        self.answer_teleport_command(io, peer, crypt, sheet, &argument)
+                            .await;
                     }
                 }
             }

@@ -27,7 +27,7 @@ pub struct Request {
 /// Run pending calls from the world update thread.
 pub fn process(receiver: &Receiver<Request>, registry: &Registry, world: &game::world::World) {
     while let Ok(request) = receiver.try_recv() {
-        let answer = registry.invoke(&request.invocation, world);
+        let answer = registry.invoke_text(&request.invocation, world);
         let _ = request.reply.send(answer);
     }
 }
@@ -88,28 +88,21 @@ pub fn parse(table: &Table, registry: &Registry, line: &str) -> Result<Invocatio
     let Some((row, values)) = table.resolve_console(line) else {
         return Err(Refusal::new(UNKNOWN_OPERATION, "Unknown command"));
     };
-    let Some(operation) = row.registered() else {
-        // A console row always names a registered operation; the loader refuses one that does not.
-        return Err(Refusal::new(UNKNOWN_OPERATION, "Unknown command"));
-    };
-    registry.invocation(operation, Arguments::of(values), Caller::console())
+    registry.invocation(&row.operation, Arguments::of(values), Caller::console())
 }
 
 /// What an operator may type at the console, and what each one does.
 pub fn help(table: &Table, registry: &Registry) -> String {
     let mut lines = vec!["help - what this console answers".to_string()];
     for row in table.rows().iter().filter(|row| row.serves(Surface::Console)) {
-        let Some(operation) = row.registered() else {
-            continue;
-        };
-        let Some(registration) = registry.get(operation) else {
+        let Some(registration) = registry.get(&row.operation) else {
             continue;
         };
         lines.push(format!(
             "{} - {} [{}]",
             row.names().collect::<Vec<_>>().join(", "),
             registration.help,
-            operation
+            row.operation
         ));
     }
     lines.join("\n")
@@ -125,7 +118,7 @@ pub fn execute(table: &Table, registry: &Registry, world: &game::world::World, l
     if line == "help" {
         return help(table, registry);
     }
-    match parse(table, registry, line).and_then(|invocation| registry.invoke(&invocation, world)) {
+    match parse(table, registry, line).and_then(|invocation| registry.invoke_text(&invocation, world)) {
         Ok(answer) => answer,
         Err(refusal) => refusal.message,
     }
@@ -133,25 +126,37 @@ pub fn execute(table: &Table, registry: &Registry, world: &game::world::World, l
 
 /// Ask the world to stop normally: the reference's `server exit` (`cs_server.cpp:89`,
 /// `HandleServerExitCommand`), which stops the world and leaves the exit code `0`.
-pub fn world_exit(_invocation: &Invocation, world: &game::world::World) -> Result<String, Refusal> {
+pub fn world_exit(
+    _invocation: &Invocation,
+    world: &game::world::World,
+    _agent: Option<&game::agents::Agent>,
+) -> Result<game::chat::operations::Outcome, Refusal> {
     world.request_stop(game::world::ExitCode::Normal);
-    Ok("Stopping the world.".to_string())
+    Ok(game::chat::operations::Outcome::text("Stopping the world."))
 }
 
 /// Ask the world to stop so that a supervisor starts it again: the reference's `server restart`
 /// (`cs_server.cpp:68`), whose exit code `2` its own `main` documents for "restarter"
 /// (`Main.cpp:434-439`). The world does not restart itself; the supervisor reads the code.
-pub fn world_restart(_invocation: &Invocation, world: &game::world::World) -> Result<String, Refusal> {
+pub fn world_restart(
+    _invocation: &Invocation,
+    world: &game::world::World,
+    _agent: Option<&game::agents::Agent>,
+) -> Result<game::chat::operations::Outcome, Refusal> {
     world.request_stop(game::world::ExitCode::Restart);
-    Ok("Restarting: this process stops and the supervisor starts it again.".to_string())
+    Ok(game::chat::operations::Outcome::text(
+        "Restarting: this process stops and the supervisor starts it again.",
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The registry a world builds: the chat operations the file's rows name, plus the world's own.
     fn registry() -> Registry {
         let mut registry = Registry::new();
+        game::chat::operations::register_chat(&mut registry).unwrap();
         registry
             .register(
                 game::chat::operations::Registration {
@@ -173,10 +178,30 @@ mod tests {
             )
             .unwrap();
         registry
+            .register(
+                game::chat::operations::Registration {
+                    name: "world.exit",
+                    help: "stop this world",
+                    arguments: &[],
+                },
+                world_exit,
+            )
+            .unwrap();
+        registry
+            .register(
+                game::chat::operations::Registration {
+                    name: "world.restart",
+                    help: "stop this world and exit 2",
+                    arguments: &[],
+                },
+                world_restart,
+            )
+            .unwrap();
+        registry
     }
 
     fn table() -> Table {
-        Table::load("../data/commands.json", &common::logging::Log::new()).unwrap()
+        Table::load("../data/commands.json", &common::logging::Log::new(), &registry()).unwrap()
     }
 
     #[test]

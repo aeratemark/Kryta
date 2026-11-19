@@ -229,13 +229,21 @@ pub struct WorldSession {
     /// the same body to every client. `None` until a real map is loaded - the creation instance has no
     /// population to be told apart in.
     id: std::sync::Mutex<Option<u32>>,
+    /// The world this connection answers for: its operation registry is what a command resolves
+    /// through, so the session holds the world and not only copies of its parts.
+    pub(crate) world: std::sync::Arc<World>,
 }
 
 impl WorldSession {
     /// A session for one connection, for this world.
-    pub fn new(log: Log, world: &World) -> Self {
+    ///
+    /// The world itself is kept, not only copies of its parts: a command resolves through the world's
+    /// operation registry (`docs/port/14-operator-surfaces.md`), so the session needs the world it is
+    /// answering for.
+    pub fn new(log: Log, world: &std::sync::Arc<World>) -> Self {
         Self {
             log,
+            world: std::sync::Arc::clone(world),
             realm: world.realm(),
             maps: world.maps().to_vec(),
             commands: world.commands().clone(),
@@ -267,7 +275,7 @@ impl WorldSession {
     /// A session that can write a character.
     pub fn with_characters(
         log: Log,
-        world: &World,
+        world: &std::sync::Arc<World>,
         characters: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
     ) -> Self {
         Self {
@@ -282,7 +290,7 @@ impl WorldSession {
     /// token pair is what claims a row.
     pub fn with_characters_and_login(
         log: Log,
-        world: &World,
+        world: &std::sync::Arc<World>,
         characters: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
         login: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
     ) -> Self {
@@ -298,7 +306,7 @@ impl WorldSession {
     /// For a test that wants to read what the client would read; a program never calls this.
     pub fn with_master(
         log: Log,
-        world: &World,
+        world: &std::sync::Arc<World>,
         master: [u8; shared::cryptography::handshake::MASTER_SECRET_LEN],
     ) -> Self {
         Self {
@@ -309,7 +317,7 @@ impl WorldSession {
 
     /// A session whose creation screen has no inventory: the shape a test uses when it wants the
     /// frames without the content files.
-    pub fn without_creation_data(log: Log, world: &World) -> Self {
+    pub fn without_creation_data(log: Log, world: &std::sync::Arc<World>) -> Self {
         Self {
             creation: None,
             ..Self::new(log, world)
@@ -322,7 +330,7 @@ impl WorldSession {
     /// answer and to see the row the confirm writes.
     pub fn with_master_and_characters(
         log: Log,
-        world: &World,
+        world: &std::sync::Arc<World>,
         master: [u8; shared::cryptography::handshake::MASTER_SECRET_LEN],
         characters: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
     ) -> Self {
@@ -338,7 +346,7 @@ impl WorldSession {
     /// claimed by the connection, and the map it names is the one loaded.
     pub fn with_master_and_characters_and_login(
         log: Log,
-        world: &World,
+        world: &std::sync::Arc<World>,
         master: [u8; shared::cryptography::handshake::MASTER_SECRET_LEN],
         characters: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
         login: std::sync::Arc<std::sync::Mutex<database::database::DatabaseWorkerPool>>,
@@ -2106,6 +2114,7 @@ mod tests {
         };
         let mut prepared = world();
         prepared.set_portals(crate::maps::Portals::new(vec![arch], 250.0));
+        let prepared = std::sync::Arc::new(prepared);
         let session = WorldSession::new(Log::new(), &prepared);
         {
             let mut entered = session.entered.lock().unwrap();
@@ -2145,7 +2154,7 @@ mod tests {
     /// the reports must not shorten it, which is why the segment is kept beside the agent.
     #[test]
     fn a_reported_step_is_the_segment_between_two_reports_and_is_consumed_once() {
-        let world = world();
+        let world = std::sync::Arc::new(world());
         let session = WorldSession::new(Log::new(), &world);
         session.start_portal_position((7277.4, 5417.9));
         session.record_portal_step((7277.4, 5417.9));

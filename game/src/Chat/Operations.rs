@@ -7,9 +7,13 @@
 //!
 //! **One operation is one registered function, called with what the caller supplies.** A caller does
 //! not reach a function through a dispatcher arm: it names the operation, supplies the arguments the
-//! registration declares and the caller it is, and receives the operation's answer or a refusal with a
-//! code. Adding an operation is a registration; adding a command that runs an existing operation is a
-//! row in `data/commands.json`; neither edits a door (`docs/port/14-operator-surfaces.md`).
+//! registration declares and the caller it is, and receives the operation's answer - text, frames, or
+//! a transfer to start - or a refusal with a code. Adding an operation is a registration; adding a
+//! command that runs an existing operation is a row in `data/commands.json`; neither edits a door
+//! (`docs/port/14-operator-surfaces.md`).
+//!
+//! Every command this tree answers - the chat commands included - is a row in that file naming one of
+//! these registrations. There is no enum of commands and no match on one.
 
 use std::collections::BTreeMap;
 
@@ -44,6 +48,11 @@ impl Caller {
     /// A caller vouched for by the local control endpoint.
     pub fn api(name: &str) -> Self {
         Self { kind: CallerKind::Api, name: name.to_string() }
+    }
+
+    /// A player's chat line: the identity is the player tag the line arrived with.
+    pub fn chat(tag: u16) -> Self {
+        Self { kind: CallerKind::Chat, name: tag.to_string() }
     }
 
     /// The kind's name, for a result that says who asked.
@@ -123,6 +132,56 @@ impl Refusal {
     }
 }
 
+/// What an operation answered: what the surface is to do about it.
+///
+/// An operation does not send anything itself and does not know which door called it. It says what
+/// the answer is, and the door performs it in its own medium - frames on chat, text on the console,
+/// JSON over the control endpoint - which is why one implementation serves every surface without a
+/// branch per surface anywhere.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    /// Text: `wire` is what a client is told, `log` is what the operator's log gets.
+    Text {
+        /// The lines a client is told.
+        wire: Vec<String>,
+        /// The lines the log gets.
+        log: Vec<String>,
+    },
+    /// Whole frames the surface sends as they are.
+    Frames(Vec<Vec<u8>>),
+    /// A transfer the surface starts with its own machinery (`begin_transfer`).
+    Transfer {
+        /// The destination the caller asked for, as it was typed.
+        argument: String,
+    },
+}
+
+impl Outcome {
+    /// One line for a surface that only renders text: `wire` joined, log lines dropped.
+    pub fn text(line: impl Into<String>) -> Self {
+        Self::Text { wire: vec![line.into()], log: Vec::new() }
+    }
+
+    /// Text with both halves.
+    pub fn logged(wire: Vec<String>, log: Vec<String>) -> Self {
+        Self::Text { wire, log }
+    }
+
+    /// What a surface that cannot send frames or start a transfer may render.
+    ///
+    /// An operation that answers with frames or a transfer is one a session must perform; a console
+    /// or an API call is refused rather than answered with nothing (`REFUSED`).
+    pub fn into_text(self) -> Result<String, Refusal> {
+        match self {
+            Outcome::Text { wire, .. } => Ok(wire.join("\n")),
+            Outcome::Frames(_) | Outcome::Transfer { .. } => Err(Refusal::new(
+                REFUSED,
+                "this operation needs a player session: it answers with frames a client performs",
+            )),
+        }
+    }
+}
+
 /// One call: what is being asked, with what, by whom.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invocation {
@@ -145,8 +204,9 @@ pub struct Registration {
     pub arguments: &'static [&'static str],
 }
 
-/// What an operation does: one function of the call and the world it acts on.
-pub type Handler = fn(&Invocation, &crate::world::World) -> Result<String, Refusal>;
+/// What an operation does: one function of the call, the world, and the caller's own agent if it has one.
+pub type Handler =
+    fn(&Invocation, &crate::world::World, Option<&crate::agents::Agent>) -> Result<Outcome, Refusal>;
 
 struct Entry {
     registration: Registration,
@@ -227,57 +287,166 @@ impl Registry {
     }
 
     /// Run a call against a world. Called on the world's own thread, never on a listener's.
-    pub fn invoke(&self, invocation: &Invocation, world: &crate::world::World) -> Result<String, Refusal> {
+    pub fn invoke(
+        &self,
+        invocation: &Invocation,
+        world: &crate::world::World,
+        agent: Option<&crate::agents::Agent>,
+    ) -> Result<Outcome, Refusal> {
         let Some(entry) = self.entries.get(invocation.operation.as_str()) else {
             return Err(Refusal::new(
                 UNKNOWN_OPERATION,
                 format!("unknown operation: {}", invocation.operation),
             ));
         };
-        (entry.handler)(invocation, world)
+        (entry.handler)(invocation, world, agent)
+    }
+
+    /// Run a call for a surface that renders text only, refusing what it cannot perform.
+    pub fn invoke_text(&self, invocation: &Invocation, world: &crate::world::World) -> Result<String, Refusal> {
+        self.invoke(invocation, world, None)?.into_text()
     }
 }
 
 /// Existing world information, presented to an operator.
-pub fn world_status(_invocation: &Invocation, world: &crate::world::World) -> Result<String, Refusal> {
-    Ok(format!(
+pub fn world_status(
+    _invocation: &Invocation,
+    world: &crate::world::World,
+    _agent: Option<&crate::agents::Agent>,
+) -> Result<Outcome, Refusal> {
+    Ok(Outcome::text(format!(
         "World {}: {} map(s) loaded.",
         world.realm(),
         world.maps().len()
-    ))
+    )))
 }
 
 /// Build both outputs of the existing map-list operation.
 ///
-/// ASURA: `crates/asura-world/src/chat.rs:41-102,288-324`. The chat surface sends the chat half and
-/// logs the table; the console prints the table (`map_targets` is called by both, so the text is one
-/// implementation).
+/// ASURA: `crates/asura-world/src/chat.rs:41-102,288-324`.
 pub fn map_targets(maps: &[crate::world::MapEntry]) -> crate::chat::MappedMaps {
     crate::chat::maps_answer(maps)
 }
 
-/// The map list, presented to an operator: the table the chat surface only logs.
-pub fn list_targets(_invocation: &Invocation, world: &crate::world::World) -> Result<String, Refusal> {
-    Ok(map_targets(world.maps()).table.join("\n"))
+/// The alias table, presented to an operator: the table the chat surface only logs.
+pub fn list_targets(
+    _invocation: &Invocation,
+    world: &crate::world::World,
+    _agent: Option<&crate::agents::Agent>,
+) -> Result<Outcome, Refusal> {
+    Ok(Outcome::text(map_targets(world.maps()).table.join("\n")))
+}
+
+/// `/maps`: the alias table, the chat half sent and the table logged - the reference's two outputs.
+pub fn chat_maps(
+    _invocation: &Invocation,
+    world: &crate::world::World,
+    _agent: Option<&crate::agents::Agent>,
+) -> Result<Outcome, Refusal> {
+    let answer = map_targets(world.maps());
+    Ok(Outcome::logged(answer.chat, answer.table))
+}
+
+/// `/tp`: a transfer the session starts with its own machinery (`begin_transfer`).
+pub fn chat_transfer(
+    invocation: &Invocation,
+    _world: &crate::world::World,
+    _agent: Option<&crate::agents::Agent>,
+) -> Result<Outcome, Refusal> {
+    Ok(Outcome::Transfer {
+        argument: invocation.arguments.get(0).unwrap_or_default().to_string(),
+    })
+}
+
+/// `/stuck`: where this agent stands now, as the frame that says so.
+///
+/// **Not** `AGENT_STOP_MOVING` - that is what `0x8028` answers - and the working implementation sends
+/// the position alone (`ASURA/crates/asura-world/src/chat.rs:260-287`); the tick it also broadcasts is
+/// the ticker's own, so no second clock is invented.
+pub fn chat_stuck(
+    invocation: &Invocation,
+    _world: &crate::world::World,
+    agent: Option<&crate::agents::Agent>,
+) -> Result<Outcome, Refusal> {
+    let Some(agent) = agent else {
+        return Err(Refusal::new(
+            REFUSED,
+            format!(
+                "{} needs a player session: it answers with the position of the agent that asked",
+                invocation.operation
+            ),
+        ));
+    };
+    let frame = crate::server::packets::agent_packets::agent_update_position(
+        agent.agent_id,
+        agent.position,
+        agent.plane,
+    )
+    .1;
+    Ok(Outcome::Frames(vec![frame]))
+}
+
+/// Register the operations the chat surface's own rows name (`data/commands.json`).
+///
+/// They live here, beside the world's own, so a program names them once and every surface - chat,
+/// console, API, and Lua when it arrives - reaches the same function.
+pub fn register_chat(registry: &mut Registry) -> Result<(), String> {
+    registry.register(
+        Registration {
+            name: "chat.transfer",
+            help: "a server transfer to the map the argument names",
+            arguments: &["destination"],
+        },
+        chat_transfer,
+    )?;
+    registry.register(
+        Registration {
+            name: "chat.maps",
+            help: "the alias table: sent to the client, logged for the operator",
+            arguments: &[],
+        },
+        chat_maps,
+    )?;
+    registry.register(
+        Registration {
+            name: "chat.stuck",
+            help: "broadcast where the asking agent stands",
+            arguments: &[],
+        },
+        chat_stuck,
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::Agent;
 
     fn registry() -> Registry {
         let mut registry = Registry::new();
         registry
             .register(
-                Registration {
-                    name: "world.status",
-                    help: "what this world is running",
-                    arguments: &[],
-                },
+                Registration { name: "world.status", help: "what this world is running", arguments: &[] },
                 world_status,
             )
             .unwrap();
         registry
+    }
+
+    fn agent() -> Agent {
+        Agent {
+            agent_id: 7,
+            position: (10.0, 20.0),
+            plane: 0,
+            facing: (1.0, 0.0),
+            last_report: None,
+            speed_base: 288.0,
+            motion: Default::default(),
+            move_type: 0,
+            move_speed: 0.0,
+            move_direction: (1.0, 0.0),
+        }
     }
 
     #[test]
@@ -314,26 +483,66 @@ mod tests {
     }
 
     #[test]
-    fn the_caller_reaches_the_operation_and_the_world_answers() {
-        fn who(invocation: &Invocation, _world: &crate::world::World) -> Result<String, Refusal> {
-            Ok(format!("{}:{}", invocation.caller.kind_label(), invocation.caller.name))
-        }
-        let mut registry = Registry::new();
-        registry
-            .register(Registration { name: "who", help: "", arguments: &[] }, who)
-            .unwrap();
+    fn the_caller_reaches_the_operation_and_the_text_surface_renders_its_answer() {
+        let registry = registry();
         let world = crate::world::World::new(7);
-        let invocation = registry.invocation("who", Arguments::none(), Caller::api("manage")).unwrap();
-        assert_eq!(registry.invoke(&invocation, &world).unwrap(), "api:manage");
-        let console = registry.invocation("who", Arguments::none(), Caller::console()).unwrap();
-        assert_eq!(registry.invoke(&console, &world).unwrap(), "console:");
+        let invocation = registry.invocation("world.status", Arguments::none(), Caller::api("manage")).unwrap();
+        assert_eq!(
+            registry.invoke_text(&invocation, &world).unwrap(),
+            "World 7: 0 map(s) loaded."
+        );
     }
 
     #[test]
-    fn the_status_operation_reads_the_world_it_is_handed() {
-        let registry = registry();
+    fn the_chat_operations_are_registrations_and_answer_with_what_a_session_performs() {
+        let mut registry = Registry::new();
+        register_chat(&mut registry).unwrap();
         let world = crate::world::World::new(7);
-        let invocation = registry.invocation("world.status", Arguments::none(), Caller::console()).unwrap();
-        assert_eq!(registry.invoke(&invocation, &world).unwrap(), "World 7: 0 map(s) loaded.");
+
+        let transfer = registry
+            .invocation("chat.transfer", Arguments::of(vec!["ascalon".into()]), Caller::chat(1))
+            .unwrap();
+        assert_eq!(
+            registry.invoke(&transfer, &world, None).unwrap(),
+            Outcome::Transfer { argument: "ascalon".into() }
+        );
+
+        let stuck = agent();
+        let invocation = registry
+            .invocation("chat.stuck", Arguments::none(), Caller::chat(1))
+            .unwrap();
+        match registry.invoke(&invocation, &world, Some(&stuck)).unwrap() {
+            Outcome::Frames(frames) => {
+                assert_eq!(frames.len(), 1);
+                assert_eq!(
+                    &frames[0][..2],
+                    &crate::server::packets::agent_packets::AGENT_UPDATE_POSITION.to_le_bytes(),
+                    "the agent update position frame"
+                );
+            }
+            other => panic!("stuck answers with a frame, not {other:?}"),
+        }
+
+        // A surface that cannot perform a frame is refused, not answered with nothing.
+        let refusal = registry.invoke_text(&invocation, &world).unwrap_err();
+        assert_eq!(refusal.code, REFUSED);
+        assert!(refusal.message.contains("needs a player session"), "{}", refusal.message);
+    }
+
+    #[test]
+    fn the_map_list_answers_with_the_chat_half_and_the_logged_table() {
+        let mut registry = Registry::new();
+        register_chat(&mut registry).unwrap();
+        let world = crate::world::World::new(7);
+        let invocation = registry
+            .invocation("chat.maps", Arguments::none(), Caller::chat(1))
+            .unwrap();
+        match registry.invoke(&invocation, &world, None).unwrap() {
+            Outcome::Text { wire, log } => {
+                assert!(!wire.is_empty(), "an empty world still says how many aliases it has: {wire:?}");
+                assert!(!log.is_empty(), "the table is logged");
+            }
+            other => panic!("maps answers with text, not {other:?}"),
+        }
     }
 }

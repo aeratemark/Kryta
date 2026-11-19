@@ -85,6 +85,21 @@ Both exit codes of the reference's contract (`Main.cpp:434-439`) were observed o
 The clients' own codes were checked too: `kryta-supervisor status` answers 1 when nothing is listening,
 `--help` answers 0, and `kryta-cli` answers 1 with the reason when the world is not there.
 
+## One command surface, one registry
+
+`data/commands.json` is the whole command surface: every row names a registered operation and the values
+it takes, and there is no enum of commands in Rust and no match on one. `game/src/Chat/Operations.rs`
+holds the registry, `chat.transfer`, `chat.maps` and `chat.stuck` are registrations like `world.status`,
+and a row whose operation the world does not register - or whose parameter count the operation does not
+declare - is refused when the file is read. The chat line, the console and the control endpoint all
+resolve the same rows and call the same function; a function answers with `Text`, `Frames` or a
+`Transfer` and the surface performs it, so one implementation serves every door.
+
+Proved on this machine: the same end-to-end session was captured before and after the chat line moved
+onto the registry, and `python tools/capture/read.py <capture> --header 0x005D` plus `--header 0x0061`
+answers the identical two records both times (`5d00 0800 0108 0107 hello 0001`, then `6100 0100 03`).
+The console still answers `server info`, and the API refuses `chat.stuck` with "needs a player session",
+which is the outcome mapping working over the wire.
 The recovered control-panel and research requirements are in `docs/port/12-research-and-control-panel.md`.
 The research and plan for the operator's surfaces - the command line, a console over the same command
 table in-game chat uses, and a control console over recordings, analysis and maps - are in

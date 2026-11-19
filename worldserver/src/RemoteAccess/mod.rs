@@ -293,8 +293,12 @@ mod tests {
         registry
             .register(
                 Registration { name: "echo", help: "answers its value", arguments: &["text"] },
-                |invocation: &Invocation, _world: &game::world::World| {
-                    Ok(invocation.arguments.get(0).unwrap_or_default().to_string())
+                |invocation: &Invocation,
+                 _world: &game::world::World,
+                 _agent: Option<&game::agents::Agent>| {
+                    Ok(game::chat::operations::Outcome::text(
+                        invocation.arguments.get(0).unwrap_or_default(),
+                    ))
                 },
             )
             .unwrap();

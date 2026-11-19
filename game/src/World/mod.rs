@@ -114,6 +114,10 @@ pub struct World {
     /// The chat command surface: the names a player may type and the operation each runs, read from
     /// `data/commands.json` (`docs/decisions/0011-the-command-surface-is-content.md`).
     commands: crate::chat::commands::Table,
+    /// The operations every surface reaches (`game/src/Chat/Operations.rs`). The program builds the
+    /// registry before the rows are read, so a row naming an operation this world does not have is
+    /// refused at start-up rather than at a player's expense.
+    operations: std::sync::Arc<crate::chat::operations::Registry>,
     /// The bags, items and profession sets a character-creation screen is built from.
     creation: crate::creation::Tables,
     /// Where a character may stand on entry, per map (R13).
@@ -204,6 +208,7 @@ impl World {
             realm,
             maps: Vec::new(),
             commands: crate::chat::commands::Table::empty(),
+            operations: std::sync::Arc::new(crate::chat::operations::Registry::new()),
             creation: crate::creation::Tables::default(),
             spawns: Vec::new(),
             arrivals: Vec::new(),
@@ -267,17 +272,29 @@ impl World {
         &self.commands
     }
 
+    /// The operations every surface reaches: the registry the rows bind their names to.
+    pub fn operations(&self) -> &std::sync::Arc<crate::chat::operations::Registry> {
+        &self.operations
+    }
+
+    /// Give the world its registrations. The program builds them, names the same `Arc` for the console
+    /// and the control endpoint, and the rows are then read against them.
+    pub fn set_operations(&mut self, operations: std::sync::Arc<crate::chat::operations::Registry>) {
+        self.operations = operations;
+    }
+
     /// Read the chat command table.
     ///
-    /// A file that is present but wrong is an error - an unknown operation, a name stated twice, a row
-    /// the parser cannot honour - because a command that cannot work is worse than one that does not
-    /// exist. A file that is missing leaves the table empty and is reported once.
+    /// A file that is present but wrong is an error - an operation this world does not register, a name
+    /// stated twice, a parameter list the operation does not declare - because a command that cannot
+    /// work is worse than one that does not exist. A file that is missing leaves the table empty and is
+    /// reported once.
     pub fn load_commands(
         &mut self,
         path: impl AsRef<std::path::Path>,
         log: &Log,
     ) -> Result<usize, String> {
-        self.commands = crate::chat::commands::Table::load(path, log)?;
+        self.commands = crate::chat::commands::Table::load(path, log, &self.operations)?;
         log.out(
             LogLevel::Info,
             "server.worldserver",

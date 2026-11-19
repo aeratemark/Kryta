@@ -40,14 +40,18 @@ authentication remain to be designed; the same owners serve other supported call
 
 ## 2. Current state
 
-- `game/src/Chat/Commands.rs` reads command rows and resolves `execution` to a closed `Operation` enum;
-  `game/src/Handlers/ChatHandler.rs` dispatches them using a session. `game/src/Chat/Operations.rs` now
-  registers read-only world status and map-list functions for the embedded console. The chat and
-  console map-list paths call the same map-list function; chat dispatch still uses the enum, so the
-  two are not yet one registry or an API callable by all surfaces.
-- `tools/supervisor/src/main.rs` starts and watches services, but says it has no control channel or
-  restart policy. `worldserver` has an embedded interactive console with `help`, `server info` and
-  `maps`; it queues those commands for the world update. It has no standalone CLI or shared API.
+- `game/src/Chat/Commands.rs` reads command rows and resolves each row's `operation` through the
+  registry in `game/src/Chat/Operations.rs`; there is no enum of commands and no match on one. Every
+  surface - the chat line, the console, the control endpoint - resolves the same rows and invokes the
+  same registered function; the chat line performs the answer a function returns (`Text`, `Frames`, or
+  a `Transfer`), which is why `/maps` and the console's map list are one implementation and `/stuck`'s
+  frame and `/tp`'s transfer are the engine's own. The frames were proved byte-identical across that
+  move by capturing the same session before and after it.
+- `tools/supervisor/src/main.rs` starts and watches services, answers a loopback control channel
+  (`status`, `stop [service]`, `restart <service>`, `quit`), reads the world's exit code `2` and starts
+  the service again. `worldserver` has an embedded interactive console, a standalone `kryta-cli`, and
+  the local control endpoint; its two lifecycle rows, `server exit` and `server restart`, ask the world
+  to stop and set the exit code the supervisor reads.
 - `tools/manage` is an existing application over the repositories. Its settings page reads and displays
   configuration; it does not edit settings. Its content pages already offer some database edits.
 - Lua integration, API bindings and script-defined commands are planned, not implemented. Existing
@@ -399,9 +403,8 @@ This section is the design of the first slice. **The first slice and its contrac
 operation registry with declared values and a coded refusal, the world queue, the embedded console
 adapter, the loopback control endpoint, the standalone CLI, and the manager's `/status` page, with
 `tools/manage` a supervised stack service; `docs/port/01-structure.md` and `docs/port/05-tooling.md`
-carry the status and the live proofs. What this section still describes ahead of the code is the
-supervisor's control channel and its exit-code contract, administrator authentication, and moving chat
-dispatch onto the registry (it still matches the closed `Operation` enum).
+carry the status and the live proofs. What this section still describes ahead of the code is
+administrator authentication.
 
 ### Reference and existing boundaries
 
@@ -515,11 +518,13 @@ blocking the API and settings manager on playback or a map renderer.
    status page exist; the manager reaches the running world and receives a real result, and the failure
    paths - unknown operation, invalid arguments, refused credential, full queue, no answer - are proven
    (`docs/port/05-tooling.md`). No client-facing change was made.
-2. **Shared execution.** Add the remaining caller adapters and existing operations by subject. Proof:
-   each supported caller invokes the same registered implementation; an alias needs only a mapping,
-   and a new function does not need a dispatcher edit. Compare client frames and behavior with ASURA
-   and the real client where applicable. **Part landed**: the console and the control endpoint already
-   share it; chat dispatch still matches the closed enum.
+2. **Shared execution.** **Landed.** Every surface - the chat line, the console, the control endpoint -
+   resolves the same rows in `data/commands.json`, and every row names a registration; there is no enum
+   of commands and no match on one. The chat operations answer with `Text`, `Frames` or a `Transfer` and
+   the surface performs it, so `/maps` and the console's map list are one function, and `/stuck`'s frame
+   and `/tp`'s transfer stay the engine's own. Proof: the console and API tests invoke the same
+   registrations; the chat frames are byte-identical across the move (captured before and after, then
+   read with `tools/capture/read.py`), and `docs/port/05-tooling.md` records it.
 3. **Service control and CLI.** **Landed.** The supervisor's loopback control channel answers `status`,
    `stop [service]`, `restart <service>` and `quit`; the world ports the reference's exit-code contract
    (`0`, `1`, `2`, `Main.cpp:434-439`) and carries it out through the rows `server exit` and
