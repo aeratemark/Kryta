@@ -127,13 +127,18 @@ A command's availability to a caller and the caller's authorization are distinct
 not reject a row merely because it is console-enabled and also has a chat permission. Decide the
 initial access model before exposing privileged operations. The owner wants an initial `admin` account
 with password `admin`, kept in a server-restricted file, with administrators able to change passwords.
+**Where it lives is decided**: `docs/decisions/0013-the-admin-identity-is-a-file.md` - the administrator's
+identity is a file, never a database row, because an administrator must never be locked out of the
+server they own; the file is protected the way the world control credential is, checked on every load,
+and refuses to serve when the check fails.
 Operators are server administrators and can perform every operation the server allows; a finer privilege
 system can be designed later. Administrators sign in to the manager and can create other administrator
 accounts, change passwords and remove access. An administrator links a game account to an administrator
 identity to use in-game operator features; only authorized operators may use them. The default password
-must be changed before remote access is enabled. Credential storage, file protection, bootstrap, account
-linking and recovery still need design. ASURA does not establish a new GM permission policy; `account_access` and RBAC
-are reference research, not an adopted schema. Do not invent new client-visible refusals under Rule 0.
+must be changed before remote access is enabled. The hash algorithm and its crate, sessions, recovery and
+account linking still need design (`0013` names what it leaves open). ASURA does not establish a new GM
+permission policy; `account_access` and RBAC are reference research, not an adopted schema. Do not invent
+new client-visible refusals under Rule 0.
 
 Access by third-party tools is required. Remote browser access to the manager is required; direct remote
 access by third-party tools and the CLI is desirable. Remote access requires a design for identity,
