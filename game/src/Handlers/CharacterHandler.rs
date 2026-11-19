@@ -133,7 +133,7 @@ impl WorldSession {
             creation.profession = message[3];
         }
         self.say(
-            LogLevel::Info,
+            LogLevel::Debug,
             format!(
                 "Gameplay connection from {peer}: the creation screen chose campaign {} and profession {}.",
                 creation.campaign, creation.profession
@@ -301,7 +301,7 @@ impl WorldSession {
             Ok(Ok(rows)) if rows.is_empty() => {
                 // `ON CONFLICT (name) DO NOTHING` wrote nothing: the name is taken.
                 self.say(
-                    LogLevel::Info,
+                    LogLevel::Debug,
                     format!(
                         "Gameplay connection from {peer}: the name '{name}' is taken; the creation screen is told so."
                     ),
@@ -313,7 +313,7 @@ impl WorldSession {
             }
             Ok(Ok(_)) => {
                 self.say(
-                    LogLevel::Info,
+                    LogLevel::Debug,
                     format!(
                         "Gameplay connection from {peer}: the character '{name}' was created as {} (profession {}, campaign {}).",
                         crate::characters::uuid_text(&id),
@@ -339,7 +339,7 @@ impl WorldSession {
                     self.item_templates(),
                 ) {
                     Ok(written) => self.say(
-                        LogLevel::Info,
+                        LogLevel::Debug,
                         format!(
                             "Gameplay connection from {peer}: the character's {written} starting item row(s) are written."
                         ),
@@ -358,7 +358,7 @@ impl WorldSession {
                 if let Some(outpost) = starting_outpost {
                     match characters.unlock_map(&crate::characters::uuid_text(&id), outpost.id) {
                         Ok(true) => self.say(
-                            LogLevel::Info,
+                            LogLevel::Debug,
                             format!(
                                 "Gameplay connection from {peer}: map {} ('{}') is unlocked for the new character (R12).",
                                 outpost.id, outpost.name

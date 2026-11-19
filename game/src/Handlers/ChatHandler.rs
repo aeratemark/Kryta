@@ -102,7 +102,7 @@ impl WorldSession {
                 }
                 self.send(io, peer, crypt, &frames, "a spoken line").await;
                 self.say(
-                    LogLevel::Info,
+                    LogLevel::Debug,
                     format!(
                         "Gameplay connection from {peer}: {} spoke {spoken:?} on channel {channel}.",
                         sheet.name
@@ -157,7 +157,7 @@ impl WorldSession {
                             self.answer_line(io, peer, crypt, line).await;
                         }
                         for line in &log {
-                            self.say(LogLevel::Info, format!("Gameplay connection from {peer}: {line}"));
+                            self.say(LogLevel::Debug, format!("Gameplay connection from {peer}: {line}"));
                         }
                     }
                     crate::chat::operations::Outcome::Frames(frames) => {
@@ -181,7 +181,7 @@ impl WorldSession {
                     );
                 } else {
                     self.say(
-                        LogLevel::Info,
+                        LogLevel::Debug,
                         format!(
                             "Gameplay connection from {peer}: chat on channel {other:?} refused, as the reference refuses it."
                         ),
@@ -214,7 +214,7 @@ impl WorldSession {
             chat_packets::CHANNEL_GLOBAL,
         ));
         self.send(io, peer, crypt, &frames, "an answer").await;
-        self.say(LogLevel::Info, format!("Gameplay connection from {peer}: {text}"));
+        self.say(LogLevel::Debug, format!("Gameplay connection from {peer}: {text}"));
     }
 
     /// This connection's player id as the chat tag carries it: `0x0061` and `0x005E` hold a `u16`

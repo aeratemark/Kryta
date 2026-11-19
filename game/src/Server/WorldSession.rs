@@ -454,7 +454,7 @@ impl WorldSession {
         let sighting = *seen;
         match sighting {
             1 => self.say(
-                LogLevel::Info,
+                LogLevel::Debug,
                 format!(
                     "Gameplay connection from {peer}: message {what} ({bytes} bytes), which this world does not answer yet."
                 ),
@@ -499,7 +499,7 @@ impl WorldSession {
         };
 
         self.say(
-            LogLevel::Info,
+            LogLevel::Debug,
             format!(
                 "Gameplay connection from {peer}: build {}, world {}, map {}, player token 0x{:08X}.",
                 version.version, version.map_token, version.map_id, version.player_token
@@ -586,7 +586,7 @@ impl WorldSession {
 
         let mut crypt = AuthCrypt::new(&handshake::derive_key(&master));
         self.say(
-            LogLevel::Info,
+            LogLevel::Debug,
             format!(
                 "Gameplay connection from {peer}: the exchange is answered. Everything after it is scrambled."
             ),
@@ -607,7 +607,7 @@ impl WorldSession {
                 match travels.claim(self.realm, &account, version.player_token) {
                     Ok(Some(travel)) => {
                         self.say(
-                            LogLevel::Info,
+                            LogLevel::Debug,
                             format!(
                                 "Gameplay connection from {peer}: the travel record is claimed - map {}, district {}, language {}{}.",
                                 travel.map_id,
@@ -647,7 +647,7 @@ impl WorldSession {
                     }
                     Ok(None) => {
                         self.say(
-                            LogLevel::Info,
+                            LogLevel::Debug,
                             format!(
                                 "Gameplay connection from {peer}: no travel record was claimed; the map {} is the one its own version message names.",
                                 version.map_id
@@ -808,7 +808,7 @@ impl WorldSession {
             crypt.encrypt(&mut block);
             match io.write_all(&block).await {
                 Ok(()) => self.say(
-                    LogLevel::Info,
+                    LogLevel::Debug,
                     format!(
                         "Gameplay connection from {peer}: {} is loading - {} message(s), {} bytes: the load head, the player-data start, the name '{}', the instance's record (district {district}, language {language}), the exploration grid ({} x {}, nothing explored) and the instance table ({} pair(s)).",
                         map.label(),
@@ -840,7 +840,7 @@ impl WorldSession {
         crypt.encrypt(&mut block);
         match io.write_all(&block).await {
             Ok(()) => self.say(
-                LogLevel::Info,
+                LogLevel::Debug,
                 format!(
                     "Gameplay connection from {peer}: the character-creation instance is opened, {} bytes (load head and creation start).",
                     block.len()
@@ -959,7 +959,7 @@ impl WorldSession {
             let read = match io.read(&mut buffer).await {
                 Ok(0) => {
                     self.say(
-                        LogLevel::Info,
+                        LogLevel::Debug,
                         format!("Gameplay connection from {peer} closed."),
                     );
                     return;
@@ -1341,7 +1341,7 @@ impl WorldSession {
                         let frames = match point {
                             Some(point) => {
                                 self.say(
-                                    LogLevel::Info,
+                                    LogLevel::Debug,
                                     format!(
                                         "Gameplay connection from {peer}: the character stands at {:.2}, {:.2} (plane {}) on map {}.",
                                         point.0, point.1, point.2, map.id
@@ -1416,7 +1416,7 @@ impl WorldSession {
                                     Ok(true) => {
                                         reached_here = true;
                                         self.say(
-                                            LogLevel::Info,
+                                            LogLevel::Debug,
                                             format!(
                                                 "Gameplay connection from {peer}: map {} '{}' is unlocked - the character arrived in it (R12).",
                                                 map.id, map.name
@@ -1500,7 +1500,7 @@ impl WorldSession {
                         self.send(io, peer, crypt, &frames, "the players and the load's last message")
                             .await;
                         self.say(
-                            LogLevel::Info,
+                            LogLevel::Debug,
                             format!(
                                 "Gameplay connection from {peer}: map {} is loaded - the character '{}' is in it ({count} message(s), {} other player(s) introduced).",
                                 map.id,
@@ -1823,7 +1823,7 @@ impl WorldSession {
         frames: &[Vec<u8>],
         what: &str,
     ) -> bool {
-        self.send_with(LogLevel::Info, io, peer, crypt, frames, what).await
+        self.send_with(LogLevel::Debug, io, peer, crypt, frames, what).await
     }
 
     /// Send a batch whose report is routine: a periodic frame, which is a `Trace` line - below both

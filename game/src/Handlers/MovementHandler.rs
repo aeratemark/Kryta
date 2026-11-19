@@ -97,7 +97,7 @@ impl WorldSession {
             crate::terrain::Walk::NoPath | crate::terrain::Walk::NoGraph => {
                 self.with_agent(|agent| agent.cancel_movement());
                 self.say(
-                    LogLevel::Info,
+                    LogLevel::Debug,
                     format!(
                         "Gameplay connection from {peer}: agent {agent_id} cannot walk from ({:.1}, {:.1}) plane {} to ({:.1}, {:.1}) plane {plane}: standing still, and nothing is sent.",
                         from.x, from.y, planes, destination.0, destination.1

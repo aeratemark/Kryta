@@ -62,7 +62,7 @@ impl WorldSession {
         match characters.move_item(&uuid, item_id, bag_id, slot, &bags) {
             Ok(MoveOutcome::At { bag_id, slot }) => {
                 self.say(
-                    LogLevel::Info,
+                    LogLevel::Debug,
                     format!(
                         "Gameplay connection from {peer}: item {item_id} moved to bag {bag_id} slot {slot}."
                     ),
@@ -77,7 +77,7 @@ impl WorldSession {
             Ok(MoveOutcome::Unchanged) => {}
             Ok(MoveOutcome::Refused { place, reason }) => {
                 self.say(
-                    LogLevel::Info,
+                    LogLevel::Debug,
                     format!(
                         "Gameplay connection from {peer}: item {item_id} to bag {bag_id} slot {slot} refused: {reason:?}."
                     ),
@@ -169,7 +169,7 @@ impl WorldSession {
             Err(refusal) => {
                 let (level, why) = match refusal {
                     crate::characters::NotWorn::NotTheCharacters => (
-                        LogLevel::Info,
+                        LogLevel::Debug,
                         format!("Item {item_id} is not the character's, so it cannot be worn."),
                     ),
                     crate::characters::NotWorn::NoTemplate => (
@@ -177,7 +177,7 @@ impl WorldSession {
                         format!("No item template describes item {item_id}; it cannot be worn."),
                     ),
                     crate::characters::NotWorn::KindNotWorn { item_type } => (
-                        LogLevel::Info,
+                        LogLevel::Debug,
                         format!("Item {item_id} is kind {item_type}, which is not worn."),
                     ),
                     crate::characters::NotWorn::NoEquippedBag => (
@@ -204,7 +204,7 @@ impl WorldSession {
                 .unwrap_or_default()
             else {
                 self.say(
-                    LogLevel::Info,
+                    LogLevel::Debug,
                     format!(
                         "Gameplay connection from {peer}: no free carrying slot to take item {} off, so item {item_id} cannot be worn.",
                         occupant.item_id
@@ -215,7 +215,7 @@ impl WorldSession {
             match characters.move_item(&uuid, occupant.item_id, to_bag, to_slot, &bags) {
                 Ok(MoveOutcome::At { bag_id, slot }) => {
                     self.say(
-                        LogLevel::Info,
+                        LogLevel::Debug,
                         format!(
                             "Gameplay connection from {peer}: item {} taken off to bag {bag_id} slot {slot}.",
                             occupant.item_id
@@ -244,7 +244,7 @@ impl WorldSession {
         match characters.move_item(&uuid, item_id, bag_id, slot, &bags) {
             Ok(MoveOutcome::At { bag_id, slot }) => {
                 self.say(
-                    LogLevel::Info,
+                    LogLevel::Debug,
                     format!(
                         "Gameplay connection from {peer}: item {item_id} worn in equipped slot {slot} of bag {bag_id}."
                     ),
@@ -259,7 +259,7 @@ impl WorldSession {
             Ok(MoveOutcome::Unchanged) => {}
             Ok(MoveOutcome::Refused { place, reason }) => {
                 self.say(
-                    LogLevel::Info,
+                    LogLevel::Debug,
                     format!(
                         "Gameplay connection from {peer}: equipping item {item_id} refused: {reason:?}."
                     ),
@@ -318,7 +318,7 @@ impl WorldSession {
         };
         if item_id == 0 || count == 0 {
             self.say(
-                LogLevel::Info,
+                LogLevel::Debug,
                 format!(
                     "Gameplay connection from {peer}: a drop of {count} of item {item_id} names something that is not an item; ignored."
                 ),
@@ -331,13 +331,13 @@ impl WorldSession {
         let uuid = crate::characters::uuid_text(&sheet.uuid);
         match characters.take_from_stack(&uuid, item_id, u32::from(count)) {
             Ok(Some(remaining)) => self.say(
-                LogLevel::Info,
+                LogLevel::Debug,
                 format!(
                     "Gameplay connection from {peer}: {count} of item {item_id} dropped; {remaining} left in the bag, and nothing is sent."
                 ),
             ),
             Ok(None) => self.say(
-                LogLevel::Info,
+                LogLevel::Debug,
                 format!(
                     "Gameplay connection from {peer}: a drop names item {item_id}, which the character does not carry in that quantity; ignored."
                 ),
@@ -356,7 +356,7 @@ impl WorldSession {
     /// path that works.
     pub(crate) fn answer_unequip_item(&self, peer: &str) {
         self.say(
-            LogLevel::Info,
+            LogLevel::Debug,
             format!(
                 "Gameplay connection from {peer}: an unequip (0x804F) is not ported: it carries no item id and no capture shows what it means; dragging the item out of the equipped bag is the path that works."
             ),

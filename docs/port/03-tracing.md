@@ -81,6 +81,23 @@ including traffic this server does not understand, appears byte for byte with it
 statement trace is the same idea for the database: a startup that applied the wrong file looks like
 a startup that worked until the statements are visible.
 
+## Which of these are `Info`, and why that is the rule
+
+**A line about one connection is a `Debug` line.** At a thousand players, `Info` has to mean what an
+operator can read: the server's own state and its problems. So the lines below that describe what one
+connection did - a load, an item move, a chat line, a travel, a refusal, the entry position, the ping -
+are written at `Debug`. The console appender (`Info`) does not print them; `Server.log` (level 5,
+`Debug`) does; and the stack's console shows neither, because it is not a log viewer.
+
+What stays at `Info` is the world's own state: the startup stages, `READY: listening on`, the status
+heartbeat, the world-list refresh, an instance disposed, the creation tables, and every `Warn` or
+`Error`. Those are the lines a person watches a server with, and there are a handful per minute, not per
+connection.
+
+To watch one connection's detail live, give the world's console appender level `5` (`Debug`) - or `6`
+for the traces in the table above - in `worldserver.json`'s `Appender.Console`; to keep the record
+without the screen, read `Server.log`.
+
 ## The front door
 
 A gameplay connection is not a login, so it says different things. Both are on by default:

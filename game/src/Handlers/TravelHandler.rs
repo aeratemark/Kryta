@@ -49,7 +49,7 @@ impl WorldSession {
         };
         let Some(to_map) = crossed.to_map else {
             self.say(
-                LogLevel::Info,
+                LogLevel::Debug,
                 format!(
                     "Gameplay connection from {peer}: the character crossed a doorway of map {from_map} from ({:.0}, {:.0}) to ({:.0}, {:.0}); no destination is recorded for that doorway.",
                     from.0, from.1, to.0, to.1
@@ -66,7 +66,7 @@ impl WorldSession {
             .copied();
         let landing = arrival.map(|arrival| (arrival.x, arrival.y));
         self.say(
-            LogLevel::Info,
+            LogLevel::Debug,
             format!(
                 "Gameplay connection from {peer}: the character crossed the doorway of map {from_map} at ({:.0}, {:.0}) -> ({:.0}, {:.0}): crossing to {to_map}{}",
                 from.0,
@@ -91,7 +91,7 @@ impl WorldSession {
             .cloned()
         else {
             self.say(
-                LogLevel::Info,
+                LogLevel::Debug,
                 format!(
                     "Gameplay connection from {peer}: instance {to_map} cannot be served by this world; the crossing is refused."
                 ),
@@ -139,7 +139,7 @@ impl WorldSession {
             .cloned()
         else {
             self.say(
-                LogLevel::Info,
+                LogLevel::Debug,
                 format!(
                     "Gameplay connection from {peer}: instance {map_id} cannot be served by this world; the travel is refused."
                 ),
@@ -230,7 +230,7 @@ impl WorldSession {
                 Ok(()) => {
                     recorded = true;
                     self.say(
-                        LogLevel::Info,
+                        LogLevel::Debug,
                         format!(
                             "Gameplay connection from {peer}: the travel to map {} is recorded for world {}; the world claims it when the connection presents token 0x{player_token:08X}.",
                             destination.id, self.realm
@@ -287,7 +287,7 @@ impl WorldSession {
         ];
         self.send(io, peer, crypt, &frames, "the redirect").await;
         self.say(
-            LogLevel::Info,
+            LogLevel::Debug,
             format!(
                 "Gameplay connection from {peer}: the character '{}' travels to map {} ('{}'); the client is told to dial {}.{}.{}.{}:{} with token 0x{player_token:08X}.",
                 sheet.name,
@@ -327,7 +327,7 @@ impl WorldSession {
         let agent = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
         let other = u32::from_le_bytes([body[4], body[5], body[6], body[7]]);
         self.say(
-            LogLevel::Info,
+            LogLevel::Debug,
             format!(
                 "Gameplay connection from {peer}: the character '{}' touched a travel object in map {}: TRAVEL_INIT agent 0x{agent:08X}, second 0x{other:08X}; no portal row names that agent, so no travel starts.",
                 sheet.name,
@@ -377,7 +377,7 @@ impl WorldSession {
             // `GmCommands.c:180-190`: the reference refuses a target with no `GmMapConfig` rather than
             // letting its map load fall back to Kamadan.
             self.say(
-                LogLevel::Info,
+                LogLevel::Debug,
                 format!(
                     "Gameplay connection from {peer}: That map has no config; the server would fall back, so the teleport is refused ({}).",
                     target.label
@@ -394,7 +394,7 @@ impl WorldSession {
             // The table knows the map; this world hosts no row for it. The reference pre-spawns one
             // server per map, so its answer would be a transfer; this one can only say so.
             self.say(
-                LogLevel::Info,
+                LogLevel::Debug,
                 format!(
                     "Gameplay connection from {peer}: {} ({}) is not hosted by this world; the teleport is refused.",
                     target.label, target.map_id
