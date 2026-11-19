@@ -60,6 +60,21 @@ one is on and its logger is not, the program says so and names the line to add.
 | every database statement | `Database.Trace = 1` | `Logger.sql.trace = 6,Console Auth` | `query [database] SELECT ...` and `rows [database] 1`, `batch`, `execute`, `affected` |
 | every key the configuration held | `Log.EffectiveConfig = 1` | `Logger.server.loading = 6,Console Auth` | `> Config: LoginDatabaseInfo = 127.0.0.1;5432;kryta;********;kryta_login` - a connection string's password is masked, because a log line gets pasted into issue reports |
 
+**A routine reply is a `Debug` line, not an `Info` one.** The table above is what this server reports at
+`Info`: events - a load, a chat line, a transfer, a refusal, the world's own heartbeat. Two kinds of
+frame are not events and are written at `Debug`, where the default logger (`Logger.root = [4, ...]`, level
+4 = `Info`) does not print them:
+
+| routine line | why it is not `Info` |
+|---|---|
+| `... a tick answered with N message(s), M bytes.` | the simulation tick goes out every `World.SimulationTickMs` to every loaded connection; at `Info` that was the whole log. The tick's presence is read from its effect, as the table above says, not from a line per frame |
+| `... the walk ...`, `... the walk the report asked for ...`, `... the stop ...`, `... the stopping point ...` | the acknowledgement of a movement report; a walking player sends one every step |
+
+To see them, give the world logger level `5` (`Debug`) in `worldserver.json`, for example
+`"server.worldserver": [5, "Console"]` under `Logger`, and they appear beside everything else. Nothing
+else changes: the capture (`CaptureFile`, `05-tooling.md`) records every frame regardless of the log
+level, so a session that needs the frames asks the capture, not the log.
+
 The byte trace is the one that turns an unexplained client into evidence: whatever a client sends,
 including traffic this server does not understand, appears byte for byte with its direction. The
 statement trace is the same idea for the database: a startup that applied the wrong file looks like

@@ -1646,7 +1646,9 @@ impl WorldSession {
                     if let Some(walk) = walk {
                         frames.push(walk);
                     }
-                    self.send(io, peer, crypt, &frames, "a tick").await;
+                    // The tick is periodic, so its report is routine: one line per connection per
+                    // `World.SimulationTickMs` at `Info` was the whole of a flowing log.
+                    self.send_quiet(io, peer, crypt, &frames, "a tick").await;
                     if let Some((from, to)) = crossed {
                         // The travelling body leaves the map it is in: the clock that crossed it has
                         // already been announced, then the transfer is served.
@@ -1780,8 +1782,37 @@ impl WorldSession {
 
 
     /// Scramble and send whole frames, and say so.
+    ///
+    /// The report is `Info`: a batch this world was asked for is an event. A periodic frame is not - the
+    /// simulation tick goes through [`WorldSession::send_quiet`] instead, because at `Info` it wrote one
+    /// line every `World.SimulationTickMs` for every connection (`docs/port/03-tracing.md`, which reports
+    /// the tick by its effect rather than by a line).
     pub(crate) async fn send(
         &self,
+        io: &mut SessionIo,
+        peer: &str,
+        crypt: &mut AuthCrypt,
+        frames: &[Vec<u8>],
+        what: &str,
+    ) -> bool {
+        self.send_with(LogLevel::Info, io, peer, crypt, frames, what).await
+    }
+
+    /// Send a batch whose report is routine: a periodic frame, which is a `Debug` line.
+    pub(crate) async fn send_quiet(
+        &self,
+        io: &mut SessionIo,
+        peer: &str,
+        crypt: &mut AuthCrypt,
+        frames: &[Vec<u8>],
+        what: &str,
+    ) -> bool {
+        self.send_with(LogLevel::Debug, io, peer, crypt, frames, what).await
+    }
+
+    async fn send_with(
+        &self,
+        level: LogLevel,
         io: &mut SessionIo,
         peer: &str,
         crypt: &mut AuthCrypt,
@@ -1816,7 +1847,7 @@ impl WorldSession {
                     ),
                 );
                 self.say(
-                    LogLevel::Info,
+                    level,
                     format!(
                         "Gameplay connection from {peer}: {what} answered with {} message(s), {} bytes.",
                         frames.len(),

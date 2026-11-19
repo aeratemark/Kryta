@@ -91,7 +91,7 @@ impl WorldSession {
                     if let Ok(peers) = self.peers.lock() {
                         peers.broadcast(self.player_id(), self.map_id(), self.district(), &reply);
                     }
-                    self.send(io, peer, crypt, &reply, "the walk").await;
+                    self.send_quiet(io, peer, crypt, &reply, "the walk").await;
                 }
             }
             crate::terrain::Walk::NoPath | crate::terrain::Walk::NoGraph => {
@@ -199,7 +199,7 @@ impl WorldSession {
             if let Ok(peers) = self.peers.lock() {
                 peers.broadcast(self.player_id(), self.map_id(), self.district(), &reply);
             }
-            self.send(io, peer, crypt, &reply, "the walk the report asked for")
+            self.send_quiet(io, peer, crypt, &reply, "the walk the report asked for")
                 .await;
         }
     }
@@ -244,7 +244,7 @@ impl WorldSession {
                 std::slice::from_ref(&stop.1),
             );
         }
-        self.send(io, peer, crypt, &[stop.1], "the stop").await;
+        self.send_quiet(io, peer, crypt, &[stop.1], "the stop").await;
     }
 
     /// `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` (`0x8047`): the stopping point a cancel carries.
@@ -317,7 +317,7 @@ impl WorldSession {
             if let Ok(peers) = self.peers.lock() {
                 peers.broadcast(self.player_id(), self.map_id(), self.district(), &reply);
             }
-            self.send(io, peer, crypt, &reply, "the stopping point").await;
+            self.send_quiet(io, peer, crypt, &reply, "the stopping point").await;
         }
     }
 }
