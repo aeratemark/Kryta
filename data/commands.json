@@ -1,10 +1,10 @@
 {
-  "note": "The chat command table: which names a player may type, and the operation each one runs",
+  "note": "The command table: which names an operator or a player may type, and the operation each one runs",
 
   "information": {
-    "what": "One row per command. `command` is what a player types, without the slash. `also` holds the other names the same command answers to. `execution` names the server operation the command runs, and must be one this server has - a name it does not have is refused when the file is read, not when a player types it. `parameters` names the values the command takes, in order; an empty list means the command takes none, and asking it with an argument is the same answer as an unknown command.",
-    "why this is a file": "docs/decisions/0011-the-command-surface-is-content.md. The command surface is content: the names, the argument rule and the binding to an operation are facts a server reads, and Rust keeps only the operation itself. A command is added or moved here without rebuilding the server.",
-    "where the rows come from": "the reference's own two dispatch points - GmCommands.c, which owns /tp, /teleport and /maps, and GmChat.c, which owns /stuck - as the working implementation ports them at ASURA crates/asura-world/src/chat.rs:126-163",
+    "what": "One row per command. `command` is what a player types, without the slash. `also` holds the other names the same command answers to. A row binds its name one of two ways: `execution` names one of the closed chat operations (Teleport, ListTargets, Position) and defaults to the chat surface, or `operation` names a registered operation (for example world.status) and defaults to the console surface. `surfaces` may narrow or widen that: a row may name `chat`, `console`, or both. `parameters` names the values the command takes, in order; an empty list means the command takes none. A name this server cannot run is refused when the file is read, not when a player types it.",
+    "why this is a file": "docs/decisions/0011-the-command-surface-is-content.md and docs/port/14-operator-surfaces.md. The command surface is content: the names, the argument rule and the binding to an operation are facts a server reads, and Rust keeps only the operation. A command is added or moved here without rebuilding the server, and no surface names a command in Rust.",
+    "where the rows come from": "the reference's own two dispatch points - GmCommands.c, which owns /tp, /teleport and /maps, and GmChat.c, which owns /stuck - as the working implementation ports them at ASURA crates/asura-world/src/chat.rs:126-163; the console row is the reference's console name from cs_server.cpp:92",
     "not here": "the answers a command gives, and the conditions it refuses on. Those are the operation's own, in Rust, until the scripting layer of docs/port/11-content-and-behaviour.md takes them."
   },
 
@@ -27,6 +27,13 @@
       "execution": "Position",
       "parameters": [],
       "doc": "broadcast where this agent stands - a position, not AGENT_STOP_MOVING"
+    },
+    {
+      "command": "server info",
+      "operation": "world.status",
+      "parameters": [],
+      "surfaces": ["console"],
+      "doc": "what this world is running, answered on the console and to an operator client; the reference's own console name for it (cs_server.cpp:92), and it needs no player session"
     }
   ]
 }

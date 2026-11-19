@@ -101,6 +101,15 @@ answered "The running world did not answer. This is not an empty result" naming 
 `the stack is up: auth on 6112, world on 6113, manage on 6602`, so the manager is a stack service and
 not a program started by hand.
 
+The endpoint's contract was then exercised live, one raw request per case: `world.status` answered
+`{"ok":true,"result":"World 2: 265 map(s) loaded."}`; an unregistered name answered 404 with
+`"code":"unknown_operation"`; an argument the operation does not take answered 400 with
+`"code":"invalid_arguments"` and the message naming the argument; and a request with no credential
+answered 401 with `"code":"authentication_failed"`. `cargo test -p worldserver` pins the same cases
+plus a full queue answering `unavailable` and a world that never answers answering `unknown_completion`,
+and `cargo test -p game` pins the registry: a duplicate name refused, an unregistered name refused by
+code, a value count checked against the declaration, and the caller reaching the operation.
+
 The EULA itself is a column now (`data/sql/base/db_auth/account_eula.sql`): the version an account
 accepted, or 0 for none. The auth program's answer reports it, so a client that has accepted stops asking.
 

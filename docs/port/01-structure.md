@@ -179,16 +179,19 @@ every message in both directions is the arrangement this project exists to avoid
 
 ## What is next, and what stops it
 
-The first operator slice has landed: an embedded world console that accepts `help`, `server info` and
-`maps` on an interactive terminal and queues them to the world update; a game-owned operation registry
-serving `world.status` and the map list; a loopback, credential-authenticated control endpoint in
-worldserver (`POST /v1/operations`); a standalone `kryta-cli`; and a `/status` page in `tools/manage`
-that reads the running world through that endpoint, with `tools/manage` now a supervised stack service.
+The first operator slice has landed, with its contract: an embedded world console that reads its
+commands from `data/commands.json` and queues them to the world update; a game-owned operation registry
+(`game/src/Chat/Operations.rs`) whose registrations declare their values, whose calls carry a caller and
+whose refusals carry a stable code; rows that bind a typed name to a registration (`server info` ->
+`world.status`) or to one of the closed chat operations, with `surfaces` deciding who may type them; a
+loopback, credential-authenticated control endpoint in worldserver (`POST /v1/operations`) answering
+200/400/401/404/503 with those codes; a standalone `kryta-cli`; and a `/status` page in `tools/manage`
+that reads the running world through that endpoint, with `tools/manage` a supervised stack service.
 `cargo test -p worldserver` covers the queue, the console and every control answer and refusal, and
 `docs/port/05-tooling.md` records the live proofs. What remains in
-`docs/port/14-operator-surfaces.md` is the shared registry for chat dispatch (which still matches the
-`Operation` enum), operations that take arguments and caller identity, the supervisor's control channel,
-and administrator authentication before the manager leaves loopback.
+`docs/port/14-operator-surfaces.md` is chat dispatch moved onto the registry (it still matches the
+closed `Operation` enum), richer argument types and target context, the supervisor's control channel and
+exit-code contract, and administrator authentication before the manager leaves loopback.
 
 The current implementation and its evidence are in the status table above. The outstanding
 client-facing work and its port order are in `docs/port/09-parity-audit.md`; the world subjects

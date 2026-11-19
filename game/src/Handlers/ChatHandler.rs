@@ -126,8 +126,9 @@ impl WorldSession {
                 let row = self
                     .commands
                     .command(name)
+                    .filter(|row| row.serves(crate::chat::commands::Surface::Chat))
                     .filter(|row| row.takes_argument() == !argument.is_empty());
-                match row.map(|row| row.operation) {
+                match row.and_then(|row| row.chat_operation()) {
                     Some(crate::chat::commands::Operation::Position) => {
                         // `GameSrv_HandleChatCommand`'s `stuck`: broadcast where the agent is now.
                         // **Not** `AGENT_STOP_MOVING` - that is what `0x8028` answers - and the working

@@ -57,6 +57,19 @@ authentication remain to be designed; the same owners serve other supported call
 
 ## 3. The API contract to design
 
+**The contract exists now.** `game/src/Chat/Operations.rs` registers an operation as a name, a help
+line and its declared positional values; a call is an `Invocation` (`operation`, `Arguments`, `Caller`
+with its kind and vouched-for name) and an answer is the operation's text or a `Refusal` carrying a
+stable code (`unknown_operation`, `invalid_arguments`, `refused`) and the message a person reads. The
+registry refuses a duplicate name, checks the value count against the declaration before the world is
+touched, and `data/commands.json` rows bind a typed name to a registration (`operation`) or to one of
+the closed chat operations (`execution`), with `surfaces` deciding who may type it. A door never holds
+a command: the console resolves a line through the rows and the control endpoint resolves JSON through
+the registration (`docs/port/05-tooling.md` records the live proof of each refusal code).
+
+Still to design, in the items below: input types richer than one string, target context (a player, a
+map, a district), progress for long operations, and the caller identity of a player-facing surface.
+
 Define one registry binding stable function names to implementations. A JSON command name or alias
 resolves to a registered name; missing or duplicate registrations and invalid mappings are reported.
 A function can be called directly by a supported caller without inventing a second implementation.
@@ -64,22 +77,33 @@ A function can be called directly by a supported caller without inventing a seco
 The contract must specify, before implementation:
 
 - Inputs, types, parsing, argument validation and help metadata, including multi-argument operations.
-  Preserve the parsing and refusals of existing client commands where ASURA dictates them.
+  Preserve the parsing and refusals of existing client commands where ASURA dictates them. **Part
+  landed**: values are positional strings, validated against the registration, with the help line
+  stored on the registration; richer types are still to design.
 - Caller identity, permissions and target context: the running world, a map, a specific instance or
   district, a player or agent, as appropriate to the function. State what each function requires and
   return a clear failure when it is missing. The intended deployment is one game world with many map
-  instances; do not treat instances as separate worlds.
+  instances; do not treat instances as separate worlds. **Part landed**: every call carries a
+  `Caller` (kind and name) supplied by the adapter, never by the caller's own words; permissions and
+  target context are still to design.
 - Results and errors in a form callers can use and display; client frames and existing text remain
-  subject to ASURA. Define how progress and completion are reported for longer operations.
+  subject to ASURA. Define how progress and completion are reported for longer operations. **Part
+  landed**: a success text and a coded refusal, which is what the console prints and the endpoint
+  returns as JSON; progress for long operations is still to design.
 - World-thread ownership, queue bounds, timeouts and shutdown behaviour; avoid blocking the world tick
-  on long I/O. A request accepted into a queue is not necessarily completed.
+  on long I/O. A request accepted into a queue is not necessarily completed. **Landed**: the queue is
+  bounded by `Console.QueueCapacity`, a full queue answers `unavailable`, and a timeout answers
+  `unknown_completion` because it is not proof of refusal.
 - Registration lifecycle and collision rules; adding an operation must not require modifying the
   dispatcher, another function or every caller. The underlying mechanic may still require engine work.
+  **Landed**: a duplicate or empty name is refused; there is no dispatcher arm to edit.
 - Invocation from another process: `tools/manage` and the running world do not share memory. Specify
   a control path to the world and a response path, distinct from the supervisor's own process control.
   External tools must be supported. Transport and authentication remain to be designed; direct remote
   API access is desirable but optional for the first delivery. Section 8 evaluates the portal and the
-  reference's remote access interface and proposes the host and process boundaries.
+  reference's remote access interface and proposes the host and process boundaries. **Landed**: a
+  loopback JSON endpoint with a service credential, `POST /v1/operations`; the supervisor's process
+  control is still separate and still unbuilt.
 
 The existing `commands.json` reader limits rows to one argument string and uses enum matching; both are
 current limitations, not the desired final function registry. Whether every API function has a command
@@ -371,11 +395,13 @@ exit|restart|shutdown|idlerestart|idleshutdown`, `server set loglevel|motd|close
 
 ## 8. Technical design and first implementation slice
 
-This section is the design of the first slice. **The first slice has landed**: the operation registry,
-the world queue, the embedded console adapter, the loopback control endpoint and the manager's `/status`
-page exist, and `docs/port/01-structure.md` and `docs/port/05-tooling.md` carry the status and the live
-proofs. What the rest of this section still describes ahead of the code is the typed contract (arguments
-and caller identity), the supervisor's control channel, and administrator authentication.
+This section is the design of the first slice. **The first slice and its contract have landed**: the
+operation registry with declared values and a coded refusal, the world queue, the embedded console
+adapter, the loopback control endpoint, the standalone CLI, and the manager's `/status` page, with
+`tools/manage` a supervised stack service; `docs/port/01-structure.md` and `docs/port/05-tooling.md`
+carry the status and the live proofs. What this section still describes ahead of the code is the
+supervisor's control channel and its exit-code contract, administrator authentication, and moving chat
+dispatch onto the registry (it still matches the closed `Operation` enum).
 
 ### Reference and existing boundaries
 
