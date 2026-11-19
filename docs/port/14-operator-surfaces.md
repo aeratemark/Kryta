@@ -557,16 +557,19 @@ blocking the API and settings manager on playback or a map renderer.
 
 ## 10. Remaining design work
 
-- Complete the endpoint schemas, JSON settings and implementation-level types for the first slice;
+- Complete the endpoint schemas, JSON settings and implementation-level types as operations are added;
   apply the contract above and document any necessary deviation from the reference.
-- Administrator credential storage, bootstrap, password change and recovery, audit detail and remote
-  access design; initial `admin` / `admin` and full operator access are the owner's direction. Finer
-  privileges are future work.
-- Console and standalone CLI delivery, chat invocation, and target selection for operations on players,
-  maps, districts and instances; all three entry points are required.
+- Administrator credentials: the identity is a file (`0013`), and its hash algorithm and crate,
+  bootstrap detail, password change, recovery and audit detail remain to be designed; initial
+  `admin` / `admin` and full operator access are the owner's direction. Finer privileges are future work.
+- **Console and standalone CLI: landed** (`eb66d88`): the embedded console over the one registry, the
+  standalone `kryta-cli` with `help`/`list`/`<operation> [--arg name=value]`, the supervisor's control
+  channel, and the exit-code contract. Still open: in-game chat invoking an operation by that path, and
+  target selection for operations on players, maps, districts and instances.
 - Manager hosting within the server stack, remote access design and initial delivery order, settings
   and content editing workflow. Web delivery and remote browser access are required; use of the existing
-  portal remains an open architectural question.
+  portal remains an open architectural question. The configuration manager (delivery item 4) is the next
+  item in that order.
 - Lua runtime and bindings, script-defined commands and the form of interactive execution; Lua support
   is required and `11` owns its plan.
 - Profile storage and selection, map visualization, recording comparison and replay scope; `11` and

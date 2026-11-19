@@ -76,9 +76,9 @@ A mapped GM command calls the registered Rust function; Lua is not required for 
   line is broadcast to the map and district, and both were measured on a live client before they were
   written here (`research/Rurik/studies/chat/FINDINGS.md:255-268`).
 
-The owner typed `/maps` against a real client and read the answer in chat. A message typed on the
-client's All channel still needs a live check for the `0x0061` half. A quest-status command also needs
-quest progress and an exposed query; a Lua runtime alone does not supply them.
+The owner typed `/maps` against a real client and read the answer in chat, and later typed a line in chat
+and read his own message rendered - both halves of the text path, on a live client. A quest-status
+command still needs quest progress and an exposed query; a Lua runtime alone does not supply them.
 
 ## The scripting contract (plan step 1)
 
@@ -275,12 +275,14 @@ those interfaces are designed.
 ## Status and evidence
 
 `game/src/Scripting/` owns the script manager. Three world lifecycle hooks are wired, and their
-current limits and proof are in `docs/port/10-separation-guide.md`. Chat works and is not complete: the
-input rule, the three text frames, the answer path and the broadcast are in, and its frames come from
-measurement rather than ASURA's table (`docs/decisions/0012-chat-text-is-sent.md`); what is outstanding
-is the `0x0061` half - a line typed on the client's All channel has never been driven by a real client.
-The command rows and their arguments are in `data/commands.json`; the alias table and `/maps` text
-remain in Rust. The shared function registry and direct API calls in `0011` are planned. A Lua runtime, content loading, world APIs, a command
+current limits and proof are in `docs/port/10-separation-guide.md`. Chat works: the input rule, the three
+text frames, the answer path and the broadcast are in, its frames come from measurement rather than
+ASURA's table (`docs/decisions/0012-chat-text-is-sent.md`), and both halves were read on the owner's live
+client - the server's answers and a player's own line. The command rows and their arguments are in
+`data/commands.json`, and every row names a registered operation
+(`game/src/Chat/Operations.rs`), so the chat line, the console and the control endpoint are one
+execution path; the alias table and the `/maps` text are still Rust, which is where a rule belongs until
+this document's scripting layer takes it. A Lua runtime, content loading, world APIs, a command
 registration a script can reach and a module crate remain future work. No conclusion about client
 acceptance follows from this design: a live client is the only judge, and the check is named in 0012.
 `docs/port/06-world-plan.md` maps world subjects to their nouns.
