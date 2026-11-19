@@ -540,8 +540,10 @@ blocking the API and settings manager on playback or a map renderer.
    against `12-research-and-control-panel.md`. A reader, a recording comparison and a replay that
    sends inputs are different features; define the selected one and its evidence before implementation.
    **The capture half has landed**: `worldserver`'s `CaptureFile` records the wire in both directions
-   (`game/Server/Capture.rs`), and `tools/capture/read.py` reads a capture in the layer it declares.
-   Reading is therefore done; comparison and replay remain open (section 7, fork 4).
+   (`game/Server/Capture.rs`), `tools/capture/read.py` reads a capture in the layer it declares, and
+   `tools/capture/diff.py` compares two captures message by message, refusing a pair whose layers
+   differ. Reading and comparison are therefore done; a replay that sends inputs remains open
+   (section 7, fork 4).
 
 ## 10. Remaining design work
 

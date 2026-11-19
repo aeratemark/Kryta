@@ -30,6 +30,8 @@ Two consequences:
 | `tools/adapt-protocol-table.py` | moved the ported message table into `game/src/Server/Protocol/Tables.rs`, once | nothing; it is the record of the move | ASURA `crates/asura-protocol/src/packets.rs` |
 | `tools/import-creation-inventory.py` | imported the bags, items and profession sets into `data/*.json`, once | a checkout of ASURA to read | ASURA `state/inventory/seed.rs` and `default_equipment.rs` |
 | `tools/capture/read.py` | reads a capture back in the layer it declares - `--describe`, `--header`, `--limit`, `--assume-layer`, `--self-test` - and refuses a file that states no layer | nothing; it is Python 3 and standard library only | ASURA `tools/capture-read.py` |
+| `tools/capture/diff.py` | compares two captures message by message: agreement count, then the first divergences with both payloads; refuses a struct-layer file against a wire-layer one, because the two widen fields differently | nothing; standard library only | new; the comparison workflow `0012-chat-text-is-sent.md` used by hand |
+| `tools/capture/capture_file.py` | the one implementation of the layer rules both of the above use | nothing | ASURA `tools/capture-read.py`'s layer half |
 
 ## Capturing the server
 
@@ -55,6 +57,12 @@ fault was read rather than guessed**: the body's declared unit count is `0800` (
 `worldserver/tests/end_to_end.rs:951` expects 5, and `docs/decisions/0012-chat-text-is-sent.md` records
 the measured bytes as `5d00 0800 0108 0107 ...` - so the frame matches the measurement and the test's
 expectation is the thing to settle.
+
+`tools/capture/diff.py` was proved on the same pair: a capture against itself agrees on every one of its
+564 messages and answers zero; two runs of the same test agree on 551 of 564 and the first three
+divergences are named with both payloads - a fresh character's guid in `0x0188`, a scattered spawn point
+in `0x0196`, and a counter in `0x001F` that read 6 and 7. A pair whose layers differ is refused (exit 2)
+rather than compared, because a struct record and a wire record are not the same bytes.
 
 The recovered control-panel and research requirements are in `docs/port/12-research-and-control-panel.md`.
 The research and plan for the operator's surfaces - the command line, a console over the same command

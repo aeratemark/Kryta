@@ -11,6 +11,10 @@
 /env
 .env
 
+# Python's cache: the capture tools import one another, which leaves .pyc files behind.
+__pycache__/
+*.pyc
+
 # The configurations a machine actually runs on carry its credentials. The `.dist` files are
 # committed; these are copied from them by the operator and never leave the machine.
 /authserver/authserver.json
