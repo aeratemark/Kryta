@@ -57,6 +57,13 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     //
     // The severity policy can be overridden on the command line, and a key it does not know is
     // refused rather than ignored - the reference reports it the same way.
+    // A repair an operator asks for in one flag, rather than a dead stack: the schema is dropped and
+    // rebuilt from the files (`docs/port/04-configuration.md`).
+    let reset_schema = args.iter().any(|argument| argument == "--reset-schema");
+    // `--recheck-schema`: a schema file changed after this database recorded it. The operator says so in
+    // one command, and the recorded hash is re-taken from the file instead of the stack staying down.
+    let recheck_schema = args.iter().any(|argument| argument == "--recheck-schema");
+
     let mut policy = Policy::default();
     if let Some(text) = &options.config_policy {
         let control = PolicyOverride::parse(text).map_err(|error| error.to_string())?;
@@ -191,6 +198,22 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
         let settings = read_settings(&config, kind)?;
         let mut pool = DatabaseWorkerPool::open_with_trace(kind, &settings, &log, sql_trace)?;
 
+        // `--reset-schema`: the schema files changed after this database recorded them as applied, or an
+        // operator wants the tables rebuilt from the files as they are. The world and login databases
+        // hold state and no content, so dropping the schema there costs nothing that is not recreated;
+        // the character database is refused, because it holds what players earned.
+        if reset_schema && kind != DatabaseKind::Character {
+            pool.query_with("DROP SCHEMA IF EXISTS public CASCADE", &[])
+                .map_err(|error| format!("the {label} schema cannot be dropped: {error}"))?;
+            pool.query_with("CREATE SCHEMA public", &[])
+                .map_err(|error| format!("the {label} schema cannot be recreated: {error}"))?;
+            log.out(
+                LogLevel::Info,
+                "server.worldserver",
+                format!("Reset the {label} schema: dropped and recreated, so the files apply from scratch."),
+            );
+        }
+
         let schema = std::path::Path::new(schema);
         let files = collect_files(schema, UpdateState::Released).map_err(|error| {
             format!(
@@ -198,7 +221,24 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
                 schema.display()
             )
         })?;
-        let summary = pool.apply_updates(&files, &log)?;
+        if recheck_schema {
+            for file in &files {
+                let text = database::updater::read_sql_update(&file.path)
+                    .map_err(|error| error.to_string())?;
+                let hash = database::updater::apply::sha1_hex(&text);
+                let name = file.name();
+                pool.query_with(
+                    "UPDATE \"updates\" SET \"hash\" = $1 WHERE \"name\" = $2",
+                    &[&hash, &name],
+                )
+                .map_err(|error| format!("the {label} update record cannot be re-taken: {error}"))?;
+                log.out(
+                    LogLevel::Info,
+                    "server.worldserver",
+                    format!("{label} schema: re-recorded {name} as {hash}."),
+                );
+            }
+        }        let summary = pool.apply_updates(&files, &log)?;
         pool.ping()
             .map_err(|error| format!("the {label} database does not answer: {error}"))?;
 
