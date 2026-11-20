@@ -26,6 +26,9 @@ pub mod instance_table;
 #[path = "Portals.rs"]
 pub mod portals;
 
+#[path = "Pack.rs"]
+pub mod pack;
+
 pub use portals::{Arch, Crossed, Portals};
 
 pub use travel_targets::{TRAVEL_TARGETS, TravelTarget};
@@ -327,6 +330,35 @@ impl DatabaseMaps {
             }
             Err(_) => Err("the world database answered no query: it is shutting down".to_string()),
         }
+    }
+}
+
+/// Where a world's maps come from.
+///
+/// Two sources answer the same three questions: the pack (the world's own files, which is what a
+/// world *is*) and the database (rows, which is what a server *writes* and what a world was served
+/// from before the pack existed). The world takes either, and its log says which it took, so the two
+/// can be compared rather than silently swapped.
+pub trait MapSource {
+    /// Every map record, and every entry point.
+    fn load_maps(&self) -> Result<(Vec<MapEntry>, Vec<MapSpawn>), String>;
+    /// Every arrival point: where a crossing from another map lands.
+    fn arrivals(&self) -> Result<Vec<Arrival>, String>;
+    /// Every arch: the wall a step crosses.
+    fn arches(&self) -> Result<Vec<Arch>, String>;
+}
+
+impl MapSource for DatabaseMaps {
+    fn load_maps(&self) -> Result<(Vec<MapEntry>, Vec<MapSpawn>), String> {
+        self.load()
+    }
+
+    fn arrivals(&self) -> Result<Vec<Arrival>, String> {
+        DatabaseMaps::arrivals(self)
+    }
+
+    fn arches(&self) -> Result<Vec<Arch>, String> {
+        DatabaseMaps::arches(self)
     }
 }
 

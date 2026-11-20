@@ -1,7 +1,8 @@
 # 0009 - The world schema: a map is a row, and so is where a character stands on it
 
-Status: accepted. It is this tree's first world schema, and its shape follows the messages that read it
-rather than another server's tables. The owner may correct it, and a correction replaces this text.
+Status: **superseded by `0014-the-world-content-is-a-pack.md`.** The world's map content is a pack of
+JSON files under `config/World/<pack>/`, and the world reads that instead. The rows this record chose
+remain in the schema and are no longer what the world serves.
 
 ## The question
 

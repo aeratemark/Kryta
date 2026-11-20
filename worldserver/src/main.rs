@@ -242,20 +242,18 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     // the reference too (`sScriptMgr`, `src/server/game/Scripting/`), and the world is the object
     // that raises its moments.
     world.set_scripts(scripts);
-    // The maps are rows in the world database (`docs/decisions/0009-world-schema.md`), read the way the
-    // reference reads its map records at `SetInitialWorldSettings`: one query, held for the life of the
-    // program. A world started against an empty database hosts no map, and says so.
-    let world_maps = match world_pool.as_ref() {
-        Some(pool) => {
-            let maps = game::maps::DatabaseMaps::new(std::sync::Arc::clone(pool), log.clone());
-            Some(maps)
-        }
-        None => None,
-    };
-    let maps = match world_maps.as_ref() {
-        Some(maps) => world.load_maps(maps, &log)?,
-        None => 0,
-    };
+    // The maps are the pack's (`config/World/Vanilla/maps/...`): what a world *is* is a file, and a row
+    // is what a server writes (`docs/decisions/0014-the-world-content-is-a-pack.md`). Read once, held for
+    // the life of the program, and the log says which source answered. The database is still opened for
+    // the state it holds - instances, characters, items, travels - and no longer for content.
+    let (world_pack, notes) = config
+        .value_string("WorldPack", "config/World/Vanilla")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let pack = game::maps::pack::Pack::load(&world_pack, &log)?;
+    let maps = world.load_maps(&pack, &format!("the map pack at {world_pack}"), &log)?;
     // The maps this world can put a client in: a record the pack states no type or no blob for is a
     // destination the client can resolve and this world cannot load, so it is not asked for a graph
     // (`ASURA/crates/asura-world/src/catalogue.rs:54-63`).
@@ -437,15 +435,11 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     );
 
     // A map's doorways, which is what a step is judged against
-    // (`game/Maps/Portals.rs`, `ASURA/crates/asura-world/src/portals.rs`). The rows are the world's
-    // content (`data/sql/base/db_world/0008-map-doorways.sql`), read once like the maps themselves; a
-    // world with no rows has no doorway, and every step crosses nothing.
-    if let Some(pool) = world_pool.as_ref() {
-        let store = game::maps::DatabaseMaps::new(
-            std::sync::Arc::clone(pool),
-            log.clone(),
-        );
-        match store.arches() {
+    // (`game/Maps/Portals.rs`, `ASURA/crates/asura-world/src/portals.rs`). They come from the pack's
+    // `portals.json` (`config/World/Vanilla/maps/**`), read once like the maps themselves; a map with no
+    // `portals.json` has no doorway, and every step in it crosses nothing.
+    {
+        match pack.arches() {
             Ok(arches) => {
                 let portals = game::maps::Portals::new(
                     arches,

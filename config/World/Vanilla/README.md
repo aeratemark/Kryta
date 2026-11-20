@@ -4,6 +4,10 @@ The faithful base pack: the client's own vocabulary and the values a faithful wo
 
 ```text
 Vanilla/
+  maps/               one folder per map, by campaign, area, kind and id:
+                        <campaign>/<area>/<kind>/<map id>/basic.json    the map's own record
+                        <campaign>/<area>/<kind>/<map id>/spawns.json   where a character may stand
+                        <campaign>/<area>/<kind>/<map id>/portals.json  arches and arrival points
   creation/
     inventory.json    the bags and the items a creation screen is given, before a profession is chosen
     equipment.json    what a new character wears, one set per (campaign, profession)
@@ -11,6 +15,11 @@ Vanilla/
                       agent's nine-dword visual list
 ```
 
+- `maps/` is the world itself: 265 map records, 138 entry lists and 17 doorway files, copied from
+  ASURA's pack of the same name. The world reads the tree at start-up (`WorldPack`) and refuses a
+  folder whose name is not the `map_id` its record states. A record that states a `map_type` and a
+  `map_file_id` is a map this world can host; one that states only an `instance_value` is a destination
+  the client can name and this world cannot load (`docs/decisions/0014-the-world-content-is-a-pack.md`).
 - `creation/` is one subject: everything the character-creation screen is built from and everything a
   new character leaves with. Its three files are read together at start-up (`InventoryFile`,
   `EquipmentFile` and `EquippedSlotsFile` in `worldserver.json`), and the world logs what it read.

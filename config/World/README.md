@@ -13,7 +13,7 @@ Nothing else lives at this level. A pack is a folder with a README and its own s
 here is shared between packs: a pack that inherits nothing is a pack whose numbers can be checked
 against a capture without asking which layer overrode what.
 
-The maps are not in these folders yet. They are rows of the world database today
-(`data/sql/base/db_world/`), and a pack's `maps/` folder arrives with the stage that reads maps from
-the pack rather than from SQL. Until then this folder holds the creation screen's content, which is the
-part of a pack the world already reads from a file.
+The maps are here: `maps/<campaign>/<area>/<kind>/<map id>/` holds one folder per map, and the world
+reads that tree at start-up. What a world *is* is these files; a database row is for what a server
+writes - an instance, a character, an item a character holds
+(`docs/decisions/0014-the-world-content-is-a-pack.md`).

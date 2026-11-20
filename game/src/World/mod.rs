@@ -508,8 +508,13 @@ impl World {
     ///
     /// Reference: the same `SetInitialWorldSettings` pass - a world that opens with no map hosts nothing,
     /// and says so rather than pretending.
-    pub fn load_maps(&mut self, maps: &crate::maps::DatabaseMaps, log: &Log) -> Result<usize, String> {
-        let (records, spawns) = maps.load()?;
+    pub fn load_maps(
+        &mut self,
+        maps: &impl crate::maps::MapSource,
+        source: &str,
+        log: &Log,
+    ) -> Result<usize, String> {
+        let (records, spawns) = maps.load_maps()?;
         self.maps = records;
         self.spawns = spawns;
         self.arrivals = maps.arrivals()?;
@@ -517,10 +522,11 @@ impl World {
             LogLevel::Info,
             "server.worldserver",
             format!(
-                "{} map(s), {} spawn point(s) and {} arrival point(s) read from the world database.",
+                "{} map(s), {} spawn point(s) and {} arrival point(s) read from {}.",
                 self.maps.len(),
                 self.spawns.len(),
-                self.arrivals.len()
+                self.arrivals.len(),
+                source
             ),
         );
         Ok(self.maps.len())
