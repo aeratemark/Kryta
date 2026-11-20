@@ -1264,6 +1264,9 @@ impl WorldSession {
         };
         // The item ids the agent is drawn wearing, from the equipped bag, in its own order. A slot
         // the character wears nothing in is zero.
+        // The nine-dword list is the client's wire order, which is not the equipped bag's own order:
+        // a piece's cell in the bag and its position here are two numbers, and the table names both
+        // (`data/equipped-slots.json`).
         let mut equipped = [0u32; 9];
         if let Some(bag) = self
             .creation
@@ -1271,7 +1274,7 @@ impl WorldSession {
             .and_then(crate::creation::equipped_bag)
         {
             for item in inventory.items_in(bag.id) {
-                if let Some(slot) = item.slot
+                if let Some(slot) = crate::creation::wire_slot(self.worn(), item.item_type)
                     && let Some(held) = equipped.get_mut(slot as usize)
                 {
                     *held = item.id;

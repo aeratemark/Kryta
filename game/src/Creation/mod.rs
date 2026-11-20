@@ -38,20 +38,32 @@ pub struct Bag {
 /// table compiled in here (`docs/port/04-configuration.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WornSlot {
-    /// The index in the client's nine-slot equipped array.
-    pub slot: u8,
+    /// The cell inside the equipped bag: the slot an item's placement names and a character's item
+    /// row stores.
+    pub bag_slot: u8,
+    /// The position the same piece occupies in the agent's nine-dword visual list. The client's two
+    /// orders are not the same order, and the bridge between them is in the file.
+    pub wire_slot: u8,
     /// The name the file gives the row, for a reader and for a log line.
     pub name: String,
     /// The item kinds worn there.
     pub kinds: Vec<u8>,
 }
 
-/// The slot an item kind is worn in, from the loaded table.
+/// The cell inside the equipped bag an item kind is worn in, from the loaded table.
 pub fn worn_slot(worn: &[WornSlot], item_type: u8) -> Option<u8> {
     worn
         .iter()
         .find(|row| row.kinds.contains(&item_type))
-        .map(|row| row.slot)
+        .map(|row| row.bag_slot)
+}
+
+/// The position in the agent's nine-dword visual list that kind occupies, from the same table.
+pub fn wire_slot(worn: &[WornSlot], item_type: u8) -> Option<u8> {
+    worn
+        .iter()
+        .find(|row| row.kinds.contains(&item_type))
+        .map(|row| row.wire_slot)
 }
 
 /// One item, in the field order the client is told about it.
@@ -122,9 +134,14 @@ impl Tables {
         &self.worn
     }
 
-    /// The slot an item kind is worn in, or `None` for something not worn.
+    /// The cell inside the equipped bag an item kind is worn in, or `None` for something not worn.
     pub fn slot_for(&self, item_type: u8) -> Option<u8> {
         worn_slot(&self.worn, item_type)
+    }
+
+    /// The position in the agent's nine-dword visual list that kind occupies.
+    pub fn wire_slot_for(&self, item_type: u8) -> Option<u8> {
+        wire_slot(&self.worn, item_type)
     }
 }
 
@@ -217,7 +234,8 @@ impl Tables {
                         kinds.push(kind as u8);
                     }
                     tables.worn.push(WornSlot {
-                        slot: number(&record, "slot")? as u8,
+                        bag_slot: number(&record, "bag_slot")? as u8,
+                        wire_slot: number(&record, "wire_slot")? as u8,
                         name: record.text("name")?.unwrap_or_default(),
                         kinds,
                     });

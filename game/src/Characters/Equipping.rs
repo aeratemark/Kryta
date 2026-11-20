@@ -119,7 +119,8 @@ mod tests {
 
     fn worn() -> [WornSlot; 1] {
         [WornSlot {
-            slot: 3,
+            bag_slot: 5,
+            wire_slot: 3,
             name: "boots".to_string(),
             kinds: vec![4],
         }]

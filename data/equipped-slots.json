@@ -1,55 +1,64 @@
 {
-  "note": "equipped-slots.json - which slot of the client's equipped bag a worn item occupies, by the item's kind. Read at start-up; the worldserver.json setting EquippedSlotsFile says where it is. An item whose kind no row names is not worn, and the server refuses to equip it rather than choosing a slot.",
+  "note": "equipped-slots.json - where a worn item sits, by the item's kind. Two numbers per row, because the client uses two orders: the bag slot (the cell inside the equipped bag, which is what an item's placement names and what the character's row stores) and the wire slot (the position in the agent's nine-dword visual list). Read at start-up; the worldserver.json setting EquippedSlotsFile says where it is.",
   "information": {
-    "what a row means": "one position of the nine-dword equipped array the client is sent: its index, the name to read it by, and the item kinds worn there. The same index is what an item's placement names inside the equipped bag, and what the agent's equipped list carries, so one table answers all three.",
-    "where the numbers come from": "the pairing measured on a live client: seven per-slot writes in one Shing Jea session, each immediately preceded by the item declaration that names its kind, so the kind is read beside the slot number rather than inferred (Rurik studies/character/FINDINGS.md:1608-1632), and the nine-dword array uses the same numbering. The weapon, off-hand and costume rows are ASURA's list (crates/asura-protocol/src/game/mod.rs, equipped_slot), and it is the same list this tree shipped as a compiled table.",
-    "what changed": "the compiled table was in bag order - body 2, legs 3, head 4, boots 5, gloves 6 - and the capture shows boots 3, legs 4, gloves 5, head 6. Body and legs are the same in both; boots, gloves and head are not. This file carries the measured order, and the whole point of it being a file is that the order can be corrected here, against a capture, without touching code.",
-    "why a file": "the slot a kind is worn in is the client's own vocabulary: the library is drawn from that number, so a wrong one draws a character without the piece it holds. It is content this server must not compile in (docs/port/04-configuration.md)."
+    "what a row means": "one position of the client's equipped bag. bag_slot is the cell inside that bag - the slot an item placement message names and the slot a character's item row stores. wire_slot is the position the same piece occupies in the agent's nine-dword visual list. name reads the row, and kinds are the item kinds worn there.",
+    "why two numbers": "the two orders are not the same order. Six projects agree the equipped bag is cell 2 body, 3 legs, 4 head, 5 boots, 6 gloves; the wire list is position 2 body, 3 boots, 4 legs, 5 gloves, 6 head. The bridge between them is {0, 1, 2, 4, 6, 3, 5, 7, 8} - read as wire = bridge[bag] - and it is the same bridge in preforged-source (gw_equipment_wire.h:24, wire_slot[]), Rurik (toolkit/authsrv/itemstore.py:195, RETAIL_VISUAL_OF_BAG_SLOT) and preservation-main (item/item.go:154-164, GetVisualEquipSlot).",
+    "where the numbers come from": "the bag cells are ASURA's own list (crates/asura-protocol/src/game/mod.rs, equipped_slot) and five other implementations agree with it. The wire positions are measured: a live session's per-slot writes each come immediately after the item declaration that names its kind, pairing slot 3 with kind 4 (boots), 4 with 19 (legs), 5 with 13 (gloves), 6 with 16 (head) - and the nine-dword list for the same agent shows the same positions (Rurik studies/newopcodes/FINDINGS.md:1556-1760, which records the bag-order reading as refuted for the wire).",
+    "why a file": "the order of the client's own array is vocabulary this server must not compile in: a piece sent to the wrong position is a piece the character is drawn without, and either number can be corrected here against a capture without touching code (docs/port/04-configuration.md)."
   },
   "slots": [
     {
-      "slot": 0,
       "name": "weapon",
+      "bag_slot": 0,
+      "wire_slot": 0,
       "kinds": [1, 2, 5, 15, 22, 26, 27, 32, 35, 36]
     },
     {
-      "slot": 1,
       "name": "off hand",
+      "bag_slot": 1,
+      "wire_slot": 1,
       "kinds": [12, 24]
     },
     {
-      "slot": 2,
       "name": "chest",
+      "bag_slot": 2,
+      "wire_slot": 2,
       "kinds": [7]
     },
     {
-      "slot": 3,
-      "name": "boots",
-      "kinds": [4]
-    },
-    {
-      "slot": 4,
       "name": "legs",
+      "bag_slot": 3,
+      "wire_slot": 4,
       "kinds": [19]
     },
     {
-      "slot": 5,
-      "name": "gloves",
-      "kinds": [13]
-    },
-    {
-      "slot": 6,
       "name": "head",
+      "bag_slot": 4,
+      "wire_slot": 6,
       "kinds": [16]
     },
     {
-      "slot": 7,
+      "name": "boots",
+      "bag_slot": 5,
+      "wire_slot": 3,
+      "kinds": [4]
+    },
+    {
+      "name": "gloves",
+      "bag_slot": 6,
+      "wire_slot": 5,
+      "kinds": [13]
+    },
+    {
       "name": "costume body",
+      "bag_slot": 7,
+      "wire_slot": 7,
       "kinds": [44]
     },
     {
-      "slot": 8,
       "name": "costume head",
+      "bag_slot": 8,
+      "wire_slot": 8,
       "kinds": [45]
     }
   ]
