@@ -119,11 +119,18 @@ content.
 6. **A stage is done when it works** - the reference's behaviour reproduced, and the client's
    judgement wherever the client can see it. Not when the tests pass, and not when the log looks
    right.
-7. **Settings live in a JSON file.** A setting is read from the file, never compiled in; a program's
-   file and what belongs in it are `docs/port/04-configuration.md`. That file also holds the test for
-   where any piece of data belongs at all - the world's data is rows, a setting is a file, what the client
-   dictates is a constant - and a port is placed by that test, never by the file layout of the tree it
-   came from.
+7. **A world is read from its files, and nothing seeds a database.** Content - every map, its entry
+   points, its doorways, the items a new character is given, the command surface - is JSON under
+   `config/`, read on every start. Edit a file, restart the program, and the change is live: no import,
+   no migration, no seeding step. `data/sql` is **schema only** - it creates, alters and drops tables -
+   and a schema file that writes a row is a defect. A database row is for what a server writes while it
+   runs, never for what a world is. A setting is read from its file, never compiled in. A program's file
+   and what belongs in it are `docs/port/04-configuration.md`, which holds the four kinds of data and
+   which is which; a port is placed by that test, never by the file layout of the tree it came from.
+   **Enforced, not remembered:** `worldserver/tests/schema_has_no_content.rs` fails on a schema file that
+   writes a row, `every_config_file_is_classified_in_the_configuration_doc` fails on a file under
+   `config/` that `docs/port/04-configuration.md` does not classify, and every reader refuses a missing
+   or malformed file instead of starting half configured.
 8. **A fact names where it came from.** A number or a byte string that came from the client cites the
    recording or document it came from, where it is used. A reference decision cites `file:line`.
 9. **What the program does, it says.** Every stage reports itself in the log, and a trace can show
@@ -170,8 +177,8 @@ authserver links shared;   worldserver links shared, game, scripts
 | `scripts/` | `ScriptMgr` and `AddScripts`: content written against hooks | `src/server/scripts/` |
 | `modules/` | `mod-*`, out of tree | `modules/` |
 | `authserver/`, `worldserver/` | the two programs, each with its own config file | `src/server/apps/` |
-| `data/` | the content tree and its updater input: the schema and seeded rows, and the extracted path graphs | `data/` |
-| `config/` | the world's content and the machine's values, as JSON files with a README in each folder: `Server/` for what a machine chooses, `World/<pack>/` for what a world contains (`config/README.md`) | none - ASURA's `config/` arrangement, taken by the owner's direction |
+| `data/` | the schema and the extracted path graphs. **Schema only**: nothing here seeds a row (rule 7) | `data/` |
+| `config/` | the world's content and the machine's values, as JSON files with a README in each folder: `Server/` for what a machine chooses, `World/<pack>/` for what a world contains (`config/README.md`) | none - this tree's own |
 
 The socket layer is not a program. Sockets and sessions live in `game/Server/`, which is why one
 process owns one listener and still keeps the network as a subsystem.

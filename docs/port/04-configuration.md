@@ -204,14 +204,10 @@ file, restarts the program, and the change is live - maps, spawns, items, every 
 database step, no import and no migration. A database row is for what a server *writes while it runs*;
 it is never where content comes from.
 
-ASURA states the same rule in two places, and this tree takes both:
-
-- `ASURA/docs/guidance/game-packs.md`: "Load one selected profile for a server launch. Do not merge its
-  content with a base profile or search other profiles for missing data", and the authoring workflow is
-  "copy the base profile, modify that copy, and share the resulting profile".
-- `ASURA/config/World/README.md`: "Map descriptions are read from the selected pack, not from SQL...
-  Legacy SQL tables and database helpers still exist; their presence does not make them the serving
-  source."
+The pack is **all or nothing**: one pack is loaded per start, nothing is merged from a second pack and
+no reader falls back to another folder for a value it cannot find. A person tailoring the world copies
+`Vanilla`, edits the copy, and names it - `World Pack` in `worldserver.json` - and that copy is the
+whole world (`config/World/README.md`, `docs/decisions/0014-the-world-content-is-a-pack.md`).
 
 So `data/sql` is schema - it creates, alters and drops tables - and it seeds nothing. A schema file that
 writes a row is a defect, and `worldserver/tests/schema_has_no_content.rs` fails, naming the file and the
@@ -223,8 +219,7 @@ the source, so the table is a projection kept for a join nothing needs: the load
 definitions straight from the pack, and then no start-up writes a row at all. That is the next change;
 until it lands this paragraph names the exception rather than the rule.
 
-**ASURA's rule is stricter than a table, and this tree takes it as binding** (`AGENTS.md` section 4a
-there, decisions D34, D35 and D39 in `ASURA/docs/reference/decisions/layer-decisions.md`):
+**The rules that hold a file to its job, binding in this tree** (`AGENTS.md` rule 7):
 
 - **No hardcoded value, even when the contract never changes.** A compiled number is invisible and
   unreachable; it goes in a file so it can be read and reviewed. A reader has **no built-in
@@ -237,9 +232,9 @@ there, decisions D34, D35 and D39 in `ASURA/docs/reference/decisions/layer-decis
 - **A key with no answer is `null`**, and the caller refuses the action with a logged reason rather
   than choosing on the player's behalf.
 - **The rules read only.** A decision takes values as arguments; it holds no value of its own and reads
-  no file (that is the reference's arrangement too: a rule is code, a value is a file).
+  no file: a rule is code, a value is a file.
 - **A stored count is a second number to keep true.** A list's length is its count; a landing belongs
-  to the map that receives the traveller, not to the map that sends it (D39).
+  to the map that receives the traveller, not to the map that sends it.
 
 Where this tree enforces it, rather than stating it:
 
@@ -252,8 +247,8 @@ Where this tree enforces it, rather than stating it:
 Two consequences:
 
 - **A port never decides this per piece.** A feature arriving from another tree is placed by asking which
-  of the three it is - not by where the other tree happened to keep it. Items are the worked example: a
-  player's inventory is state (rows), an item's definition is world data (rows), a loot table is a setting
+  of the four it is - not by where the other tree happened to keep it. Items are the worked example: an
+  item's definition is content (a file), what a character holds is state (rows), a loot table is a setting
   (a file), and none of them is code.
 - **A row is never a file, and a setting is never a row.** An account is not a setting; a loot table is not
   a row. When the two are confused, an operator shares a file that should have been one person's data, or

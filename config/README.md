@@ -1,11 +1,10 @@
 # What this folder is
 
-The game's content and this machine's values, as files. The arrangement is ASURA's own
-(`research/ASURA/config/`): a `Server/` folder for what one machine chooses, and a `World/<pack>/`
-folder for what a world contains, with a README in each folder saying what belongs there. The rule
-behind it is `docs/port/04-configuration.md`: a program's settings file is its own
-(`worldserver/worldserver.json`), and every other value that describes the world or a service is a
-file here, named by a setting that only says where the file is.
+The game's content and this machine's values, as files: a `Server/` folder for what one machine
+chooses, and a `World/<pack>/` folder for what a world contains, with a README in each folder saying
+what belongs there. The rule is `AGENTS.md` rule 7 and `docs/port/04-configuration.md`: a program's
+settings file is its own (`worldserver/worldserver.json`), and every other value that describes the
+world or a service is a file here, named by a setting that only says where the file is.
 
 | folder | holds | who reads it |
 |---|---|---|
@@ -16,7 +15,7 @@ file here, named by a setting that only says where the file is.
 the change is live - maps, spawns, items, every feature - with no database step. A database row is for
 what a server writes while it runs; it is never where content comes from, and `data/sql` is schema only
 (a schema file that writes a row fails `worldserver/tests/schema_has_no_content.rs`).
-`docs/port/04-configuration.md` states the rule and quotes ASURA's two statements of it.
+`docs/port/04-configuration.md` states the rule, and the tests named there enforce it.
 
 Two consequences, and they are the point of the split:
 
