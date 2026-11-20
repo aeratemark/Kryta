@@ -197,7 +197,9 @@ the stack keeps one world in it, not two. `console_service` in `stack.json` give
 service and `Stdio::null()` to the rest, so two programs cannot read one terminal. Before a service
 starts, the supervisor claims the port `stack.json` names: a leftover instance of that service's own
 program is stopped and replaced, so a stale service cannot take the stack down; any other process
-holding the port is named and refused, never killed (`tools/supervisor/src/main.rs`, `take_port`).
+holding the port is named and refused, never killed (`tools/supervisor/src/main.rs`, `take_port`). The
+supervisor's own control port is claimed the same way (`take_control_port`), so a second stack replaces
+the first instead of half-existing beside it.
 
 The Configuration Manager was rebuilt in `tools/manage` (2026-11) around a layered arrangement: `web/`
 holds the shell every page is drawn into, its stylesheet and the components a page is built from;

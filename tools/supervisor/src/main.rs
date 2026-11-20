@@ -230,6 +230,38 @@ fn take_port(service: &Service) -> Result<(), String> {
     ))
 }
 
+/// The control port is claimed like a service's: a leftover instance of this supervisor is stopped
+/// so there is exactly one stack, and anything else on the port is refused with its process named.
+fn take_control_port(port: u16) -> Result<(), String> {
+    let Some(pid) = listener_holder(port) else {
+        return Ok(());
+    };
+    let image = process_image(pid).unwrap_or_else(|| format!("pid {pid}"));
+    let own = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "kryta-supervisor".to_string());
+    if !image.eq_ignore_ascii_case(&own) {
+        return Err(format!(
+            "the control port {port} is held by {image} (pid {pid}), which is not this stack's \
+             supervisor; stop that process or change stack.json"
+        ));
+    }
+    println!(
+        "the control port {port} is held by an earlier {image} (pid {pid}); stopping it so this \
+         stack owns the channel"
+    );
+    let _ = stop_process(pid);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if listener_holder(port).is_none() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err(format!("the control port {port} is still held after stopping pid {pid}"))
+}
+
 /// The process listening on a port, from one `netstat -ano` snapshot.
 fn listener_holder(port: u16) -> Option<u32> {
     let output = Command::new("netstat").args(["-ano"]).output().ok()?;
@@ -574,6 +606,12 @@ fn main() -> std::process::ExitCode {
     let state: control::State = Arc::new(std::sync::Mutex::new(BTreeMap::new()));
     state_all(&state, &services, "starting");
     if stack.control_port != 0 {
+        // The control channel's port is claimed like a service's: a stale supervisor is replaced and
+        // a stranger is named, so two stacks can never half-exist.
+        if let Err(error) = take_control_port(stack.control_port) {
+            eprintln!("{error}");
+            return std::process::ExitCode::FAILURE;
+        }
         match control::serve(stack.control_port, Arc::clone(&state), actions.clone()) {
             Ok(bound) => println!(
                 "the control channel is listening on 127.0.0.1:{bound} - `status`, `restart <service>`"

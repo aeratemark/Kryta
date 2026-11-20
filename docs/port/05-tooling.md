@@ -185,7 +185,12 @@ over from an earlier session: the supervisor stops it, says so, and starts the s
 port - a stale copy of one of the stack's own services can no longer take the stack down. A program
 this stack does not run is never killed: the supervisor names it and refuses to start, so a stranger
 holding one of the stack's ports is one clear line instead of a half-up stack. The same claim runs on
-every start, including `restart <service>` from the control channel and the exit-code-2 restarter.
+every start, including `restart <service>` from the control channel and the exit-code-2 restarter, and
+it covers the supervisor's own control port (`take_control_port`), so starting a second stack replaces
+the first instead of half-existing beside it. Proved on this machine by leaving a whole stack's
+services behind a killed supervisor: the next `--check` reported each port's earlier owner, stopped it,
+and the stack came up; with a `powershell.exe` holding 6602 the supervisor refused, exited non-zero,
+and left the stranger alive.
 
 ```powershell
 cargo run -p kryta-supervisor                # the stack: every service, stopped together on Ctrl+C
