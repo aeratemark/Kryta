@@ -95,15 +95,15 @@ pub fn outpost_label(map_id: u16, names: &HashMap<u32, String>) -> String {
     }
 }
 
-/// One account line of the directory, with the number of characters it owns.
+/// One account line of the directory, with the number of players it owns.
 pub struct AccountRow {
     /// The row itself.
     pub account: game::accounts::Account,
-    /// How many characters it owns; 0 when no character database is configured.
-    pub characters: usize,
+    /// How many players (characters) it owns; 0 when no character database is configured.
+    pub players: usize,
 }
 
-/// Every account, with its roster count, oldest first.
+/// Every account, with its player count, oldest first.
 pub fn accounts(manage: &Manage) -> Result<Vec<AccountRow>, String> {
     let accounts = manage.list_accounts()?;
     let counts = manage
@@ -113,17 +113,17 @@ pub fn accounts(manage: &Manage) -> Result<Vec<AccountRow>, String> {
     Ok(accounts
         .into_iter()
         .map(|account| AccountRow {
-            characters: counts.get(&account.user_id).copied().unwrap_or(0),
+            players: counts.get(&account.user_id).copied().unwrap_or(0),
             account,
         })
         .collect())
 }
 
-/// One character as the roster lists it.
-pub struct CharacterRow {
+/// One player as a roster lists it: a character, which belongs to one account.
+pub struct PlayerRow {
     /// The name the client shows.
     pub name: String,
-    /// The id the client knows the character by.
+    /// The id the client knows the player by.
     pub uuid: String,
     /// Its campaign's name.
     pub campaign: String,
@@ -137,8 +137,8 @@ pub struct CharacterRow {
     pub pvp: bool,
 }
 
-impl CharacterRow {
-    /// One row of the hero table.
+impl PlayerRow {
+    /// One row of a players table.
     pub fn of(character: &Character, names: &HashMap<u32, String>) -> Self {
         // The primary profession is packed in the appearance word, bits 20-23 (`docs/game-rules.md`
         // E74); the second is its own column.

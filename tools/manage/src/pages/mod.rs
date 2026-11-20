@@ -1,12 +1,13 @@
 //! The panel's pages: one module per destination, each a function from the tool's state to an
 //! HTML body.
 //!
-//! The destinations follow the game's ownership, not the database layout: `players` leads to the
-//! accounts, an account owns its characters, and a character owns its own data. `services`,
-//! `console` and `status` are server administration, and the world's content, realms, settings and
-//! schema are read through the nouns' own repositories.
+//! The destinations follow the game's ownership, not the database layout. `accounts` is the accounts
+//! the server hosts and the state bound to the person; `players` is the characters those accounts own
+//! (aliased from `accounts` and listed across them), whose own pages carry their progress, position,
+//! inventory, titles and unlocks. `services`, `console` and `status` are server administration, and
+//! the world's content, realms, settings and schema are read through the nouns' own repositories.
 
-pub mod characters;
+pub mod accounts;
 pub mod console;
 pub mod content;
 pub mod navigation;

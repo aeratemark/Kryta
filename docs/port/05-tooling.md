@@ -135,8 +135,11 @@ drawn into, the panel's stylesheet and the components a page is built from; `vie
 names for the numbers a row stores and the row shapes a page lists; `pages/` holds one module per
 destination; and `lib.rs` holds one routing table plus the two owners the panel asks - the supervisor for
 process lifecycle, the running world for operations. Its destinations follow the game's ownership, not
-the database layout: Players leads to the accounts, an account owns its characters, and a character's
-page owns its progress, position, inventory, titles and unlocks.
+the database layout: the server hosts Accounts; an account owns its Players (the characters); and a
+player's page owns its own data - campaign and professions, level and stored experience, carried gold,
+position, inventory and equipment (the item rows), titles, and the maps it has unlocked. Accounts and
+Players are separate rail categories because account-owned state and player-owned state are different
+owners; the account page lists the players it owns and its Players tab opens them.
 
 Three rules keep the surface trustworthy. A page is served before any other process is asked: the
 supervisor's status, the world's registered operations and the world's own status are probed by the page
@@ -191,10 +194,11 @@ rather than starting nothing.
 | page | is | state |
 |---|---|---|
 | `/` | the overview: the counts, the live world's own answer (probed after the page), and the working areas | done - unreachable data is named, not shown as zero |
-| `/players` | the account directory and a new account's form | done - an account is the login identity; it is the entry point that owns characters |
-| `/players/{id}` | one account: identity, EULA state, activation and removal, and the players it owns, with its section tabs | done - Shared storage and Account unlocks are named as not recorded by this server yet |
-| `/players/{id}/characters` | the account's roster as the login's own list reads it, with the creation form | done - a character can be created here from the creation record lists and the pack's campaign spawn data |
-| `/players/{id}/characters/{uuid}` | one character: campaign, profession pair, level, gold, last outpost, position, appearance; its inventory and equipment; its titles; its unlocked maps (R12); rename, level (1 to 20, R48) and removal | done - the game does not record titles yet, and the page says so instead of showing none; removal deletes the row with its own items and unlocks |
+| `/accounts` | the account directory - the login identities the server hosts - and a new account's form | done - an account is the login identity; it owns its players and the state that belongs to the person |
+| `/accounts/{id}` | one account: identity, EULA state, activation and removal, the players it owns, with its section tabs (Account overview, Players, and the two account-wide areas) | done - Shared storage and Account unlocks are named as not recorded by this server yet; the Players tab opens `/players?account={id}` |
+| `/players` | every player (character) the server hosts, with the account that owns it, and the creation form whose account list says who will own the player | done - a player is created from the creation record lists and the pack's campaign spawn data, then its own page opens |
+| `/players?account={id}` | the same list, filtered to one account's players | done - the account page's Players tab and the creation form's account choice both use it |
+| `/players/{uuid}` | one player: campaign, profession pair, level, stored experience, gold, PvP, last outpost, position, appearance and the professions it has unlocked; its inventory and equipment (the item rows); its titles; its unlocked maps (R12); the account that owns it (linked); rename, level (1 to 20, R48) and removal | done - the game does not record titles yet, and the page says so instead of showing none; removal deletes the row with its own items and unlocks |
 | `/services` | the running supervisor's state and its named stop/restart controls | done against the existing loopback channel: `SupervisorStackFile` supplies its `control_port`; the manager cannot start a missing supervisor because it has no start protocol and must not become one |
 | `/console` | browser adapter for the live operation registry | done against the existing world endpoint: lists `world.operations` (asked after the page), submits named `name=value` arguments to `/v1/operations`, and displays the world's result or refusal; it does not dispatch commands itself |
 | `/status` | the running world's own answer to `world.status`, asked of its local control endpoint | done - one operation carried by the world's own queue (`docs/port/14-operator-surfaces.md`); a world that is unavailable or refuses is drawn differently from an empty answer, and `ControlPort`/`ControlCredentialFile` in `manage.json` configure it |
@@ -203,16 +207,19 @@ rather than starting nothing.
 | `/navigation` | the extracted path-graph cache: inspection, and one selected map dumped in from `MapArchiveFile` | done - the cache is an operator asset, not state the running world owns |
 | `/schema` | each database's own record of what its updater has applied, against the files on disk | done - read only; `changed` is the one to act on before a server refuses to start |
 | `/settings` | each program's own JSON, key by key, as the file states it | done - read only, passwords masked by the reader; `WorldConfigFile` and `AuthConfigFile` in `manage.json` say where the files are |
-| `/accounts`, `/characters` | the old addresses | redirect (`303` with its `Location`) to the hierarchy's own pages, so bookmarks keep working |
+| `/accounts?account=`, `/characters?account=`, `/players/{id}`, `/players/{id}/characters` | the panel's old addresses | redirect (`303` with its `Location`) into the hierarchy - the account by row id, the player by client id - so bookmarks keep working |
 
-Proved on this machine against the checked-in databases. Every page answered `200` in 9-107 ms, and the
+Proved on this machine against the checked-in databases. Every page answered `200` in 10-110 ms, and the
 stylesheet (`GET /static/style.css`, 10.8 KB) is served once instead of being repeated inside every page.
-The hierarchy was exercised end to end: `POST /players/create` wrote an account and answered `303` to
-`/players/9`; `POST /players/9/characters` created a character from the creation record lists and the
-pack's campaign spawn; the roster and the character page read it back (level 1, Prophecies, Warrior,
-Ascalon City (pre-Searing)); `POST .../level` set 5 and `.../rename` renamed it; `.../delete` removed the
-character with its items and unlocks; and `POST /players/9/delete` removed the account - each answer a
-`303` with the `Location` a browser follows. The content page listed the pack's maps (Random Arenas,
+The hierarchy was exercised end to end: `POST /accounts/create` wrote an account and answered `303` to
+`/accounts/9`; `POST /players/create` created its player from the creation record lists and the pack's
+campaign spawn and answered `303` to `/players/{uuid}`; the player page read it back (level 1,
+Prophecies, Ranger, experience 0, Ascalon City (pre-Searing), its inventory rows and unlocked maps);
+`POST /players/{uuid}/level` set 4 and `.../rename` renamed it; `.../delete` removed the player with its
+items and unlocks; and `POST /accounts/9/delete` removed the account - each answer a `303` with the
+`Location` a browser follows. The accounts directory listed each account with its player count; the
+account page linked every player it owns and its Players tab the filtered list; the players list showed
+each player with the account that owns it. The content page listed the pack's maps (Random Arenas,
 Heroes Ascent, ...) with their entry points and stated arrivals, and the item definitions and profession
 sets - the world database's content tables are empty by design (`0013-content-is-the-pack.sql`), so the
 page reads the pack itself. The probes answered without delaying their pages: `/services/status`,

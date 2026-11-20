@@ -59,14 +59,15 @@ repositories; their APIs, session invalidation and targeted disconnect remain to
   to stop and set the exit code the supervisor reads.
 - `tools/manage` is the panel's implementation, layered as `web/` (the shell, its stylesheet, the
   components and HTTP helpers), `view/` (the game's names for the numbers a row stores), `pages/` (one
-  module per destination) and one routing table in `lib.rs`. It was rebuilt around the game's own
-  hierarchy: Players leads to the accounts, an account owns its roster, and a character page owns its
-  progress, position, inventory, titles and unlocks. Accounts are created, edited, permanently removed
-  and activated/deactivated through `game::accounts`; characters are created from the creation record
-  lists and renamed, levelled (1 to 20, R48) and removed through `game::characters`. The settings,
-  worlds, schema and content pages read; the content page reads the world pack the way the world does.
-  A page never waits for another process: the supervisor's status, the world's registered operations
-  and the world's own status are probed after the page has answered.
+  module per destination) and one routing table in `lib.rs`. It is arranged around the game's own
+  hierarchy: the server hosts Accounts; an account owns its Players (the characters); a player page
+  owns its own data - progress (level, stored experience, gold), position, inventory and equipment
+  (the item rows), titles, and unlocked maps. Accounts are created, edited, permanently removed and
+  activated/deactivated through `game::accounts`; players are created from the creation record lists
+  and renamed, levelled (1 to 20, R48) and removed through `game::characters`. The settings, worlds,
+  schema and content pages read; the content page reads the world pack the way the world does. A page
+  never waits for another process: the supervisor's status, the world's registered operations and the
+  world's own status are probed after the page has answered.
 - Lua integration, API bindings and script-defined commands are planned, not implemented. Existing
   command wire behaviour and the live-client status are recorded in `0012` and `09-parity-audit.md`.
 - See `01-structure.md` for current stages and proof. The planned operator features below are not
@@ -85,7 +86,7 @@ configuration reader and asset readers without duplicating any of them.
 | Operator API | landed: the loopback `/v1/operations` endpoint invokes the shared registry | it is not yet a remote public API or an authorization system |
 | Standalone CLI | landed: `kryta-cli` uses the world endpoint and registry | it does not own world operations |
 | In-game CLI | landed for the existing chat command rows and live-client proof | GM authorization and new client-visible commands are not implemented |
-| Configuration Manager | the layered panel in `tools/manage` (2026-11 rebuild): the Players→account→characters→character hierarchy, finished account and character writes, Services/Console/World status as async adapters, world content read from the pack, worlds/settings/schema read-only | monitoring (logs), configuration edits, generic JSON asset edits, remote access, and a supervisor start verb remain separate work; a destination without a function is not in the rail |
+| Configuration Manager | the layered panel in `tools/manage` (2026-11 rebuild): the Accounts -> Players -> player-data hierarchy, finished account and player writes, Services/Console/World status as async adapters, world content read from the pack, worlds/settings/schema read-only | monitoring (logs), configuration edits, generic JSON asset edits, remote access, and a supervisor start verb remain separate work; a destination without a function is not in the rail |
 
 The Configuration Manager delivery order is binding:
 
@@ -99,19 +100,23 @@ The Configuration Manager delivery order is binding:
 
 `tools/manage` is the server-rendered web application; no UI framework is selected or introduced. The
 2026-11 rebuild replaced the patched, single-file page set with a layered arrangement and removed the
-destinations that had no function: the rail shows Overview, Players, World content, Worlds, Navigation,
-Services, Console, World status, Settings and Schema, and no page pretends to be a pending roadmap step.
+destinations that had no function: the rail shows Overview, Accounts, Players, World content, Worlds,
+Navigation, Services, Console, World status, Settings and Schema, and no page pretends to be a pending
+roadmap step.
 
 The shell is responsive and keeps the operator workstation look (`Kryta Control`); its stylesheet is
 one asset (`/static/style.css`) served from the program's own memory instead of being repeated inside
-every page. The hierarchy is the game's own. Players is the top-level destination leading to the account
-directory; an account page owns its identity, login state, section tabs (Overview, Characters, and the
-two account-wide areas this server does not record yet) and its players; a character page owns its
-progress, position, inventory, titles and unlocks. There is no JavaScript except three small probes (the
+every page. The hierarchy is the game's own, and the rail's categories name it: Accounts is the account
+directory (account-owned state; an account page owns its identity, login state, removal, its players,
+and the two account-wide areas this server does not record yet), and Players lists the characters across
+accounts or for one account, each linking to the player's own page (progress, position, inventory and
+equipment, titles, unlocks, the account that owns it). Players are created from the Players page, which
+names the account that will own the new player. There is no JavaScript except three small probes (the
 supervisor's status, the world's registered operations and the world's own status), and every page
 works without them. Every write answers a `303` with the `Location` a browser follows. The old
-`/accounts` and `/characters` addresses redirect into the hierarchy, so bookmarks keep working. Future
-work extends this arrangement rather than patching a second page.
+`/accounts?account=`, `/characters?account=`, `/players/{id}` and `/players/{id}/characters` addresses
+redirect into the hierarchy, so bookmarks keep working. Future work extends this arrangement rather than
+patching a second page.
 
 The Services page reads the existing `control_port` from `SupervisorStackFile` and calls only the
 running supervisor's documented `status`, `stop <service>`, and `restart <service>` verbs. It cannot
@@ -122,17 +127,19 @@ to spawn one would make it a second process owner. The Console page asks the liv
 validation, queueing, execution, and its answer. Both probes report an unavailable owner in the page
 rather than simulating success or delaying the page.
 
-**Validation.** `cargo test -p kryta-manage` passes the layout, component, view-label, name, redirect and
-port tests (20); `cargo check --workspace` and `cargo test -p shared` pass. A live run with the
-checked-in `manage.json` reached the login, character and world databases and served every page in
-9-107 ms. The write paths were exercised end to end on a throwaway account: create account (303 to
-`/players/9`), create character from the creation lists and the pack's campaign spawn, rename, set level,
-remove the character with its items and unlocks, remove the account - each answer a `303` with its
-`Location`, and the account and character were then removed. The probes were exercised without a
-running world and reported their owners unavailable instead of delaying their pages. The
-credential-reading blocker the earlier run recorded does not apply here: the panel read
-`worldserver/control.credential` and served the world-status page, which reported the refused
-connection as unavailable, not as an empty result.
+**Validation.** `cargo test -p kryta-manage` passes the layout, component, view-label, name and redirect
+tests; `cargo check --workspace` and `cargo test -p game --lib` pass. A live run with the checked-in
+`manage.json` reached the login, character and world databases and served every page in 10-110 ms. The
+write paths were exercised end to end on a throwaway account: create account (303 to `/accounts/9`),
+create its player from the creation lists and the pack's campaign spawn (303 to `/players/{uuid}`), read
+the player page back (level, experience, campaign, inventory, unlocks), rename, set level, remove the
+player with its items and unlocks, remove the account - each answer a `303` with its `Location`, and the
+account and player were then removed. The old addresses were exercised too: `/players/2` and
+`/accounts?account=2` redirect to `/accounts/2`, and `/characters?account=<portal id>` redirects to
+`/players?account=2` or `/players/{uuid}`. The probes were exercised without a running world and
+reported their owners unavailable instead of delaying their pages. The credential-reading blocker the
+earlier run recorded does not apply here: the panel read `worldserver/control.credential` and served the
+world-status page, which reported the refused connection as unavailable, not as an empty result.
 
 ## 3. The API contract to design
 
@@ -479,27 +486,31 @@ exit|restart|shutdown|idlerestart|idleshutdown`, `server set loglevel|motd|close
 
 ## Control panel hierarchy
 
-The operator panel follows the game's ownership, not the database layout. Accounts are the entry
-point for player administration: an account contains its character roster and slots (R59, E162),
-shared Xunlai storage (R49), and account-wide unlocks. A character's page owns its progress,
-carried gold (R45), position, inventory, equipment and character-specific unlocks. Parties and
-instances are live world concepts, linked to a character where applicable, not children of one
-account. Server services, settings, console and logs are server administration. The panel keeps
-these relationships visible and retains the selected account and character context across actions.
+The operator panel follows the game's ownership, not the database layout, and its categories name the
+levels: the server hosts **Accounts**; an account owns **Players** (the characters); a player owns its
+own data. Accounts are account-bound state - the login identity, its login state, shared Xunlai storage
+(R49), and account-wide unlocks. A player page owns player-bound state - progress (level, stored
+experience and carried gold, R45), position, inventory and equipment (the item rows), titles, and the
+maps it has unlocked. Parties and instances are live world concepts, linked to a player where
+applicable, not children of one account. Server services, settings, console and logs are server
+administration. The panel keeps these relationships visible and retains the selected context across
+actions.
 
-Players is a top-level destination leading to the account directory. An account page exposes
-Account overview (identity, login state, removal), Characters, and the two account-wide areas as
-sections; the latter two are named as not recorded by this server yet rather than shown empty. The
-roster links to a character page with its progress, position, inventory and equipment, titles,
-unlocked maps (R12), and its rename, level (1 to 20, R48) and removal actions. The panel creates
-role-playing characters from the creation equipment and inventory and the world pack's campaign
-spawn data, through the shared character-row writer; PvP creation is refused because the spawn file
-names no PvP map. Slot capacity is not represented by the current account model and is not enforced.
-Creation initialization uses several database writes and cleans up on failure; cleanup failure is
-reported. Session coordination and account/character APIs remain outstanding: panel writes do not
-coordinate with online characters. Account deletion retains character rows; their policy needs an
-explicit decision before changing it. Titles are not recorded by this server yet, and the character
-page says so (the title messages are evidenced at E23 and E156-E158, but no table or handler exists).
+Accounts and Players are separate rail categories. The Accounts directory is the account CRUD; an
+account page exposes Account overview (identity, login state, removal), its Players, and the two
+account-wide areas as sections, and the latter two are named as not recorded by this server yet rather
+than shown empty. The Players list is every player across accounts (or one account's, via its filter
+from the account page), each row naming the account that owns it and linking to the player's page. The
+creation form names the account that will own the new player, uses the creation equipment and inventory
+and the world pack's campaign spawn data through the shared character-row writer, and PvP creation is
+refused because the spawn file names no PvP map. The player page shows its account (linked) and owns its
+rename, level (1 to 20, R48) and removal actions; removal deletes the row with its own items and
+unlocks. Slot capacity is not represented by the current account model and is not enforced. Creation
+initialization uses several database writes and cleans up on failure; cleanup failure is reported.
+Session coordination and account/player APIs remain outstanding: panel writes do not coordinate with
+online players. Account deletion retains player rows; their policy needs an explicit decision before
+changing it. Titles are not recorded by this server yet, and the player page says so (the title
+messages are evidenced at E23 and E156-E158, but no table or handler exists).
 
 World content is the world pack (`docs/decisions/0014-the-world-content-is-a-pack.md`), so the content
 page reads the pack through the same reader the world uses and shows what the world will serve; editing
@@ -651,11 +662,11 @@ blocking the API and settings manager on playback or a map renderer.
    stack still up with one world in it, and the restarted world answering again; `quit` stopped
    everything and left no process behind.
 4. **Configuration Manager foundation.** **Landed, then rebuilt (2026-11).** `tools/manage` now
-   supplies a layered panel whose rail shows only working destinations (Overview, Players, World
-   content, Worlds, Navigation, Services, Console, World status, Settings, Schema), follows the game's
-   Players -> account -> characters -> character hierarchy, and answers every page before asking
-   another process. The old `/accounts` and `/characters` addresses redirect into it. Its proof is in
-   `docs/port/05-tooling.md`, "The administration tool".
+   supplies a layered panel whose rail shows only working destinations (Overview, Accounts, Players,
+   World content, Worlds, Navigation, Services, Console, World status, Settings, Schema), follows the
+   game's Accounts -> Players -> player-data hierarchy, and answers every page before asking another
+   process. The old addresses redirect into it. Its proof is in `docs/port/05-tooling.md`, "The
+   administration tool".
 5. **Supervisor integration and integrated console.** **Implemented against current owners.** Services
    reads the supervisor's own `control_port` from `stack.json`, shows its status, and sends its existing
    named stop/restart verbs. Console asks the running world for its registrations and calls those same

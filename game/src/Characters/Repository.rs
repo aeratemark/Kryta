@@ -74,6 +74,12 @@ const SELECT_CHARACTERS: &str = "SELECT \"uuid\", \"name\", \"appearance\", \"pr
 \"secondary_profession\", \"campaign\", \"level\", \"is_pvp\", \"helm_status\", \"last_outpost\" \
 FROM \"characters\"";
 
+/// Every character with the portal uuid of the account that owns it: the panel's player list, which
+/// names both the owner and the player on one line.
+const SELECT_CHARACTERS_WITH_ACCOUNT: &str = "SELECT \"account_uuid\", \"uuid\", \"name\", \
+\"appearance\", \"primary_profession\", \"secondary_profession\", \"campaign\", \"level\", \
+\"is_pvp\", \"helm_status\", \"last_outpost\" FROM \"characters\" ORDER BY \"name\"";
+
 /// The statement a creation confirm runs.
 ///
 /// `ON CONFLICT (name) DO NOTHING` is the rule the reference enforces with a unique name: a name that
@@ -168,6 +174,77 @@ impl DatabaseCharacters {
     /// Every character, for the administration tool's page: the rows as they are, in name order.
     pub fn list(&self) -> Vec<Character> {
         self.read(&format!("{SELECT_CHARACTERS} ORDER BY \"name\""), Vec::new())
+    }
+
+    /// Every character with the portal uuid of the account that owns it.
+    ///
+    /// The panel's Players page lists every character across accounts, so the owner is read with
+    /// the row it owns instead of asking the account table once per character.
+    pub fn all_with_account(&self) -> Vec<(String, Character)> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(SELECT_CHARACTERS_WITH_ACCOUNT, Vec::new()),
+            Err(_) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    "the character database pool is poisoned; no character can be listed",
+                );
+                return Vec::new();
+            }
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => rows
+                .iter()
+                .filter_map(|row| {
+                    let account: String = row.get("account_uuid");
+                    self.character(row).map(|character| (account, character))
+                })
+                .collect(),
+            Ok(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    format!("Cannot read the characters: {error}"),
+                );
+                Vec::new()
+            }
+            Err(_) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    "the character database answered no query: it is shutting down",
+                );
+                Vec::new()
+            }
+        }
+    }
+
+    /// A character's stored experience points, when its row states them.
+    ///
+    /// Experience is character-bound progress like the level beside it; the panel reads it for the
+    /// player's own page, and the column is `BIGINT` like every other number in this table.
+    pub fn experience(&self, uuid: &str) -> Result<Option<i64>, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "SELECT \"experience\"::bigint FROM \"characters\" WHERE \"uuid\" = $1",
+                vec![Param::Text(uuid.to_string())],
+            ),
+            Err(_) => {
+                return Err("the character database pool is poisoned; no experience can be read"
+                    .to_string());
+            }
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => rows
+                .first()
+                .map(|row| {
+                    row.try_get::<usize, i64>(0)
+                        .map_err(|error| format!("column experience: {error}"))
+                })
+                .transpose(),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+        }
     }
 
     /// How many characters there are, without reading their rows.

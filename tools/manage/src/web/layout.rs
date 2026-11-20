@@ -14,11 +14,14 @@ pub const STYLE_TYPE: &str = "text/css; charset=utf-8";
 
 /// Where the rail's groups and their destinations are.
 ///
-/// The order is the game's own: what the operator is looking at first (the workspace), then the
-/// players whose accounts own characters, then the world they are in, then the server that serves
-/// it. A destination that does not work is not in this list: the rail is not a roadmap.
-const GROUPS: [(&str, &[(&str, &str, &str)]); 4] = [
+/// The order is the game's own ownership: the workspace first, then the accounts the server hosts,
+/// then the players (characters) they own, then the world's content, then the server that serves
+/// it. Accounts and Players are separate categories because an account holds account-owned state
+/// and a player holds player-owned state. A destination that does not work is not in this list: the
+/// rail is not a roadmap.
+const GROUPS: [(&str, &[(&str, &str, &str)]); 5] = [
     ("workspace", &[("/", "Overview", "overview")]),
+    ("accounts", &[("/accounts", "Accounts", "accounts")]),
     ("players", &[("/players", "Players", "players")]),
     (
         "world",
@@ -92,15 +95,19 @@ mod tests {
 
     #[test]
     fn the_rail_groups_what_the_operator_works_with_and_marks_the_current_area() {
+        let accounts = navigation("accounts");
+        assert!(accounts.contains("workspace"));
+        assert!(accounts.contains("accounts"));
+        assert!(accounts.contains("players"));
+        assert!(accounts.contains("world"));
+        assert!(accounts.contains("server"));
+        assert!(accounts.contains("href=\"/content\""));
+        assert!(accounts.contains("href=\"/accounts\""));
+        assert!(accounts.contains("nav-link active\" href=\"/accounts\""));
+        assert!(!accounts.contains("nav-link active\" href=\"/players\""));
+
         let players = navigation("players");
-        assert!(players.contains("workspace"));
-        assert!(players.contains("players"));
-        assert!(players.contains("world"));
-        assert!(players.contains("server"));
-        assert!(players.contains("href=\"/content\""));
-        assert!(players.contains("href=\"/players\""));
         assert!(players.contains("nav-link active\" href=\"/players\""));
-        assert!(!players.contains("nav-link active\" href=\"/services\""));
 
         let services = navigation("services");
         assert!(services.contains("nav-link active\" href=\"/services\""));

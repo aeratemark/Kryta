@@ -131,6 +131,10 @@ impl Manage {
     }
 
     /// The pages a `GET` opens.
+    ///
+    /// The hierarchy is the routing: an account is a page with a row id, a player is a page with
+    /// the id the client knows it by, and the two old addresses (`/accounts?account=`,
+    /// `/characters?account=`) are redirects into it.
     fn get(&self, segments: &[&str], request: &Request) -> Response {
         match segments {
             [] => pages::overview::page(self),
@@ -140,23 +144,23 @@ impl Manage {
                 web::layout::STYLE.as_bytes(),
             ),
             ["health"] => Response::text(200, "ok\n"),
-            ["players"] => {
+            ["accounts"] => {
                 // The old address: a page that named an account is sent to its own page.
                 if let Some(account) = request
                     .query("account")
                     .and_then(|value| value.parse::<i64>().ok())
                 {
-                    return web::http::redirect(&format!("/players/{account}"));
+                    return web::http::redirect(&format!("/accounts/{account}"));
                 }
-                pages::players::index(self)
+                pages::accounts::index(self)
             }
-            ["players", id] => by_id(id, |id| pages::players::account(self, id)),
-            ["players", id, "characters"] => {
-                by_id(id, |id| pages::characters::roster(self, id))
-            }
-            ["players", id, "characters", uuid] => {
-                by_id(id, |id| pages::characters::detail(self, id, uuid))
-            }
+            ["accounts", id] => by_id(id, |id| pages::accounts::account(self, id)),
+            ["players"] => pages::players::list(self, request),
+            // A numeric segment is the old account page, not a player: a player's id is a uuid.
+            ["players", segment] => match segment.parse::<i64>() {
+                Ok(id) => web::http::redirect(&format!("/accounts/{id}")),
+                Err(_) => pages::players::detail(self, segment),
+            },
             ["services"] => pages::services::page(self, None),
             ["services", "status"] => pages::services::status_fragment(self),
             ["console"] => pages::console::page(self, None),
@@ -173,23 +177,28 @@ impl Manage {
             ["settings"] => pages::settings::page(self),
             ["schema"] => pages::schema::page(self),
             ["api", "navigation", "maps"] => self.navigation_api(),
-            // The old addresses stay bookmarks: they redirect to the hierarchy's own pages.
-            ["accounts"] => {
-                let target = match request.query("account") {
-                    Some(account) => format!("/players/{account}"),
-                    None => "/players".to_string(),
-                };
-                web::http::redirect(&target)
+            // The addresses the panel had before the hierarchy was named: still bookmarks.
+            ["players", account, "characters"] => match account.parse::<i64>() {
+                Ok(id) => web::http::redirect(&format!("/players?account={id}")),
+                Err(_) => web::http::redirect("/players"),
+            },
+            ["players", _account, "characters", uuid] => {
+                web::http::redirect(&format!("/players/{uuid}"))
             }
             ["characters"] => {
-                let target = match (
-                    request.query("account"),
-                    request.query("character"),
-                ) {
-                    (Some(account), Some(character)) => {
-                        format!("/players/{account}/characters/{character}")
-                    }
-                    (Some(account), None) => format!("/players/{account}/characters"),
+                // This address used to name the account by its portal user id, not by its row id.
+                let target = match (request.query("account"), request.query("character")) {
+                    (_, Some(character)) => format!("/players/{character}"),
+                    (Some(user_id), None) => match self.list_accounts() {
+                        Ok(accounts) => match accounts
+                            .into_iter()
+                            .find(|account| account.user_id == user_id)
+                        {
+                            Some(account) => format!("/players?account={}", account.id),
+                            None => "/players".to_string(),
+                        },
+                        Err(_) => "/players".to_string(),
+                    },
                     (None, _) => "/players".to_string(),
                 };
                 web::http::redirect(&target)
@@ -201,31 +210,23 @@ impl Manage {
     /// The pages a form `POST`s to.
     fn post(&self, segments: &[&str], request: &Request) -> Response {
         match segments {
+            ["accounts", "create"] => pages::accounts::create(self, request),
+            ["accounts", id, "update"] => {
+                by_id(id, |id| pages::accounts::update(self, request, id))
+            }
+            ["accounts", id, "active"] => {
+                by_id(id, |id| pages::accounts::set_active(self, request, id))
+            }
+            ["accounts", id, "eula"] => {
+                by_id(id, |id| pages::accounts::set_eula(self, request, id))
+            }
+            ["accounts", id, "delete"] => {
+                by_id(id, |id| pages::accounts::delete(self, request, id))
+            }
             ["players", "create"] => pages::players::create(self, request),
-            ["players", id, "update"] => {
-                by_id(id, |id| pages::players::update(self, request, id))
-            }
-            ["players", id, "active"] => {
-                by_id(id, |id| pages::players::set_active(self, request, id))
-            }
-            ["players", id, "eula"] => {
-                by_id(id, |id| pages::players::set_eula(self, request, id))
-            }
-            ["players", id, "delete"] => {
-                by_id(id, |id| pages::players::delete(self, request, id))
-            }
-            ["players", id, "characters"] => {
-                by_id(id, |id| pages::characters::create(self, request, id))
-            }
-            ["players", id, "characters", uuid, "rename"] => {
-                by_id(id, |id| pages::characters::rename(self, request, id, uuid))
-            }
-            ["players", id, "characters", uuid, "level"] => {
-                by_id(id, |id| pages::characters::set_level(self, request, id, uuid))
-            }
-            ["players", id, "characters", uuid, "delete"] => {
-                by_id(id, |id| pages::characters::delete(self, request, id, uuid))
-            }
+            ["players", uuid, "rename"] => pages::players::rename(self, request, uuid),
+            ["players", uuid, "level"] => pages::players::set_level(self, request, uuid),
+            ["players", uuid, "delete"] => pages::players::delete(self, request, uuid),
             ["services", "stop"] => pages::services::action(self, request, "stop"),
             ["services", "restart"] => pages::services::action(self, request, "restart"),
             ["console", "run"] => pages::console::run(self, request),

@@ -32,8 +32,8 @@ pub fn page(manage: &Manage) -> Response {
         .map(|(maps, _)| maps.len());
 
     let character_metric = match characters {
-        Some(count) => components::metric(count, "characters"),
-        None => components::metric("-", "characters (no character database)"),
+        Some(count) => components::metric(count, "players"),
+        None => components::metric("-", "players (no character database)"),
     };
     let map_metric = match maps {
         Some(count) => components::metric(count, "map definitions"),
@@ -44,8 +44,15 @@ pub fn page(manage: &Manage) -> Response {
         &["area", "whose data", "open"],
         &[
             components::row(&[
+                "Accounts".to_string(),
+                "The login identities the server hosts, and the state that belongs to a person."
+                    .to_string(),
+                "<a href=\"/accounts\">open accounts</a>".to_string(),
+            ]),
+            components::row(&[
                 "Players".to_string(),
-                "Login accounts, and the characters each account owns.".to_string(),
+                "The characters the accounts own: progress, position, inventory, titles, unlocks."
+                    .to_string(),
                 "<a href=\"/players\">open players</a>".to_string(),
             ]),
             components::row(&[
@@ -60,7 +67,7 @@ pub fn page(manage: &Manage) -> Response {
             ]),
             components::row(&[
                 "World content".to_string(),
-                "The maps, their spawn points, item templates and running copies.".to_string(),
+                "The maps, their entry points, item definitions and running copies.".to_string(),
                 "<a href=\"/content\">open world content</a>".to_string(),
             ]),
             components::row(&[
@@ -71,16 +78,19 @@ pub fn page(manage: &Manage) -> Response {
             components::row(&[
                 "Settings & schema".to_string(),
                 "The programs' own JSON files, and the schema each database records.".to_string(),
-                "<a href=\"/settings\">open settings</a> <a href=\"/schema\">open schema</a>".to_string(),
+                "<a href=\"/settings\">open settings</a> <a href=\"/schema\">open schema</a>"
+                    .to_string(),
             ]),
         ],
     );
 
     let body = format!(
         "<section class=\"panel\"><div class=\"panel-head\"><div><h2>Operator workspace</h2>\
-         <p>Manage the server through the owners that already keep its state. Player data is\
-         reached through accounts; service lifecycles stay with the supervisor; the running world\
-         answers its own operations.</p></div><a class=\"button\" href=\"/players\">Open players</a></div></section>\n\
+         <p>Manage the server through the owners that already keep its state. Accounts hold the\
+         login identities and what belongs to the person; Players are the characters those\
+         accounts own, with their own progress, inventory, titles and unlocks. Service lifecycles\
+         stay with the supervisor; the running world answers its own operations.</p></div>\
+         <a class=\"button\" href=\"/accounts\">Open accounts</a></div></section>\n\
          <section class=\"metric-grid\">\n{accounts}{active}{characters}{maps}</section>\n\
          <section class=\"panel\"><div class=\"panel-head\"><div><h2>Live server</h2>\
          <p>The running world is asked for its own status after this page has answered; it is a\
