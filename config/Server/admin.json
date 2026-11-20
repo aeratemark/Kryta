@@ -1,6 +1,6 @@
 {
-  "note": "admin.json - the first administrator account, created when the account table is empty. Edit it before the first start; the program reads it at every start and creates the account only when there is none. The username is an e-mail address, which is what the client's login form asks for.",
+  "note": "admin.json - the first administrator account, created when the account table is empty. Edit it before the first start; the program reads it at every start and creates the account only when there is none. The username is an e-mail address, which is what the client's login form asks for, and the password is the token the portal hands that client, which the client parses as a UUID.",
   "username": "admin@admin",
-  "password": "admin",
+  "password": "0F5A2C1E-1111-2222-3333-444455556666",
   "user_id": "0F5A2C1E-1111-2222-3333-444455556666"
 }
