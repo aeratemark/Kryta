@@ -178,6 +178,15 @@ reference's exit-code contract (`Main.cpp:434-439`): a world that exits `2` aske
 this program - the restarter that comment names - starts it again, up to five times before stopping the
 stack. Health checks beyond the handshake are still not done, and the header says so.
 
+**A port belongs to the stack.** `stack.json` names a port for each service, and before a service
+starts the supervisor claims it (`take_port`). If a listener is already there, it asks the operating
+system which process owns it. A process running the same program as the service is an instance left
+over from an earlier session: the supervisor stops it, says so, and starts the service on its own
+port - a stale copy of one of the stack's own services can no longer take the stack down. A program
+this stack does not run is never killed: the supervisor names it and refuses to start, so a stranger
+holding one of the stack's ports is one clear line instead of a half-up stack. The same claim runs on
+every start, including `restart <service>` from the control channel and the exit-code-2 restarter.
+
 ```powershell
 cargo run -p kryta-supervisor                # the stack: every service, stopped together on Ctrl+C
 cargo run -p kryta-supervisor -- --check     # start, wait for every READY, stop, report

@@ -11,6 +11,11 @@
 //! reference's exit-code contract (`Main.cpp:434-439`): a world that exits `2` asked to be restarted,
 //! and this program - the restarter the reference's comment names - starts it again.
 //!
+//! A service's port is the stack's ([`take_port`]): a listener already there that runs the same
+//! program as the service is an instance left over from an earlier session, and the supervisor
+//! stops it so the stack owns its port; a listener that belongs to anything else is refused with
+//! the process named, never silently killed.
+//!
 //! This arrangement is this tree's own, taken from ASURA's `asura-supervisor` (one command for a
 //! stack that is otherwise several windows) rather than from the reference, which has no such
 //! program. What it still does not do, and says so: health checks beyond the READY line.
@@ -135,7 +140,12 @@ fn ensure_built(program: &str) -> Result<(), String> {
 }
 
 /// Start one service, and hand every line it prints to the supervisor.
+///
+/// The port is claimed before anything else: see [`take_port`]. A stale copy of the service's own
+/// program from an earlier session is stopped first, which also matters because a running program
+/// holds its executable file open and would make `cargo build` fail to replace it.
 fn start(service: &Service, lines: Sender<ServiceLine>) -> Result<Child, String> {
+    take_port(service)?;
     ensure_built(&service.program)?;
     let exe = exe_of(&service.program);
     let mut child = Command::new(&exe)
@@ -167,6 +177,115 @@ fn start(service: &Service, lines: Sender<ServiceLine>) -> Result<Child, String>
         });
     }
     Ok(child)
+}
+
+/// A service's port belongs to the stack.
+///
+/// Before a service starts, the supervisor looks at the port `stack.json` names. When a listener is
+/// already there, it asks the operating system which process owns it. A process running the same
+/// program as the service is an instance left over from an earlier session - the supervisor stops
+/// it, so the stack owns its port and starts cleanly. Anything else is refused with the process
+/// named and the stack does not start: silently killing a program this stack does not run would be
+/// a far worse surprise than a clear message. Every start goes through here, including a restart
+/// from the control channel and the reference's exit-code-2 restarter.
+fn take_port(service: &Service) -> Result<(), String> {
+    if service.port == 0 {
+        return Ok(());
+    }
+    let Some(pid) = listener_holder(service.port) else {
+        return Ok(());
+    };
+    let image = process_image(pid).unwrap_or_else(|| format!("pid {pid}"));
+    let own_program = if cfg!(windows) {
+        format!("{}.exe", service.program)
+    } else {
+        service.program.clone()
+    };
+    if !image.eq_ignore_ascii_case(&own_program) {
+        return Err(format!(
+            "{}: port {} is held by {image} (pid {pid}), which is not this stack's {}; \
+             stop that process or change stack.json",
+            service.name, service.port, service.program
+        ));
+    }
+    report(
+        &service.name,
+        &format!(
+            "port {} was held by an earlier {image} (pid {pid}) from outside this stack; \
+             stopping it so this stack owns the port",
+            service.port
+        ),
+    );
+    let _ = stop_process(pid);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if listener_holder(service.port).is_none() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err(format!(
+        "{}: port {} is still held after stopping pid {pid}",
+        service.name, service.port
+    ))
+}
+
+/// The process listening on a port, from one `netstat -ano` snapshot.
+fn listener_holder(port: u16) -> Option<u32> {
+    let output = Command::new("netstat").args(["-ano"]).output().ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    holder_in(port, &text)
+}
+
+/// The row of a `netstat -ano` table that names a listening socket on `port`, as its owning pid.
+///
+/// A row is the protocol, the local address, the foreign address, the state and the pid. Only a
+/// `LISTENING` TCP row owns the port; an `ESTABLISHED` row is a connection that happens to name it.
+fn holder_in(port: u16, table: &str) -> Option<u32> {
+    let wanted = port.to_string();
+    for line in table.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 5 || !fields[0].eq_ignore_ascii_case("TCP") {
+            continue;
+        }
+        if !fields[3].eq_ignore_ascii_case("LISTENING") {
+            continue;
+        }
+        let local = fields[1];
+        if local.rsplit_once(':').map(|(_, address_port)| address_port) != Some(wanted.as_str()) {
+            continue;
+        }
+        if let Ok(pid) = fields[4].parse::<u32>() {
+            return Some(pid);
+        }
+    }
+    None
+}
+
+/// A process's image name, from one `tasklist` CSV row.
+fn process_image(pid: u32) -> Option<String> {
+    let output = Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    image_in(&text)
+}
+
+/// The image name a `tasklist ... /FO CSV /NH` answer states, from its first line.
+fn image_in(answer: &str) -> Option<String> {
+    let line = answer.lines().find(|line| !line.trim().is_empty())?;
+    let name = line.split(',').next()?.trim().trim_matches('"');
+    (!name.is_empty() && !name.starts_with("INFO:")).then(|| name.to_string())
+}
+
+/// Stop one process, and answer whether it is gone.
+fn stop_process(pid: u32) -> bool {
+    Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/F"])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 /// One line a service printed, what printed it, and whether it was its standard error.
@@ -696,5 +815,47 @@ mod tests {
         assert_eq!(verbs(&[]), None);
         assert_eq!(verbs(&["--check"]), None, "--check starts a stack, it does not ask one");
         assert_eq!(verbs(&["restart"]), None, "restart needs a service");
+    }
+
+    #[test]
+    fn a_netstat_table_names_the_owner_of_a_listening_port() {
+        let table = "Active Connections\n\
+                     \n  Proto  Local Address          Foreign Address        State           PID\n\
+                     \x20 TCP    127.0.0.1:6602         0.0.0.0:0              LISTENING       20004\n\
+                     \x20 TCP    [::1]:6602             [::]:0                 LISTENING       20004\n\
+                     \x20 TCP    127.0.0.1:6113         192.168.1.2:51800      ESTABLISHED     1200\n\
+                     \x20 UDP    0.0.0.0:6602           *:*                                    3000\n";
+        assert_eq!(holder_in(6602, table), Some(20004));
+        assert_eq!(holder_in(6113, table), None, "only a LISTENING row owns the port");
+        assert_eq!(holder_in(6603, table), None);
+    }
+
+    #[test]
+    fn a_tasklist_answer_names_the_image() {
+        assert_eq!(
+            image_in("\"kryta-management-service.exe\",\"20004\",\"Console\",\"1\",\"48,000 K\"\n"),
+            Some("kryta-management-service.exe".to_string())
+        );
+        assert_eq!(
+            image_in("INFO: No tasks are running which match the specified criteria.\n"),
+            None
+        );
+        assert_eq!(image_in(""), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_owner_of_a_live_listener_is_the_process_that_bound_it() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a free loopback port");
+        let port = listener.local_addr().expect("its address").port();
+        let mut found = None;
+        for _ in 0..40 {
+            if let Some(pid) = listener_holder(port) {
+                found = Some(pid);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(found, Some(std::process::id()), "the socket's owner is this test");
     }
 }

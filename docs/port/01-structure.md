@@ -194,7 +194,10 @@ The supervisor's half has landed too: a loopback control channel (`status`, `sto
 (`0`, `1`, `2`, `Main.cpp:434-439`), the console rows that ask for it (`server exit`, `server restart`),
 and the policy that turns exit code `2` into a fresh process - so a console can restart the world and
 the stack keeps one world in it, not two. `console_service` in `stack.json` gives the terminal to one
-service and `Stdio::null()` to the rest, so two programs cannot read one terminal.
+service and `Stdio::null()` to the rest, so two programs cannot read one terminal. Before a service
+starts, the supervisor claims the port `stack.json` names: a leftover instance of that service's own
+program is stopped and replaced, so a stale service cannot take the stack down; any other process
+holding the port is named and refused, never killed (`tools/supervisor/src/main.rs`, `take_port`).
 
 The Configuration Manager was rebuilt in `tools/manage` (2026-11) around a layered arrangement: `web/`
 holds the shell every page is drawn into, its stylesheet and the components a page is built from;

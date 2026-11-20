@@ -54,9 +54,12 @@ repositories; their APIs, session invalidation and targeted disconnect remain to
   move by capturing the same session before and after it.
 - `tools/supervisor/src/main.rs` starts and watches services, answers a loopback control channel
   (`status`, `stop [service]`, `restart <service>`, `quit`), reads the world's exit code `2` and starts
-  the service again. `worldserver` has an embedded interactive console, a standalone `kryta-cli`, and
-  the local control endpoint; its two lifecycle rows, `server exit` and `server restart`, ask the world
-  to stop and set the exit code the supervisor reads.
+  the service again. Before a service starts it claims that service's port: an earlier instance of the
+  service's own program is stopped and replaced, and any other process holding the port is named and
+  the stack refuses to start (`take_port`), so a stale service can never take the stack down and a
+  stranger is never silently killed. `worldserver` has an embedded interactive console, a standalone
+  `kryta-cli`, and the local control endpoint; its two lifecycle rows, `server exit` and `server
+  restart`, ask the world to stop and set the exit code the supervisor reads.
 - `tools/manage` is the panel's implementation, layered as `web/` (the shell, its stylesheet, the
   components and HTTP helpers), `view/` (the game's names for the numbers a row stores), `pages/` (one
   module per destination) and one routing table in `lib.rs`. It is arranged around the game's own
