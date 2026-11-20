@@ -491,9 +491,11 @@ impl World {
         &mut self,
         inventory_path: impl AsRef<std::path::Path>,
         equipment_path: impl AsRef<std::path::Path>,
+        worn_path: Option<&std::path::Path>,
         log: &Log,
     ) -> Result<(usize, usize, usize), String> {
-        self.creation = crate::creation::Tables::load(inventory_path, equipment_path, log)?;
+        self.creation =
+            crate::creation::Tables::load(inventory_path, equipment_path, worn_path, log)?;
         Ok(self.creation.counts())
     }
 

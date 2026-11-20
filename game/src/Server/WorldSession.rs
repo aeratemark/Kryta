@@ -423,6 +423,16 @@ impl WorldSession {
             .unwrap_or_default()
     }
 
+    /// Which slot each kind of item is worn in, from the content (`data/equipped-slots.json`). Empty
+    /// when the world read no such file, and then nothing is worn: the caller refuses rather than
+    /// choosing a slot.
+    pub(crate) fn worn(&self) -> &[crate::creation::WornSlot] {
+        self.creation
+            .as_ref()
+            .map(|tables| tables.worn())
+            .unwrap_or(&[])
+    }
+
     /// The character database, when the program opened one.
     pub(crate) fn characters(&self) -> Option<crate::characters::DatabaseCharacters> {
         self.characters.as_ref().map(|pool| {
@@ -2093,7 +2103,12 @@ mod tests {
         // And the creation content, which the same start-up pass reads: a screen with no items has no
         // inventory model to draw.
         let (bags, items, sets) = world
-            .load_creation("../data/inventory.json", "../data/equipment.json", &Log::new())
+            .load_creation(
+                    "../data/inventory.json",
+                    "../data/equipment.json",
+                    Some(std::path::Path::new("../data/equipped-slots.json")),
+                    &Log::new(),
+                )
             .expect("the creation data");
         assert_eq!((bags, items, sets), (6, 9, 32), "the reference's own counts");
         world.set_templates(templates_from(world.creation().definitions()));
@@ -3256,12 +3271,13 @@ Logger.root = 6,Console
             .expect("the setting names the equipped bag");
         // The starting set's wearable items are already worn, so the sequence is the player's own: take
         // one off to the backpack first, then wear it again.
+        let worn_table = world.creation().worn();
         let worn = starting
             .items
             .iter()
-            .find(|item| crate::creation::equipped_slot(item.item_type).is_some())
+            .find(|item| crate::creation::worn_slot(worn_table, item.item_type).is_some())
             .expect("the set carries something wearable");
-        let worn_slot = crate::creation::equipped_slot(worn.item_type).unwrap();
+        let worn_slot = crate::creation::worn_slot(worn_table, worn.item_type).unwrap();
         let backpack = crate::creation::bags(world.creation())
             .iter()
             .find(|bag| bag.model == crate::characters::BACKPACK_MODEL)

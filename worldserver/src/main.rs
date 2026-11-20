@@ -309,6 +309,14 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     for note in notes {
         report(&note);
     }
+    // Which slot each kind of item is worn in. Content, like the two above: the number is the
+    // client's own, and a wrong one draws a character without the piece it holds.
+    let (worn_slots_file, notes) = config
+        .value_string("EquippedSlotsFile", "data/equipped-slots.json")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
     // The chat command surface: the names a player may type and the operation each one runs. Content,
     // not a setting - the file is where the surface lives, and `CommandsFile` says where that file is
     // (`docs/decisions/0011-the-command-surface-is-content.md`).
@@ -413,12 +421,18 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     let graphs = load_path_graphs(&graph_dump, &hostable, &log)?;
     world.set_graphs(graphs);
 
-    let (bags, items, sets) = world.load_creation(&inventory_file, &equipment_file, &log)?;
+    let (bags, items, sets) =
+        world.load_creation(
+            &inventory_file,
+            &equipment_file,
+            Some(std::path::Path::new(&worn_slots_file)),
+            &log,
+        )?;
     log.out(
         LogLevel::Info,
         "server.worldserver",
         format!(
-            "Creation screen: {bags} bag(s) and {items} item(s) from {inventory_file}, {sets} profession set(s) from {equipment_file}."
+            "Creation screen: {bags} bag(s) and {items} item(s) from {inventory_file}, {sets} profession set(s) from {equipment_file}, worn slots from {worn_slots_file}."
         ),
     );
 

@@ -1,0 +1,56 @@
+{
+  "note": "equipped-slots.json - which slot of the client's equipped bag a worn item occupies, by the item's kind. Read at start-up; the worldserver.json setting EquippedSlotsFile says where it is. An item whose kind no row names is not worn, and the server refuses to equip it rather than choosing a slot.",
+  "information": {
+    "what a row means": "one position of the nine-dword equipped array the client is sent: its index, the name to read it by, and the item kinds worn there. The same index is what an item's placement names inside the equipped bag, and what the agent's equipped list carries, so one table answers all three.",
+    "where the numbers come from": "the pairing measured on a live client: seven per-slot writes in one Shing Jea session, each immediately preceded by the item declaration that names its kind, so the kind is read beside the slot number rather than inferred (Rurik studies/character/FINDINGS.md:1608-1632), and the nine-dword array uses the same numbering. The weapon, off-hand and costume rows are ASURA's list (crates/asura-protocol/src/game/mod.rs, equipped_slot), and it is the same list this tree shipped as a compiled table.",
+    "what changed": "the compiled table was in bag order - body 2, legs 3, head 4, boots 5, gloves 6 - and the capture shows boots 3, legs 4, gloves 5, head 6. Body and legs are the same in both; boots, gloves and head are not. This file carries the measured order, and the whole point of it being a file is that the order can be corrected here, against a capture, without touching code.",
+    "why a file": "the slot a kind is worn in is the client's own vocabulary: the library is drawn from that number, so a wrong one draws a character without the piece it holds. It is content this server must not compile in (docs/port/04-configuration.md)."
+  },
+  "slots": [
+    {
+      "slot": 0,
+      "name": "weapon",
+      "kinds": [1, 2, 5, 15, 22, 26, 27, 32, 35, 36]
+    },
+    {
+      "slot": 1,
+      "name": "off hand",
+      "kinds": [12, 24]
+    },
+    {
+      "slot": 2,
+      "name": "chest",
+      "kinds": [7]
+    },
+    {
+      "slot": 3,
+      "name": "boots",
+      "kinds": [4]
+    },
+    {
+      "slot": 4,
+      "name": "legs",
+      "kinds": [19]
+    },
+    {
+      "slot": 5,
+      "name": "gloves",
+      "kinds": [13]
+    },
+    {
+      "slot": 6,
+      "name": "head",
+      "kinds": [16]
+    },
+    {
+      "slot": 7,
+      "name": "costume body",
+      "kinds": [44]
+    },
+    {
+      "slot": 8,
+      "name": "costume head",
+      "kinds": [45]
+    }
+  ]
+}

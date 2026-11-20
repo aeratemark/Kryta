@@ -84,7 +84,7 @@ screen's conversation", is the frames.
 | rule | state | where, and what proves it |
 |---|---|---|
 | R45 items a character holds are the character's | in | `item_instance` rows written at the confirm, drawn by the load (`a_creation_confirm_writes_a_character_row`) |
-| moving, wearing and destroying an item | in | `0x8072`/`0x8030`/`0x8069` move or delete the row and answer with the change (`a_travel_record_decides_the_map_and_the_district`) |
+| moving, wearing and destroying an item | in | `0x8072`/`0x8030`/`0x8069` move or delete the row and answer with the change (`a_travel_record_decides_the_map_and_the_district`); the slot a kind is worn in is content (`data/equipped-slots.json`, E234), not a compiled table |
 | item definitions are world data | in | `item_template` seeded at start-up and read back (`definitions_are_seeded_once_and_read_back`) |
 | R54 merchant NPCs hold a fixed list | not started | `game/Trader/` is a stub |
 

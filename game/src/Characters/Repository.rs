@@ -1072,7 +1072,12 @@ mod tests {
         let log = Log::new();
         let mut world = crate::world::World::new(2);
         world
-            .load_creation("../data/inventory.json", "../data/equipment.json", &log)
+            .load_creation(
+                    "../data/inventory.json",
+                    "../data/equipment.json",
+                    Some(std::path::Path::new("../data/equipped-slots.json")),
+                    &log,
+                )
             .expect("the creation data");
         let tables = world.creation();
         let inventory = tables.inventory(0, 1);

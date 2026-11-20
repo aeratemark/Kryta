@@ -10,7 +10,7 @@
 //! describe it, its kind must be one that is worn, and the content must name an equipped bag.
 
 use crate::characters::HeldItem;
-use crate::creation::Bag;
+use crate::creation::{Bag, WornSlot};
 use crate::data_stores::ItemDefinition;
 
 /// Why an item cannot be worn.
@@ -35,12 +35,15 @@ pub enum NotWorn {
 /// The slot an item of this character would be worn in: the equipped bag and the slot its kind
 /// occupies in it.
 ///
-/// `held` is the character's own rows and `templates` the world's item table; the equipped bag is the
-/// caller's, because which bag that is comes from the content, not from the item.
+/// `held` is the character's own rows and `templates` the world's item table; the equipped bag and the
+/// worn-slot table are the caller's, because which bag a character wears things in and which slot a
+/// kind occupies both come from the content, not from the item (`data/inventory.json`,
+/// `data/equipped-slots.json`).
 pub fn equip_place(
     held: &[HeldItem],
     templates: &[ItemDefinition],
     equipped_bag: Option<&Bag>,
+    worn: &[WornSlot],
     item_id: u32,
 ) -> Result<(u16, u8), NotWorn> {
     let Some(row) = held.iter().find(|row| row.item_id == item_id) else {
@@ -58,7 +61,7 @@ pub fn equip_place(
     let Some(template) = template else {
         return Err(NotWorn::NoTemplate);
     };
-    let Some(slot) = crate::creation::equipped_slot(template.item_type) else {
+    let Some(slot) = crate::creation::worn_slot(worn, template.item_type) else {
         return Err(NotWorn::KindNotWorn {
             item_type: template.item_type,
         });
@@ -114,6 +117,14 @@ mod tests {
         }
     }
 
+    fn worn() -> [WornSlot; 1] {
+        [WornSlot {
+            slot: 3,
+            name: "boots".to_string(),
+            kinds: vec![4],
+        }]
+    }
+
     fn bag() -> Bag {
         Bag {
             id: 7,
@@ -129,7 +140,7 @@ mod tests {
     fn an_item_the_character_does_not_hold_is_not_worn() {
         let rows = [held(1, 10, 100)];
         assert_eq!(
-            equip_place(&rows, &[template(10, 100, 4)], Some(&bag()), 2),
+            equip_place(&rows, &[template(10, 100, 4)], Some(&bag()), &worn(), 2),
             Err(NotWorn::NotTheCharacters)
         );
     }
@@ -139,13 +150,13 @@ mod tests {
         let rows = [held(1, 10, 100), held(2, 0, 200)];
         let templates = [template(10, 100, 4), template(11, 200, 4)];
         assert_eq!(
-            equip_place(&rows, &templates, Some(&bag()), 1),
-            Ok((7, crate::creation::equipped_slot(4).expect("a worn kind"))),
+            equip_place(&rows, &templates, Some(&bag()), &worn(), 1),
+            Ok((7, crate::creation::worn_slot(&worn(), 4).expect("a worn kind"))),
             "the template its row id names"
         );
         assert_eq!(
-            equip_place(&rows, &templates, Some(&bag()), 2),
-            Ok((7, crate::creation::equipped_slot(4).expect("a worn kind"))),
+            equip_place(&rows, &templates, Some(&bag()), &worn(), 2),
+            Ok((7, crate::creation::worn_slot(&worn(), 4).expect("a worn kind"))),
             "and the one its file id names, for a row written from a file alone"
         );
     }
@@ -154,7 +165,7 @@ mod tests {
     fn a_kind_that_is_not_worn_says_which_kind_it_is() {
         let rows = [held(1, 10, 100)];
         assert_eq!(
-            equip_place(&rows, &[template(10, 100, 200)], Some(&bag()), 1),
+            equip_place(&rows, &[template(10, 100, 200)], Some(&bag()), &worn(), 1),
             Err(NotWorn::KindNotWorn { item_type: 200 })
         );
     }
@@ -163,7 +174,7 @@ mod tests {
     fn no_equipped_bag_means_nowhere_to_wear_it() {
         let rows = [held(1, 10, 100)];
         assert_eq!(
-            equip_place(&rows, &[template(10, 100, 4)], None, 1),
+            equip_place(&rows, &[template(10, 100, 4)], None, &worn(), 1),
             Err(NotWorn::NoEquippedBag)
         );
     }
@@ -172,7 +183,7 @@ mod tests {
     fn no_template_at_all_is_its_own_refusal() {
         let rows = [held(1, 10, 100)];
         assert_eq!(
-            equip_place(&rows, &[], Some(&bag()), 1),
+            equip_place(&rows, &[], Some(&bag()), &worn(), 1),
             Err(NotWorn::NoTemplate)
         );
     }

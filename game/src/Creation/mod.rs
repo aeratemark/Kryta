@@ -30,6 +30,30 @@ pub struct Bag {
     pub assoc_item: u32,
 }
 
+/// One position of the client's equipped bag, and the kinds of item worn in it.
+///
+/// Read from `data/equipped-slots.json`: the index is the client's own (its nine-dword equipped
+/// array, its item placement inside the equipped bag, its agent's worn list), and a kind no row names
+/// is not worn at all. The order is the client's vocabulary, which is why it is content and not a
+/// table compiled in here (`docs/port/04-configuration.md`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WornSlot {
+    /// The index in the client's nine-slot equipped array.
+    pub slot: u8,
+    /// The name the file gives the row, for a reader and for a log line.
+    pub name: String,
+    /// The item kinds worn there.
+    pub kinds: Vec<u8>,
+}
+
+/// The slot an item kind is worn in, from the loaded table.
+pub fn worn_slot(worn: &[WornSlot], item_type: u8) -> Option<u8> {
+    worn
+        .iter()
+        .find(|row| row.kinds.contains(&item_type))
+        .map(|row| row.slot)
+}
+
 /// One item, in the field order the client is told about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
@@ -79,7 +103,8 @@ pub struct EquipmentSet {
     pub items: Vec<Item>,
 }
 
-/// The bags and items a creation screen is given, and the sets it may choose from.
+/// The bags and items a creation screen is given, the sets it may choose from, and which slot a worn
+/// item occupies.
 #[derive(Debug, Clone, Default)]
 pub struct Tables {
     bags: Vec<Bag>,
@@ -87,6 +112,20 @@ pub struct Tables {
     /// the ones that hang off the other bags.
     items: Vec<Item>,
     sets: Vec<EquipmentSet>,
+    /// The client's equipped slots, by item kind (`data/equipped-slots.json`).
+    worn: Vec<WornSlot>,
+}
+
+impl Tables {
+    /// The equipped slots this world read, or none when it read no such file.
+    pub fn worn(&self) -> &[WornSlot] {
+        &self.worn
+    }
+
+    /// The slot an item kind is worn in, or `None` for something not worn.
+    pub fn slot_for(&self, item_type: u8) -> Option<u8> {
+        worn_slot(&self.worn, item_type)
+    }
 }
 
 /// What one creation screen's inventory is: the bags, and every item in them.
@@ -96,40 +135,6 @@ pub struct Inventory {
     pub bags: Vec<Bag>,
     /// Every item, with the id it will be named by.
     pub items: Vec<Item>,
-}
-
-/// `EquippedItemSlot_Weapon` and friends, in the client's order.
-const SLOT_WEAPON: u8 = 0;
-const SLOT_OFF_HAND: u8 = 1;
-const SLOT_BODY: u8 = 2;
-const SLOT_LEGS: u8 = 3;
-const SLOT_HEAD: u8 = 4;
-const SLOT_BOOTS: u8 = 5;
-const SLOT_GLOVES: u8 = 6;
-const SLOT_COSTUME_BODY: u8 = 7;
-const SLOT_COSTUME_HEAD: u8 = 8;
-
-/// The slot an item type is worn in, or `None` for something that is not worn.
-///
-/// Evidence: `ASURA/crates/asura-protocol/src/game/mod.rs`, `equipped_slot`, which is the reference's
-/// `EquippedItemSlot` list. A caller that gets `None` refuses rather than inventing a slot.
-pub fn equipped_slot(item_type: u8) -> Option<u8> {
-    let slot = match item_type {
-        // `ItemType_Leadhand`, `Axe`, `Bow`, `Hammer`, `Wand`, `Staff`, `Sword`, `Daggers`, `Scythe`,
-        // `Spear`.
-        1 | 2 | 5 | 15 | 22 | 26 | 27 | 32 | 35 | 36 => SLOT_WEAPON,
-        // `ItemType_Focus`, `Shield`.
-        12 | 24 => SLOT_OFF_HAND,
-        7 => SLOT_BODY,
-        19 => SLOT_LEGS,
-        16 => SLOT_HEAD,
-        4 => SLOT_BOOTS,
-        13 => SLOT_GLOVES,
-        44 => SLOT_COSTUME_BODY,
-        45 => SLOT_COSTUME_HEAD,
-        _ => return None,
-    };
-    Some(slot)
 }
 
 /// The bag a character wears things in: `BagType_Equipped`.
@@ -143,6 +148,7 @@ impl Tables {
     pub fn load(
         inventory_path: impl AsRef<std::path::Path>,
         equipment_path: impl AsRef<std::path::Path>,
+        worn_path: Option<&std::path::Path>,
         log: &Log,
     ) -> Result<Self, String> {
         let mut tables = Tables::default();
@@ -198,6 +204,34 @@ impl Tables {
                     equipment_path.display()
                 ),
             );
+        }
+
+        // Which slot each kind of item is worn in. The client's own numbering: a kind no row names is
+        // not worn, and an item of one is refused rather than placed somewhere unmeasured.
+        if let Some(worn_path) = worn_path {
+            if worn_path.exists() {
+                let document = Document::read(worn_path).map_err(|error| error.to_string())?;
+                for record in document.records("slots")? {
+                    let mut kinds = Vec::new();
+                    for kind in record.numbers("kinds")?.unwrap_or_default() {
+                        kinds.push(kind as u8);
+                    }
+                    tables.worn.push(WornSlot {
+                        slot: number(&record, "slot")? as u8,
+                        name: record.text("name")?.unwrap_or_default(),
+                        kinds,
+                    });
+                }
+            } else {
+                log.out(
+                    LogLevel::Warn,
+                    "server.worldserver",
+                    format!(
+                        "No equipped-slot table at {}: nothing can be worn, and a character is drawn without what it holds.",
+                        worn_path.display()
+                    ),
+                );
+            }
         }
 
         Ok(tables)
@@ -275,7 +309,7 @@ impl Tables {
                 let mut placed = spec.clone();
                 placed.id = next_id;
                 placed.bag_id = equipped_bag;
-                placed.slot = equipped_slot(spec.item_type);
+                placed.slot = self.slot_for(spec.item_type);
                 items.push(placed);
                 next_id += 1;
             }
@@ -643,8 +677,13 @@ mod tests {
 
     fn tables() -> Tables {
         let log = Log::new();
-        Tables::load("../data/inventory.json", "../data/equipment.json", &log)
-            .expect("the creation data reads")
+        Tables::load(
+            "../data/inventory.json",
+            "../data/equipment.json",
+            Some(std::path::Path::new("../data/equipped-slots.json")),
+            &log,
+        )
+        .expect("the creation data reads")
     }
 
     #[test]
@@ -728,7 +767,9 @@ mod tests {
         let equipped = inventory.equipped_items();
         assert!(!equipped.is_empty(), "a Warrior is given something to wear");
         assert!(
-            equipped.iter().all(|item| equipped_slot(item.item_type).is_some()),
+            equipped
+                .iter()
+                .all(|item| tables.slot_for(item.item_type).is_some()),
             "every equipped item is worn somewhere"
         );
         // Every id in the screen's inventory is its own: a client keys its items by them.

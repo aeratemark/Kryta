@@ -162,6 +162,7 @@ impl WorldSession {
             &held,
             self.item_templates(),
             self.equipped_bag().as_ref(),
+            self.worn(),
             item_id,
         );
         let (bag_id, slot) = match place {

@@ -688,7 +688,7 @@ impl Manage {
         let inventory = self.inventory_file.as_deref()?;
         let equipment = self.equipment_file.as_deref()?;
         let log = Log::new();
-        game::creation::Tables::load(inventory, equipment, &log)
+        game::creation::Tables::load(inventory, equipment, None, &log)
             .ok()
             .map(|tables| tables.sets().to_vec())
     }

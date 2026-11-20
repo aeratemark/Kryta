@@ -534,6 +534,7 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         let tables = game::creation::Tables::load(
             "../data/inventory.json",
             "../data/equipment.json",
+            Some(std::path::Path::new("../data/equipped-slots.json")),
             &Log::new(),
         )
         .expect("the creation data");
@@ -726,6 +727,7 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         let tables = game::creation::Tables::load(
             "../data/inventory.json",
             "../data/equipment.json",
+            Some(std::path::Path::new("../data/equipped-slots.json")),
             &Log::new(),
         )
         .expect("the creation data");
@@ -820,16 +822,17 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             })
         };
         let equipped_bag = game::creation::equipped_bag(&tables).expect("the equipped bag");
+        let worn_table = tables.worn();
         let wearable = held.iter().find_map(|row| {
             let template = template_of(row.item_id)?;
-            let slot = game::creation::equipped_slot(template.item_type)?;
+            let slot = game::creation::worn_slot(worn_table, template.item_type)?;
             if row.bag_id == equipped_bag.id && row.slot == slot {
                 return None;
             }
             Some((row.item_id, template.item_type))
         });
         if let Some((item_id, item_type)) = wearable {
-            let worn_slot = game::creation::equipped_slot(item_type).expect("the kind is worn");
+            let worn_slot = game::creation::worn_slot(worn_table, item_type).expect("the kind is worn");
             // Whatever is worn there now is taken off first, and the client is told that placement
             // before the item's own: the eviction comes first, exactly as ASURA sends it.
             let occupant = held
