@@ -99,6 +99,15 @@
     "doc": "How long the status page waits for the world before reporting it unavailable. The world executes the operation on its own update thread, so a timeout is not proof the request was refused."
   },
 
+  "SupervisorStackFile": {
+    "value": "tools/supervisor/stack.json",
+    "doc": "The supervisor's existing stack list. The manager reads only its control_port and asks that running supervisor for status, stop, and restart; it never starts or owns a process. Empty leaves the Services page disconnected."
+  },
+  "SupervisorTimeoutSeconds": {
+    "value": 20,
+    "doc": "How long a Services-page request waits for the supervisor's own answer. A timeout does not prove a lifecycle action did not occur."
+  },
+
   "LogsDir": {
     "value": "",
     "doc": "Where the appender writes. Empty means the working directory."

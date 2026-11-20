@@ -27,11 +27,13 @@ pub struct Account {
     pub token: String,
     /// The EULA version this account accepted, or 0 for none.
     pub eula: i64,
+    /// Whether the account may start a new portal login.
+    pub active: bool,
 }
 
-const SELECT_ALL: &str = "SELECT \"id\"::bigint, \"username\", \"user_id\", \"token\", \"eula\"::bigint FROM \"account\" ORDER BY \"id\"";
+const SELECT_ALL: &str = "SELECT \"id\"::bigint, \"username\", \"user_id\", \"token\", \"eula\"::bigint, \"active\" FROM \"account\" ORDER BY \"id\"";
 
-const SELECT_ONE: &str = "SELECT \"id\"::bigint, \"username\", \"user_id\", \"token\", \"eula\"::bigint FROM \"account\" WHERE \"username\" = $1";
+const SELECT_ONE: &str = "SELECT \"id\"::bigint, \"username\", \"user_id\", \"token\", \"eula\"::bigint, \"active\" FROM \"account\" WHERE \"username\" = $1";
 
 /// An account is created with the identifiers the portal will issue for it, so a fresh account can log
 /// in without a second step.
@@ -41,7 +43,14 @@ const INSERT_ACCOUNT: &str = "INSERT INTO \"account\" (\"username\", \"user_id\"
 // here keeps the pool's parameter types out of the shape of the query.
 const SET_EULA: &str = "UPDATE \"account\" SET \"eula\" = $2::text::int WHERE \"username\" = $1::text RETURNING \"id\"::bigint";
 
-const DELETE_ACCOUNT: &str = "DELETE FROM \"account\" WHERE \"username\" = $1 RETURNING \"id\"::bigint";
+/// Changes the identifiers the portal login checks, while the row keeps its own identity.
+const UPDATE_ACCOUNT: &str = "UPDATE \"account\" SET \"username\" = $2, \"user_id\" = $3, \"token\" = $4 WHERE \"id\" = $1::text::int RETURNING \"id\"::bigint";
+
+/// Keeps the row and its character records while admitting or refusing future portal logins.
+const SET_ACTIVE: &str = "UPDATE \"account\" SET \"active\" = $2::text::boolean WHERE \"id\" = $1::text::int RETURNING \"id\"::bigint";
+
+const DELETE_ACCOUNT: &str =
+    "DELETE FROM \"account\" WHERE \"username\" = $1 RETURNING \"id\"::bigint";
 
 /// The account table, through a worker pool.
 pub struct DatabaseAccounts {
@@ -89,7 +98,42 @@ impl DatabaseAccounts {
     pub fn set_eula(&self, username: &str, version: i64) -> Result<bool, String> {
         let rows = self.query(
             SET_EULA,
-            vec![Param::Text(username.to_string()), Param::Text(version.to_string())],
+            vec![
+                Param::Text(username.to_string()),
+                Param::Text(version.to_string()),
+            ],
+        )?;
+        Ok(!rows.is_empty())
+    }
+
+    /// Change the portal identifiers an operator entered for this account.
+    ///
+    /// The row id is stable even when the login name changes, so editing a name cannot accidentally
+    /// update another account selected by that new name.
+    pub fn update(
+        &self,
+        id: i64,
+        username: &str,
+        user_id: &str,
+        token: &str,
+    ) -> Result<bool, String> {
+        let rows = self.query(
+            UPDATE_ACCOUNT,
+            vec![
+                Param::Text(id.to_string()),
+                Param::Text(username.to_string()),
+                Param::Text(user_id.to_string()),
+                Param::Text(token.to_string()),
+            ],
+        )?;
+        Ok(!rows.is_empty())
+    }
+
+    /// Admit or deactivate an account without deleting the account or its character data.
+    pub fn set_active(&self, id: i64, active: bool) -> Result<bool, String> {
+        let rows = self.query(
+            SET_ACTIVE,
+            vec![Param::Text(id.to_string()), Param::Text(active.to_string())],
         )?;
         Ok(!rows.is_empty())
     }
@@ -163,6 +207,9 @@ fn account_of(row: &postgres::Row) -> Result<Account, String> {
         user_id: read("user_id")?,
         token: read("token")?,
         eula: read_number("eula")?,
+        active: row
+            .try_get("active")
+            .map_err(|error| format!("column active: {error}"))?,
     })
 }
 
@@ -170,7 +217,7 @@ fn account_of(row: &postgres::Row) -> Result<Account, String> {
 mod tests {
     use super::*;
     use common::configuration::{Config, Policy};
-    use database::database::{read_settings, DatabaseKind};
+    use database::database::{DatabaseKind, read_settings};
 
     /// The live login database, when this machine has one.
     fn repository() -> Option<DatabaseAccounts> {
@@ -201,14 +248,50 @@ mod tests {
                 )
                 .expect("created")
         );
-        let row = accounts.find(name).expect("read").expect("the row is there");
+        let row = accounts
+            .find(name)
+            .expect("read")
+            .expect("the row is there");
         assert_eq!(row.username, name);
         assert_eq!(row.eula, 0, "a new account has accepted no EULA");
+        assert!(row.active, "a new account can log in");
+
+        assert!(
+            accounts
+                .update(
+                    row.id,
+                    "manage-renamed@example.com",
+                    "00000000-0000-0000-0000-00000000AAB1",
+                    "00000000-0000-0000-0000-00000000AAB2"
+                )
+                .expect("updated")
+        );
+        let row = accounts
+            .find("manage-renamed@example.com")
+            .expect("read")
+            .expect("the renamed row is there");
+        assert!(accounts.set_active(row.id, false).expect("deactivated"));
+        assert!(
+            !accounts
+                .find("manage-renamed@example.com")
+                .expect("read")
+                .expect("the row remains")
+                .active
+        );
 
         assert!(accounts.set_eula(name, 26).expect("the EULA is set"));
         assert_eq!(accounts.find(name).expect("read").expect("there").eula, 26);
 
-        assert!(accounts.delete(name).expect("removed"));
-        assert!(accounts.find(name).expect("read").is_none());
+        assert!(
+            accounts
+                .delete("manage-renamed@example.com")
+                .expect("removed")
+        );
+        assert!(
+            accounts
+                .find("manage-renamed@example.com")
+                .expect("read")
+                .is_none()
+        );
     }
 }

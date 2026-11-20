@@ -13,6 +13,7 @@
 
 mod pages;
 
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -20,7 +21,7 @@ use std::time::Duration;
 
 use common::configuration::{Config, Policy};
 use common::logging::{Log, LogLevel};
-use database::database::{read_settings, DatabaseKind, DatabaseWorkerPool};
+use database::database::{DatabaseKind, DatabaseWorkerPool, read_settings};
 use shared::network::http::{HttpError, Request, Response, read_request, write_response};
 use shared::network::socket::{Session, SessionFuture, SessionIo};
 use tokio::net::TcpListener;
@@ -68,6 +69,9 @@ pub struct Manage {
     /// The running world's local control endpoint, when `manage.json` names one: the status page asks
     /// it for `world.status`. This is the manager's connection to the world, never a second world.
     control: Option<Control>,
+    /// The running stack's own loopback channel, discovered from its `stack.json`. The manager is a
+    /// client of this channel and never starts or watches a process itself.
+    supervisor: Option<Supervisor>,
     token: Option<String>,
     log: Log,
 }
@@ -82,6 +86,12 @@ pub struct Control {
     timeout: Duration,
 }
 
+/// Where the running supervisor accepts the lifecycle verbs it owns.
+pub struct Supervisor {
+    port: u16,
+    timeout: Duration,
+}
+
 impl Manage {
     /// One page, answered.
     fn answer(&self, request: &Request) -> Response {
@@ -91,9 +101,22 @@ impl Manage {
 
         match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/") => pages::dashboard(self),
+            ("GET", "/services") => pages::services(self, None),
+            ("POST", "/services/stop") => self.service_action(request, "stop"),
+            ("POST", "/services/restart") => self.service_action(request, "restart"),
+            ("GET", "/configuration") => pages::configuration(),
+            ("GET", "/assets") => pages::assets(),
+            ("GET", "/console") => pages::console(self, None),
+            ("POST", "/console/run") => self.run_operation(request),
+            ("GET", "/logs") => pages::logs(),
             ("GET", "/status") => pages::world_status(self),
-            ("GET", "/accounts") => pages::accounts(self),
-            ("GET", "/characters") => pages::characters(self),
+            ("GET", "/accounts") => pages::accounts(
+                self,
+                request
+                    .query("account")
+                    .and_then(|value| value.parse::<i64>().ok()),
+            ),
+            ("GET", "/characters") => pages::characters(self, request.query("account")),
             ("GET", "/worlds") => pages::worlds(self),
             ("GET", "/content") => pages::content(self),
             ("POST", "/content/spawn") => self.add_spawn(request),
@@ -105,6 +128,8 @@ impl Manage {
             ("POST", "/characters/level") => self.set_level(request),
             ("POST", "/accounts/eula") => self.set_eula(request),
             ("POST", "/accounts/create") => self.create(request),
+            ("POST", "/accounts/update") => self.update_account(request),
+            ("POST", "/accounts/active") => self.set_account_active(request),
             ("POST", "/accounts/delete") => self.delete(request),
             ("GET", "/health") => Response::text(200, "ok\n"),
             (_, path) => Response::html(404, pages::missing(path)),
@@ -142,6 +167,16 @@ impl Manage {
     /// so a page can read the world without becoming a second owner of its state
     /// (`docs/port/14-operator-surfaces.md`, "First slice: local manager reads world status").
     pub fn world_status(&self) -> Result<String, String> {
+        self.world_operation("world.status", &BTreeMap::new())
+    }
+
+    /// Call one registered operation through the same endpoint as `kryta-cli`. The world retains
+    /// argument validation, queue ownership and execution; this browser route is only an adapter.
+    pub fn world_operation(
+        &self,
+        operation: &str,
+        arguments: &BTreeMap<String, String>,
+    ) -> Result<String, String> {
         let Some(control) = self.control.as_ref() else {
             return Err(
                 "no world control endpoint is configured: set ControlPort and ControlCredentialFile \
@@ -149,10 +184,16 @@ impl Manage {
                     .into(),
             );
         };
+        let arguments = serde_json::Value::Object(
+            arguments
+                .iter()
+                .map(|(name, value)| (name.clone(), serde_json::Value::String(value.clone())))
+                .collect(),
+        );
         let body = serde_json::json!({
-            "request_id": "manage-status",
-            "operation": "world.status",
-            "arguments": {}
+            "request_id": "manage-console",
+            "operation": operation,
+            "arguments": arguments
         })
         .to_string();
         let request = format!(
@@ -162,8 +203,10 @@ impl Manage {
             body.len()
         );
         let address = SocketAddr::from(([127, 0, 0, 1], control.port));
-        let mut stream = TcpStream::connect_timeout(&address, control.timeout)
-            .map_err(|error| format!("the world control endpoint at {address} is unavailable: {error}"))?;
+        let mut stream =
+            TcpStream::connect_timeout(&address, control.timeout).map_err(|error| {
+                format!("the world control endpoint at {address} is unavailable: {error}")
+            })?;
         stream
             .set_read_timeout(Some(control.timeout))
             .map_err(|error| error.to_string())?;
@@ -194,6 +237,66 @@ impl Manage {
             .to_string())
     }
 
+    /// Ask the running supervisor for the state or one of its documented lifecycle verbs.
+    pub fn supervisor_request(&self, line: &str) -> Result<String, String> {
+        let Some(supervisor) = self.supervisor.as_ref() else {
+            return Err(
+                "no supervisor control channel is configured: set SupervisorStackFile to a stack.json \
+                 with control_port, then start kryta-supervisor"
+                    .into(),
+            );
+        };
+        let address = SocketAddr::from(([127, 0, 0, 1], supervisor.port));
+        let mut stream = TcpStream::connect_timeout(&address, supervisor.timeout)
+            .map_err(|error| format!("the supervisor at {address} is unavailable: {error}"))?;
+        stream
+            .set_read_timeout(Some(supervisor.timeout))
+            .map_err(|error| error.to_string())?;
+        stream
+            .write_all(format!("{}\n", line.trim()).as_bytes())
+            .map_err(|error| format!("the request to the supervisor failed: {error}"))?;
+        let mut answer = String::new();
+        stream
+            .read_to_string(&mut answer)
+            .map_err(|error| format!("the supervisor's answer could not be read: {error}"))?;
+        let answer = answer.trim().to_string();
+        if answer.starts_with("err:") {
+            return Err(answer);
+        }
+        Ok(answer)
+    }
+
+    fn service_action(&self, request: &Request, action: &str) -> Response {
+        let form = form_fields(&request.body_text());
+        let Some(name) = form.get("service").filter(|name| service_name(name)) else {
+            return Response::html(
+                400,
+                pages::message(
+                    "A service name contains only letters, digits, dot, dash, or underscore.",
+                ),
+            );
+        };
+        let result = self.supervisor_request(&format!("{action} {name}"));
+        pages::services(self, Some((action, name, result)))
+    }
+
+    fn run_operation(&self, request: &Request) -> Response {
+        let form = form_fields(&request.body_text());
+        let Some(operation) = form
+            .get("operation")
+            .filter(|operation| !operation.trim().is_empty())
+        else {
+            return Response::html(400, pages::message("An operation name is required."));
+        };
+        let arguments =
+            match operation_arguments(form.get("arguments").map(String::as_str).unwrap_or("")) {
+                Ok(arguments) => arguments,
+                Err(error) => return Response::html(400, pages::message(&error)),
+            };
+        let result = self.world_operation(operation, &arguments);
+        pages::console(self, Some((operation, arguments, result)))
+    }
+
     fn set_eula(&self, request: &Request) -> Response {
         let form = form_fields(&request.body_text());
         let Some(username) = form.get("username") else {
@@ -212,7 +315,10 @@ impl Manage {
                 404,
                 pages::message(&format!("No account is called {username}.")),
             ),
-            Err(error) => Response::html(500, pages::message(&format!("The account table said: {error}"))),
+            Err(error) => Response::html(
+                500,
+                pages::message(&format!("The account table said: {error}")),
+            ),
         }
     }
 
@@ -225,12 +331,22 @@ impl Manage {
             .get("user_id")
             .cloned()
             .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| format!("00000000-0000-0000-0000-{:012}", random_u64() % 1_000_000_000_000));
+            .unwrap_or_else(|| {
+                format!(
+                    "00000000-0000-0000-0000-{:012}",
+                    random_u64() % 1_000_000_000_000
+                )
+            });
         let token = form
             .get("token")
             .cloned()
             .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| format!("00000000-0000-0000-0000-{:012}", random_u64() % 1_000_000_000_000));
+            .unwrap_or_else(|| {
+                format!(
+                    "00000000-0000-0000-0000-{:012}",
+                    random_u64() % 1_000_000_000_000
+                )
+            });
         match self.accounts.create(username, &user_id, &token) {
             Ok(true) => {
                 self.say(format!("{username}: created"));
@@ -240,7 +356,64 @@ impl Manage {
                 409,
                 pages::message(&format!("An account is already called {username}.")),
             ),
-            Err(error) => Response::html(500, pages::message(&format!("The account table said: {error}"))),
+            Err(error) => Response::html(
+                500,
+                pages::message(&format!("The account table said: {error}")),
+            ),
+        }
+    }
+
+    /// Update the three values the portal reads for an existing account. The stable row id comes from
+    /// the page, so a renamed login remains the same account.
+    fn update_account(&self, request: &Request) -> Response {
+        let form = form_fields(&request.body_text());
+        let Some(id) = form.get("id").and_then(|value| value.parse::<i64>().ok()) else {
+            return Response::html(400, pages::message("A valid account id is required."));
+        };
+        let Some(username) = form
+            .get("username")
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return Response::html(400, pages::message("An account login name is required."));
+        };
+        let Some(user_id) = form.get("user_id") else {
+            return Response::html(400, pages::message("An account user id is required."));
+        };
+        let Some(token) = form.get("token") else {
+            return Response::html(400, pages::message("An account token is required."));
+        };
+        match self.accounts.update(id, username, user_id, token) {
+            Ok(true) => {
+                self.say(format!("account {id}: updated as {username}"));
+                pages::redirect("/accounts")
+            }
+            Ok(false) => Response::html(404, pages::message(&format!("No account has id {id}."))),
+            Err(error) => Response::html(
+                500,
+                pages::message(&format!("The account table said: {error}")),
+            ),
+        }
+    }
+
+    /// Deactivate or reactivate an account without removing its row or character data. The auth server
+    /// applies the state at its next login lookup; it does not terminate a connection already in play.
+    fn set_account_active(&self, request: &Request) -> Response {
+        let form = form_fields(&request.body_text());
+        let Some(id) = form.get("id").and_then(|value| value.parse::<i64>().ok()) else {
+            return Response::html(400, pages::message("A valid account id is required."));
+        };
+        let active = matches!(form.get("active").map(String::as_str), Some("true"));
+        match self.accounts.set_active(id, active) {
+            Ok(true) => {
+                let state = if active { "activated" } else { "deactivated" };
+                self.say(format!("account {id}: {state}"));
+                pages::redirect("/accounts")
+            }
+            Ok(false) => Response::html(404, pages::message(&format!("No account has id {id}."))),
+            Err(error) => Response::html(
+                500,
+                pages::message(&format!("The account table said: {error}")),
+            ),
         }
     }
 
@@ -251,14 +424,19 @@ impl Manage {
         };
         match self.accounts.delete(username) {
             Ok(true) => {
-                self.say(format!("{username}: removed (its characters are untouched)"));
+                self.say(format!(
+                    "{username}: removed (its characters are untouched)"
+                ));
                 pages::redirect("/accounts")
             }
             Ok(false) => Response::html(
                 404,
                 pages::message(&format!("No account is called {username}.")),
             ),
-            Err(error) => Response::html(500, pages::message(&format!("The account table said: {error}"))),
+            Err(error) => Response::html(
+                500,
+                pages::message(&format!("The account table said: {error}")),
+            ),
         }
     }
 
@@ -278,7 +456,9 @@ impl Manage {
         };
         match characters.remove(&uuid) {
             Ok(true) => {
-                self.say(format!("character {uuid}: removed, with its items and unlocks"));
+                self.say(format!(
+                    "character {uuid}: removed, with its items and unlocks"
+                ));
                 pages::redirect("/characters")
             }
             Ok(false) => Response::html(
@@ -340,6 +520,14 @@ impl Manage {
         self.characters.as_ref().map(|characters| characters.list())
     }
 
+    /// The characters of one account, for the account workspace. A character remains owned by the
+    /// account that created it; this is not a second character inventory kept by the manager.
+    pub fn characters_of_account(&self, account: &str) -> Option<Vec<game::characters::Character>> {
+        self.characters
+            .as_ref()
+            .map(|characters| characters.for_account(account))
+    }
+
     /// What one character holds, read through the repository the load uses.
     pub fn list_items_of(&self, uuid: &str) -> Option<Vec<game::characters::HeldItem>> {
         self.characters
@@ -391,10 +579,7 @@ impl Manage {
     /// Where the two programs' settings files are, when the tool was told: the settings page reads
     /// them from these paths and never writes them.
     pub fn config_paths(&self) -> (Option<&str>, Option<&str>) {
-        (
-            self.world_config.as_deref(),
-            self.auth_config.as_deref(),
-        )
+        (self.world_config.as_deref(), self.auth_config.as_deref())
     }
 
     /// The profession sets the creation record holds, read through the noun's own loader: what a
@@ -418,7 +603,10 @@ impl Manage {
             );
         };
         let form = form_fields(&request.body_text());
-        let Some(map_id) = form.get("map_id").and_then(|value| value.parse::<u32>().ok()) else {
+        let Some(map_id) = form
+            .get("map_id")
+            .and_then(|value| value.parse::<u32>().ok())
+        else {
             return Response::html(400, pages::message("The form names no map."));
         };
         let x = form.get("x").and_then(|value| value.parse::<f32>().ok());
@@ -456,10 +644,16 @@ impl Manage {
             );
         };
         let form = form_fields(&request.body_text());
-        let Some(map_id) = form.get("map_id").and_then(|value| value.parse::<u32>().ok()) else {
+        let Some(map_id) = form
+            .get("map_id")
+            .and_then(|value| value.parse::<u32>().ok())
+        else {
             return Response::html(400, pages::message("The form names no map."));
         };
-        let Some(index) = form.get("index").and_then(|value| value.parse::<i16>().ok()) else {
+        let Some(index) = form
+            .get("index")
+            .and_then(|value| value.parse::<i16>().ok())
+        else {
             return Response::html(400, pages::message("The form names no spawn point."));
         };
         match maps.remove_spawn(map_id, index) {
@@ -488,7 +682,10 @@ impl Manage {
             );
         };
         let form = form_fields(&request.body_text());
-        let Some(map_id) = form.get("map_id").and_then(|value| value.parse::<u32>().ok()) else {
+        let Some(map_id) = form
+            .get("map_id")
+            .and_then(|value| value.parse::<u32>().ok())
+        else {
             return Response::html(400, pages::message("The form names no map."));
         };
         let Some(cap) = form.get("cap").and_then(|value| value.parse::<u32>().ok()) else {
@@ -506,10 +703,9 @@ impl Manage {
                 ));
                 pages::redirect("/content")
             }
-            Ok(false) => Response::html(
-                404,
-                pages::message(&format!("No map is called {map_id}.")),
-            ),
+            Ok(false) => {
+                Response::html(404, pages::message(&format!("No map is called {map_id}.")))
+            }
             Err(error) => Response::html(
                 500,
                 pages::message(&format!("The world database said: {error}")),
@@ -593,7 +789,8 @@ impl ManageSession {
             }
         };
 
-        self.manage.say(format!("{} {}", request.method, request.path));
+        self.manage
+            .say(format!("{} {}", request.method, request.path));
         let response = self.manage.answer(&request);
         let _ = write_response(&mut io, &response).await;
         let _ = io.close().await;
@@ -620,7 +817,8 @@ impl Session for ManageSession {
                 }
             };
 
-            self.manage.say(format!("{} {} ->", request.method, request.path));
+            self.manage
+                .say(format!("{} {} ->", request.method, request.path));
             let response = self.manage.answer(&request);
             let _ = write_response(&mut io, &response).await;
             let _ = io.close().await;
@@ -634,6 +832,60 @@ fn form_fields(body: &str) -> std::collections::HashMap<String, String> {
         .filter_map(|pair| pair.split_once('='))
         .map(|(key, value)| (unescape(key), unescape(value)))
         .collect()
+}
+
+/// A stack service is an identifier, not a free-form supervisor command. Keeping that boundary here
+/// lets the page select only existing protocol verbs and prevents a form value from becoming a second
+/// command language.
+fn service_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+}
+
+/// The console's argument area uses one `name=value` assignment per line, the same named values the
+/// world endpoint accepts. The endpoint still decides whether the names and count are valid for its
+/// registration.
+fn operation_arguments(text: &str) -> Result<BTreeMap<String, String>, String> {
+    let mut arguments = BTreeMap::new();
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let Some((name, value)) = line.split_once('=') else {
+            return Err(format!("An argument must be name=value: {line}"));
+        };
+        let name = name.trim();
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            return Err(format!(
+                "An argument name is letters, digits, or underscore: {name}"
+            ));
+        }
+        if arguments
+            .insert(name.to_string(), value.trim().to_string())
+            .is_some()
+        {
+            return Err(format!("An argument is named twice: {name}"));
+        }
+    }
+    Ok(arguments)
+}
+
+/// Read only the existing supervisor control port from its stack file. The service rows remain owned
+/// by the supervisor and are never parsed into manager state.
+fn supervisor_port(path: &str) -> Result<u16, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("cannot read SupervisorStackFile {path}: {error}"))?;
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| format!("SupervisorStackFile {path} is not JSON: {error}"))?;
+    let port = value
+        .get("control_port")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|port| *port > 0 && *port <= u16::MAX as u64)
+        .ok_or_else(|| format!("SupervisorStackFile {path} has no usable control_port"))?;
+    Ok(port as u16)
 }
 
 /// Decode one URL-encoded field: `+` is a space, and `%XX` is a byte.
@@ -683,6 +935,43 @@ fn getrandom(bytes: &mut [u8]) -> Result<(), ()> {
     shared::cryptography::handshake::random_into(bytes).map_err(|_| ())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn console_arguments_are_named_once_and_left_for_the_world_to_validate() {
+        let arguments =
+            operation_arguments("destination=ascalon\nmode=hard").expect("arguments parse");
+        assert_eq!(arguments.get("destination"), Some(&"ascalon".to_string()));
+        assert_eq!(arguments.get("mode"), Some(&"hard".to_string()));
+        assert!(operation_arguments("destination=ascalon\ndestination=kryta").is_err());
+        assert!(operation_arguments("not an assignment").is_err());
+    }
+
+    #[test]
+    fn a_service_name_cannot_change_the_supervisor_line() {
+        assert!(service_name("world"));
+        assert!(service_name("world-2"));
+        assert!(!service_name("world restart auth"));
+        assert!(!service_name("world\nquit"));
+    }
+
+    #[test]
+    fn only_a_real_control_port_is_read_from_a_stack_file() {
+        let path =
+            std::env::temp_dir().join(format!("kryta-manage-stack-{}.json", std::process::id()));
+        std::fs::write(&path, "{\"control_port\":7612,\"services\":[]}").expect("stack is written");
+        assert_eq!(
+            supervisor_port(&path.to_string_lossy()).expect("port reads"),
+            7612
+        );
+        std::fs::write(&path, "{\"control_port\":0}").expect("stack is rewritten");
+        assert!(supervisor_port(&path.to_string_lossy()).is_err());
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 fn main() -> std::process::ExitCode {
     let mut config_path = std::path::PathBuf::from("tools/manage/manage.json");
     let mut arguments = std::env::args().skip(1);
@@ -723,9 +1012,15 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         format!("kryta-manage reading {}", config_path.display()),
     );
 
-    let (bind, _) = config.value_string("Bind", "127.0.0.1").map_err(|error| error.to_string())?;
-    let (port, _) = config.value::<u16>("Port", 6602).map_err(|error| error.to_string())?;
-    let (token, _) = config.value_string("Token", "").map_err(|error| error.to_string())?;
+    let (bind, _) = config
+        .value_string("Bind", "127.0.0.1")
+        .map_err(|error| error.to_string())?;
+    let (port, _) = config
+        .value::<u16>("Port", 6602)
+        .map_err(|error| error.to_string())?;
+    let (token, _) = config
+        .value_string("Token", "")
+        .map_err(|error| error.to_string())?;
     config.mark_critical("LoginDatabaseInfo");
     let settings = read_settings(&config, DatabaseKind::Login)?;
     let mut pool = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log)?;
@@ -760,12 +1055,17 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
             let settings = read_settings(&config, DatabaseKind::Character)?;
             match DatabaseWorkerPool::open(DatabaseKind::Character, &settings, &log) {
                 Ok(mut pool) => {
-                    pool.ping()
-                        .map_err(|error| format!("the character database does not answer: {error}"))?;
+                    pool.ping().map_err(|error| {
+                        format!("the character database does not answer: {error}")
+                    })?;
                     Some(Arc::new(Mutex::new(pool)))
                 }
                 Err(error) => {
-                    log.out(LogLevel::Warn, "manage", format!("the character database is off: {error}"));
+                    log.out(
+                        LogLevel::Warn,
+                        "manage",
+                        format!("the character database is off: {error}"),
+                    );
                     None
                 }
             }
@@ -790,19 +1090,20 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
                     Some(Arc::new(Mutex::new(pool)))
                 }
                 Err(error) => {
-                    log.out(LogLevel::Warn, "manage", format!("the world database is off: {error}"));
+                    log.out(
+                        LogLevel::Warn,
+                        "manage",
+                        format!("the world database is off: {error}"),
+                    );
                     None
                 }
             }
         }
         _ => None,
     };
-    let maps = world_pool.as_ref().map(|pool| {
-        Arc::new(game::maps::DatabaseMaps::new(
-            Arc::clone(pool),
-            log.clone(),
-        ))
-    });
+    let maps = world_pool
+        .as_ref()
+        .map(|pool| Arc::new(game::maps::DatabaseMaps::new(Arc::clone(pool), log.clone())));
     let items = world_pool.as_ref().map(|pool| {
         Arc::new(game::data_stores::DatabaseItems::new(
             Arc::clone(pool),
@@ -885,7 +1186,9 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         None
     } else {
         let credential = std::fs::read_to_string(&control_credential_file)
-            .map_err(|error| format!("cannot read ControlCredentialFile {control_credential_file}: {error}"))?
+            .map_err(|error| {
+                format!("cannot read ControlCredentialFile {control_credential_file}: {error}")
+            })?
             .trim()
             .to_owned();
         if credential.len() < 32 {
@@ -898,6 +1201,30 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
             credential,
             timeout: Duration::from_secs(control_timeout.max(1)),
         })
+    };
+
+    // The supervisor owns the port and the process list in stack.json. The manager reads only the
+    // existing control_port, so a browser action remains a client request rather than a second
+    // process supervisor.
+    let (supervisor_stack_file, _) = config
+        .value_string("SupervisorStackFile", "tools/supervisor/stack.json")
+        .map_err(|error| error.to_string())?;
+    let (supervisor_timeout, _) = config
+        .value::<u64>("SupervisorTimeoutSeconds", 20)
+        .map_err(|error| error.to_string())?;
+    let supervisor = if supervisor_stack_file.is_empty() {
+        None
+    } else {
+        match supervisor_port(&supervisor_stack_file) {
+            Ok(port) => Some(Supervisor {
+                port,
+                timeout: Duration::from_secs(supervisor_timeout.max(1)),
+            }),
+            Err(error) => {
+                log.out(LogLevel::Warn, "manage", error);
+                None
+            }
+        }
     };
 
     let manage = Arc::new(Manage {
@@ -913,6 +1240,7 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         inventory_file,
         equipment_file,
         control,
+        supervisor,
         token: Some(token),
         log: log.clone(),
     });

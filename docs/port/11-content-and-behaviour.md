@@ -16,11 +16,13 @@ behaviour using existing mechanics should be authorable without rebuilding the s
 requires engine support. Script APIs, event names, packaging, reload semantics and the Lua integration
 remain to be designed.
 
-JSON holds content facts. Lua authors world behaviour and calls Rust operations. Rust owns authoritative
-state and executes those operations. A GM command mapped in JSON to a Rust API function calls that
-function directly; Lua is not a required intermediary. Lua can also call the same operation when the
-runtime and bindings exist. The shared operator API and its open contract are in
-`docs/port/14-operator-surfaces.md`.
+The durable world and player state remains in database rows. JSON is the authoring surface for shared
+content facts and settings; a JSON asset may be validated and imported into the owning noun's rows, but
+it is not a second mutable world store. Lua authors world behaviour and calls Rust operations. Rust owns
+authoritative state and executes those operations. A GM command mapped in JSON to a Rust API function
+calls that function directly; Lua is not a required intermediary. Lua can also call the same operation
+when the runtime and bindings exist. The shared operator API, CLI and manager already use one operation
+registry; their current scope is in `docs/port/14-operator-surfaces.md`.
 
 | Subject | Behaviour authored in content | Mechanics supplied by the server |
 |---|---|---|
@@ -62,9 +64,9 @@ The local WowWarband checkout provides these concrete references:
 ## Chat is the server's command line, and its text now reaches the client
 
 Chat carries player conversation and server commands. Command names and aliases are content:
-`data/commands.json` maps a name to an operation, and the current reader resolves that operation to
-an enum (`game/src/Chat/Commands.rs`). The shared registry and API are planned, not implemented.
-A mapped GM command calls the registered Rust function; Lua is not required for that call
+`data/commands.json` maps a name to an operation, and the current reader resolves that operation through
+the shared registry (`game/src/Chat/Commands.rs`, `game/src/Chat/Operations.rs`). A mapped GM command
+calls the registered Rust function; Lua is not required for that call
 (`docs/decisions/0011-the-command-surface-is-content.md`).
 
 - **The command mapping is content.** Names and arguments are rows; the travel target alias table

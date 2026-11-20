@@ -81,6 +81,9 @@ Both exit codes of the reference's contract (`Main.cpp:434-439`) were observed o
 - **`0` stops the stack.** `kryta-cli ... world.exit` answered "Stopping the world"; the supervisor
   logged `world | exited with exit code: 0; stopping the rest`, stopped `auth` and `manage`, and left no
   process behind. That is the rule this file states: a service that ends on its own stops the rest.
+  The first service that makes that terminal decision supplies the stack's exit code. Remaining children
+  are then stopped as consequences; on Windows their control-event status (for example
+  `0xc000013a`) cannot replace the initiating service's normal `0`.
 
 The clients' own codes were checked too: `kryta-supervisor status` answers 1 when nothing is listening,
 `--help` answers 0, and `kryta-cli` answers 1 with the reason when the world is not there.
@@ -121,10 +124,11 @@ copy tools\manage\manage.json.dist tools\manage\manage.json   # then state the t
 cargo run -p kryta-manage -- -c tools\manage\manage.json       # http://127.0.0.1:6602/
 ```
 
-`tools/manage/` is the third binary: one page over every piece of game data an operator changes. It is
-not a server - no client talks to it, it serves no game protocol, and neither server program knows it
-exists (`docs/decisions/0008-administration-tool.md`). It links the same libraries the servers link and
-reaches the data through the nouns' own repositories, so what a page writes is what a server reads.
+`tools/manage/` is the Configuration Manager: the operator's web front door. It is not a game server -
+no client talks to it, it serves no game protocol, and neither server program knows it exists
+(`docs/decisions/0008-administration-tool.md`). It links the same libraries the servers link and reaches
+existing data through the nouns' own repositories, so what a legacy data page writes is what a server
+reads. Its scope and ordered delivery record are canonical in `14-operator-surfaces.md`.
 
 `tools/supervisor/` is the fourth binary, and it is the one command that runs the stack: it reads
 `tools/supervisor/stack.json` - a service per row, with the program, its arguments and the port it
@@ -170,7 +174,12 @@ rather than starting nothing.
 
 | page | is | state |
 |---|---|---|
-| `/` | what exists, and how much of it | accounts, characters, worlds and content, each with its count and a link |
+| `/` | Configuration Manager overview and the six-destination application shell | done - foundation only; the legacy data summary remains below it |
+| `/services` | the running supervisor's state and its named stop/restart controls | done against the existing loopback channel: `SupervisorStackFile` supplies its `control_port`; the manager cannot start a missing supervisor because it has no start protocol and must not become one |
+| `/configuration` | server-settings workflow | navigation only - roadmap step 5 is pending; no file is edited |
+| `/assets` | generic JSON game-asset workflow | navigation only - roadmap step 6 is pending; no asset is edited |
+| `/console` | browser adapter for the live operation registry | done against the existing world endpoint: lists `world.operations`, submits named `name=value` arguments to `/v1/operations`, and displays the world's result or refusal; it does not dispatch commands itself |
+| `/logs` | monitoring surface for services and their output | navigation only - roadmap step 4 is pending; no log is read |
 | `/accounts` | the rows the login reads: create, remove, and set the EULA version | done |
 | `/characters` | every row of the character table, as the login's list reads it, with how many items each holds and the maps it may travel to (R12), a level edit (1 to 20, R48) and a remove action that deletes the row with its own items and unlocks | done - a character is written by the creation confirm, not here; correcting its level and removing it are the operator's acts (`DatabaseCharacters::set_level`, `remove`, the reference's `DeleteFromDB`) |
 | `/worlds` | the realm list and `data/realms.json` merged over it | done - read only, from the login's own reader |

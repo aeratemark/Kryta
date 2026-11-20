@@ -1,6 +1,6 @@
-# Server API, commands, CLI and configuration manager: plan
+# Server API, commands, CLI and configuration manager
 
-This is a design and research plan, not an implementation authorization. The owner clarified that
+This is the canonical scope, roadmap and delivery record for Kryta's operator surfaces. The owner clarified that
 research projects are studied for their ideas, workflows and limitations: no code from those tools is
 selected for reuse. AzerothCore remains the design authority and ASURA remains the authority for
 client-visible behaviour under Rule 0. Those repository rules are not displaced by this research.
@@ -52,12 +52,70 @@ authentication remain to be designed; the same owners serve other supported call
   the service again. `worldserver` has an embedded interactive console, a standalone `kryta-cli`, and
   the local control endpoint; its two lifecycle rows, `server exit` and `server restart`, ask the world
   to stop and set the exit code the supervisor reads.
-- `tools/manage` is an existing application over the repositories. Its settings page reads and displays
-  configuration; it does not edit settings. Its content pages already offer some database edits.
+- `tools/manage` is an existing application over the repositories. Its Accounts page creates, edits,
+  permanently removes, and activates/deactivates account rows through `game::accounts`; an inactive
+  account cannot start a later login but retains its characters and does not end a current session.
+  Its settings page reads and displays configuration; it does not edit settings. Its content pages
+  already offer some database edits.
 - Lua integration, API bindings and script-defined commands are planned, not implemented. Existing
   command wire behaviour and the live-client status are recorded in `0012` and `09-parity-audit.md`.
 - See `01-structure.md` for current stages and proof. The planned operator features below are not
   claims that those capabilities run today.
+
+### Agreed scope and roadmap
+
+Kryta has four operator surfaces: the operator API, the standalone CLI, the in-game CLI, and the
+Configuration Manager. The first three are functional infrastructure, not a promise of a comprehensive
+administration command catalog. The Configuration Manager is the operator's front door, not a second
+configuration-file editor: it owns navigation and will connect the existing supervisor, operator API,
+configuration reader and asset readers without duplicating any of them.
+
+| surface | actual state at `465df58` | boundary |
+|---|---|---|
+| Operator API | landed: the loopback `/v1/operations` endpoint invokes the shared registry | it is not yet a remote public API or an authorization system |
+| Standalone CLI | landed: `kryta-cli` uses the world endpoint and registry | it does not own world operations |
+| In-game CLI | landed for the existing chat command rows and live-client proof | GM authorization and new client-visible commands are not implemented |
+| Configuration Manager | foundation, supervisor client, and browser API console landed in `tools/manage` | monitoring, configuration edits, generic JSON assets, remote access, and a supervisor start verb remain separate work |
+
+The Configuration Manager delivery order is binding:
+
+1. **Management application foundation:** application structure, launch mechanism, and navigation for Overview, Services, Configuration, Assets, Console, and Logs.
+2. **Supervisor integration:** start, stop, restart, connect to an already-running stack, and report service state and failures through the existing supervisor.
+3. **Integrated console:** use the existing operator API and shared command registry; no parallel command system.
+4. **Monitoring:** show service state, server logs, and errors from their existing owners.
+5. **Server configuration management:** read, edit, validate, and safely persist server settings through the programs' existing configuration rules; distinguish saved from effective values and restart requirements.
+6. **JSON asset management:** generically browse, edit, validate, and persist existing JSON game assets; specialized editors are out of scope.
+7. **Integration and acceptance testing:** prove the complete operator workflow with the server both running and offline where a feature does not require a running service.
+
+`tools/manage` is the existing Rust, server-rendered web application; no UI framework is selected or
+introduced. Its
+pre-existing account, character, world, content, settings, schema, and world-status routes remain
+available as legacy routes, but they are not evidence that steps 2 through 6 are complete.
+
+The foundation has an offline, responsive operator shell: grouped Workspace, Players and Server Data
+navigation; an explicit active work area; compact panels, metrics, directory lists and focused editors;
+and a small-screen layout. Accounts is the reference workflow: a compact account directory selects one
+account, whose inspector owns its login identity, activation, EULA state, deletion and link to that
+account's filtered character records. The other destinations retain their stated scope rather than
+pretending unfinished editors exist. It carries no JavaScript or external assets; future work extends
+this shell rather than replacing the manager with a second application.
+
+The Services page now reads the existing `control_port` from `SupervisorStackFile` and calls only the
+running supervisor's documented `status`, `stop <service>`, and `restart <service>` verbs. It cannot
+start a stack because the current supervisor exposes no start verb once it is absent; asking the manager
+to spawn one would make it a second process owner. The Console page asks the live world for
+`world.operations`, then sends the selected operation and named `name=value` arguments to the existing
+`/v1/operations` endpoint. The world remains responsible for validation, queueing, execution, and its
+answer. Both pages report an unavailable owner rather than simulating success.
+
+**Validation and blocker.** `cargo test -p kryta-manage` passes the navigation, service-name,
+supervisor-port, and console-argument tests; `cargo check -p kryta-manage` passes. A direct launch with
+the checked-in local `manage.json` reached the login, character, and world databases, then stopped before
+binding because the current execution identity cannot read `worldserver/control.credential` (`Access is
+denied`, OS error 5). This is an environment access blocker for a live browser check, not proof that a
+pending feature works; no server process was started or changed. A run under the operator identity that
+owns the credential must fetch Services and Console against a running stack before this slice is accepted
+as a live workflow.
 
 ## 3. The API contract to design
 
@@ -539,21 +597,24 @@ blocking the API and settings manager on playback or a map renderer.
    control endpoint produced "asked to restart (exit 2), request 1 of 5", a new world process, the
    stack still up with one world in it, and the restarted world answering again; `quit` stopped
    everything and left no process behind.
-4. **Configuration manager.** Specify and implement supported settings, validation, safe saving,
-   effective versus saved state, and restart/reload indications. Proof: a valid change survives restart,
-   an invalid or conflicting edit is refused, unknown data is preserved or save is refused, and secrets
-   are not exposed. Treat database content editing as its own subject.
-5. **GM access and Lua.** Define access control before restricted operations are exposed in chat or
-   remotely. Design Lua bindings and script-defined commands separately, calling the same operations.
-   Proof includes authorization failures and preserved ASURA client behaviour.
-6. **Research and content workflows.** Plan capture, test runs, recordings and map/content editing
-   against `12-research-and-control-panel.md`. A reader, a recording comparison and a replay that
-   sends inputs are different features; define the selected one and its evidence before implementation.
-   **The capture half has landed**: `worldserver`'s `CaptureFile` records the wire in both directions
-   (`game/Server/Capture.rs`), `tools/capture/read.py` reads a capture in the layer it declares, and
-   `tools/capture/diff.py` compares two captures message by message, refusing a pair whose layers
-   differ. Reading and comparison are therefore done; a replay that sends inputs remains open
-   (section 7, fork 4).
+4. **Configuration Manager foundation.** **Landed.** `tools/manage` supplies the stable six-destination
+   navigation and responsive shared shell. Overview is the front door; the existing data-management
+   routes are retained outside that navigation and do not change the roadmap's state.
+5. **Supervisor integration and integrated console.** **Implemented against current owners.** Services
+   reads the supervisor's own `control_port` from `stack.json`, shows its status, and sends its existing
+   named stop/restart verbs. Console asks the running world for its registrations and calls those same
+   registrations through `/v1/operations`, with the world retaining all validation and execution. A
+   missing supervisor cannot be started from the manager because no existing supervisor start protocol
+   exists; that remains a protocol/design addition, not a manager substitute.
+6. **Monitoring, configuration, assets, and acceptance.** Remain ordered exactly as `Agreed scope and
+   roadmap` states above. Each step needs its own proof and must reuse its owner: existing appenders for
+   logs, configuration reader for settings, and asset readers/validators for JSON.
+7. **GM access and Lua; research workflows.** GM authorization, Lua runtime and bindings, script-defined
+   commands, and capture replay remain incomplete. **The capture half has landed**: `worldserver`'s
+   `CaptureFile` records the wire in both directions (`game/Server/Capture.rs`),
+   `tools/capture/read.py` reads a capture in the layer it declares, and `tools/capture/diff.py`
+   compares two captures message by message, refusing a pair whose layers differ. Reading and
+   comparison are therefore done; replay that sends inputs remains open (section 7, fork 4).
 
 ## 10. Remaining design work
 
@@ -566,10 +627,10 @@ blocking the API and settings manager on playback or a map renderer.
   standalone `kryta-cli` with `help`/`list`/`<operation> [--arg name=value]`, the supervisor's control
   channel, and the exit-code contract. Still open: in-game chat invoking an operation by that path, and
   target selection for operations on players, maps, districts and instances.
-- Manager hosting within the server stack, remote access design and initial delivery order, settings
-  and content editing workflow. Web delivery and remote browser access are required; use of the existing
-  portal remains an open architectural question. The configuration manager (delivery item 4) is the next
-  item in that order.
+- Configuration Manager monitoring is next: service failures and the existing service logs need a
+  read-only view. Server-settings editing, generic JSON asset management, and their acceptance workflow
+  follow. Remote browser hosting and access remain a separate design question; the existing portal is
+  still only a possible host.
 - Lua runtime and bindings, script-defined commands and the form of interactive execution; Lua support
   is required and `11` owns its plan.
 - Profile storage and selection, map visualization, recording comparison and replay scope; `11` and

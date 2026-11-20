@@ -12,6 +12,11 @@ through its own `ControlPort`, `ControlCredentialFile` and `ControlTimeoutSecond
 created on this machine with `cargo run -p worldserver --bin kryta-cli -- init-credential <file>`, which
 also restricts it to the service user. Neither program logs the credential.
 
+`tools/manage` reads `SupervisorStackFile` (default `tools/supervisor/stack.json`) and
+`SupervisorTimeoutSeconds` (default `20`). The former is the supervisor's existing configuration file:
+the manager reads only its `control_port`, then asks the running supervisor for `status`, `stop <service>`
+or `restart <service>`. It does not copy service rows, start a missing supervisor, or own a process.
+
 `worldserver` reads `CaptureFile` (default empty, which is off): where to record the wire, every game
 message both directions as plaintext JSONL with two-byte headers (`game/Server/Capture.rs`). It is a
 setting rather than a command-line flag because a diagnostic run should be able to name its file in the
@@ -102,7 +107,7 @@ Configuration, and nothing else:
 | `authserver/authserver.json` | the auth program's own configuration | `authserver`, `-c` |
 | `worldserver/worldserver.json` | the game program's own configuration | `worldserver`, `-c` |
 | `data/realms.json` | the worlds a login may send a player to, merged over the `realmlist` table | `authserver`, `WorldsFile` |
-| `tools/manage/manage.json` | the administration tool's own configuration: bind, port, token, the two database strings | `kryta-manage`, `-c` |
+| `tools/manage/manage.json` | the Configuration Manager's own configuration: bind, port, token, database strings, world-control credential location, and supervisor stack-file location | `kryta-manage`, `-c` |
 
 The `.dist` files are committed; the live ones are not, because they hold a database password. Copy
 one, edit it, keep it.
@@ -183,6 +188,13 @@ Two consequences:
 - **A row is never a file, and a setting is never a row.** An account is not a setting; a loot table is not
   a row. When the two are confused, an operator shares a file that should have been one person's data, or
   edits a row that should have been a setting.
+- **A JSON asset is an authoring input, not a second mutable world store.** It may define shared content
+  for validation and import into the noun's rows, or it may be the file a setting names. Its exact reader,
+  validation and import path belong to the feature that owns it. Player progress and other authoritative
+  mutable state remain rows.
+- **Lua is neither a store nor a setting.** When the runtime and bindings land, Lua authors behaviour by
+  calling validated Rust operations. It does not own authoritative state, packet construction, or a
+  replacement persistence format.
 
 Nothing else in the tree is a setting: what the client dictates is a constant in the code that answers
 with it, and what a player does is a row.

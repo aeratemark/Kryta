@@ -195,6 +195,13 @@ and the policy that turns exit code `2` into a fresh process - so a console can 
 the stack keeps one world in it, not two. `console_service` in `stack.json` gives the terminal to one
 service and `Stdio::null()` to the rest, so two programs cannot read one terminal.
 
+The Configuration Manager's application foundation has landed in `tools/manage`: the existing Rust web
+application has stable navigation for Overview, Services, Configuration, Assets, Console and Logs.
+Services is a client of the running supervisor's existing status/stop/restart channel, and Console is a
+client of the world's existing operation API and registry. Configuration, Assets, and Logs remain
+non-operational destinations until their ordered implementation steps land; the authoritative roadmap,
+actual status and next step are `docs/port/14-operator-surfaces.md`, "Agreed scope and roadmap".
+
 `cargo test -p worldserver`, `-p game` and `-p kryta-supervisor` cover the queue, the console, every
 control answer and refusal, the registry, the rows' binding and the channel's verbs;
 `docs/port/05-tooling.md` records the live proofs. The chat line is on the same registry as every other
@@ -210,3 +217,7 @@ The current implementation and its evidence are in the status table above. The o
 client-facing work and its port order are in `docs/port/09-parity-audit.md`; the world subjects
 and their dependencies are in `docs/port/06-world-plan.md`. The `Gw.dat` reader and pathfinder
 are present in `game/Pack/` and `game/Terrain/`, as recorded in the status table.
+
+`docs/port/15-feature-checklist.md` compares every proved ASURA_testfork checklist feature with the
+current Kryta tree. It is an evidence-backed comparison, not a port backlog or a replacement for the
+owning evidence.

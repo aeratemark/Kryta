@@ -17,8 +17,45 @@ contradicted, what is suspect, and what the sources do not answer.
 That file is authoritative for *what the game does*. It is not a port order and not an architecture: this
 file maps each subject to the noun that owns it and the order the chain forces.
 
-Eden and Rurik are **sister projects**, not sources here: where the ledger cites one of them as the
-witness for an evidenced fact, the citation stays; nothing else is read from them.
+ASURA remains the mandatory counterpart for client-facing code under Rule 0. The other local projects
+are nevertheless valid packet-contract evidence: `docs/port/17-research-code-feature-inventory.md`
+records the code-derived feature paths found in their code. Their architecture, language and adapter do not
+cross into Kryta; their proven packets, ordering and client completion conditions can identify what a
+feature contract still needs. A source other than ASURA never authorizes an invented response: compare
+the counterpart or a capture and stop for the owner where Rule 0 requires it.
+
+## Feature delivery model
+
+Kryta is the compatible server foundation, not a copy of any research project's architecture. Every
+new feature is delivered in this order:
+
+1. **Establish the complete compatibility contract.** Start with the research feature and Kryta's
+   current boundary in `docs/port/17-research-code-feature-inventory.md` and
+   `docs/port/18-kryta-code-feature-inventory.md`. Record the client trigger, every packet and its
+   order, required state change and accepted client result. Before client-facing implementation, open
+   ASURA's counterpart and use the parity audit. Captures test that client-visible behavior, but do not
+   replace a missing ASURA counterpart; stop for the owner where Rule 0 requires it.
+2. **Give the feature a Kryta-owned state and content model.** Accounts, characters, progress,
+   inventory and other authoritative mutable world state are database rows owned by their nouns.
+   Shared editable definitions may be authored as validated JSON assets and imported into those rows,
+   or may be JSON settings when they are operator choices rather than world state. The classification
+   test is `docs/port/04-configuration.md`; no feature inherits a research project's storage layout.
+3. **Add behaviour only above working mechanics.** Rust owns validation, authoritative state and
+   packet construction. Lua, once its runtime and bindings exist, may author quest logic, events, NPC
+   behaviour and other rules through supported Rust operations. Lua cannot make an unfinished mechanic
+   or packet contract complete.
+4. **Expose supported control through the existing operator surfaces.** The manager, API, standalone
+   CLI and in-game command surface call the shared registry; they do not gain a parallel execution
+   path. A feature becomes editable or operable only through its own validated repository, asset
+   reader or operation.
+5. **Prove the full workflow.** Run the relevant server checks and verify the client-visible result
+   with a real client. A handler, a packet table entry, an editor page, or a successful build alone is
+   not feature completion.
+
+This is the route for externally creating accounts and characters, defining titles, loot, skills,
+quests and other content. It intentionally does not decide a feature's schema, JSON shape, Lua API or
+operator command until that feature's contract and owning noun are selected.
+
 ## The nouns, and which part of the ledger describes each
 
 | system | ledger rows that describe it (`docs/game-rules.md`) | noun | reference counterpart |

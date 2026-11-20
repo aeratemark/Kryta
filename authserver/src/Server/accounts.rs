@@ -19,7 +19,8 @@ use database::database::{DatabaseWorkerPool, Param};
 use game::portal::{Account, Accounts};
 
 /// The statement. The login name arrives as a parameter, never in the text: it came off a socket.
-const SELECT_ACCOUNT: &str = "SELECT \"user_id\", \"token\" FROM \"account\" WHERE \"username\" = $1";
+const SELECT_ACCOUNT: &str =
+    "SELECT \"user_id\", \"token\" FROM \"account\" WHERE \"username\" = $1 AND \"active\"";
 
 /// How many accounts the table holds, for the startup line.
 const COUNT_ACCOUNTS: &str = "SELECT COUNT(*) FROM \"account\"";
@@ -62,10 +63,7 @@ impl Accounts for DatabaseAccounts {
         // one, because it is inside the socket layer's runtime (see `DatabaseWorkerPool::query_reply`).
         // The lock covers the hand-over only; the wait below holds nothing.
         let reply = match self.pool.lock() {
-            Ok(pool) => pool.query_reply(
-                SELECT_ACCOUNT,
-                vec![Param::Text(login_name.to_string())],
-            ),
+            Ok(pool) => pool.query_reply(SELECT_ACCOUNT, vec![Param::Text(login_name.to_string())]),
             Err(_) => {
                 self.log.out(
                     LogLevel::Error,
@@ -108,13 +106,14 @@ impl Accounts for DatabaseAccounts {
 mod tests {
     use super::*;
     use common::configuration::Config;
-    use database::database::{read_settings, DatabaseKind};
+    use database::database::{DatabaseKind, read_settings};
 
     /// The live table, if this machine has one: the same `#[ignore]`d pattern the database crate
     /// uses, because a pool needs a server and a served client does not need this test.
     fn pool() -> Option<(Arc<Mutex<DatabaseWorkerPool>>, Log)> {
         let log = Log::new();
-        let config = Config::load_json("../authserver/authserver.json", false, Default::default()).ok()?;
+        let config =
+            Config::load_json("../authserver/authserver.json", false, Default::default()).ok()?;
         let settings = read_settings(&config, DatabaseKind::Login).ok()?;
         let pool = DatabaseWorkerPool::open(DatabaseKind::Login, &settings, &log).ok()?;
         Some((Arc::new(Mutex::new(pool)), log))
@@ -126,6 +125,13 @@ mod tests {
         // it out: the statement has a placeholder and no other way in.
         assert!(SELECT_ACCOUNT.contains("$1"));
         assert!(!SELECT_ACCOUNT.contains("{}"));
+    }
+
+    #[test]
+    fn an_inactive_account_uses_the_existing_unknown_login_path() {
+        // The resolver only yields a row to the portal when it is active. A missing result already
+        // follows the reference's unknown-login refusal path, so deactivation adds no wire response.
+        assert!(SELECT_ACCOUNT.contains("AND \"active\""));
     }
 
     #[test]

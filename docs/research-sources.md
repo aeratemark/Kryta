@@ -24,6 +24,37 @@ This division does not make ASURA proof of complete live-game parity. A working 
 a recording and an observation from a real client are distinct evidence. Kryta's current status is
 recorded in `docs/port/01-structure.md`, and client-visible work is judged with a real client.
 
+## Packet-sequence completeness criterion
+
+Every client-visible function is a packet contract. It starts with a client request or event, continues
+through every required server packet in order, changes the necessary state, and ends when the client
+accepts the result. A function is complete only when Kryta fulfils that entire contract. Packet count,
+program structure, language, transport adapter, process layout, and the project that supplied the
+evidence are irrelevant to that question.
+
+Any research project can supply packet evidence. Its adapter, client build, and implementation model
+are provenance to record, not a reason to dismiss the evidence. Where a source's packet numbering or
+shape differs, map it to Kryta's active protocol using the source's fields, packet order, and a current
+capture; do not discard the function because it came through a different vessel.
+
+For every candidate function, make one contract record containing:
+
+1. The client trigger or event.
+2. Every client-to-server and server-to-client packet, with the fields that matter and their required
+   order.
+3. The state change and the client-visible completion condition.
+4. Kryta's corresponding handlers, builders, and ordered sequence, with a verdict: complete, partial,
+   or absent.
+5. The evidence source and its provenance, including build or adapter where known.
+
+A declared table row, a no-op handler, or a feature-list bullet is not a contract record. Conversely,
+a complete sequence remains relevant even when its source used a different adapter or server design.
+For client-facing implementation, Rule 0 still requires opening ASURA's counterpart first. If ASURA
+has no counterpart, retain the packet record, obtain or compare a capture, and ask the owner rather
+than inventing a Kryta response. `docs/port/17-research-code-feature-inventory.md` is the canonical
+code-derived feature inventory; `docs/port/16-packet-completeness-research.md` records the source
+survey and the contract-comparison method.
+
 ## Copies and origins
 
 The source copies live under `research/`, which is ignored by Kryta's Git repository. They are

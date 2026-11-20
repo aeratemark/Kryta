@@ -581,6 +581,10 @@ fn main() -> std::process::ExitCode {
                         );
                         all_up = false;
                         exit_code = 2;
+                        // This is the stack's terminal decision. Do not inspect another child in
+                        // this pass: it may already be reacting to the same console event, and its
+                        // Windows termination status is not the reason the stack is stopping.
+                        break;
                     } else {
                         report(
                             &service.name,
@@ -592,6 +596,9 @@ fn main() -> std::process::ExitCode {
                     report(&service.name, &format!("exited with {status}; stopping the rest"));
                     all_up = false;
                     exit_code = code as u8;
+                    // Keep the initiating service's result. The remaining children are stopped below;
+                    // their termination codes are consequences, not a new stack outcome.
+                    break;
                 }
             }
         }
