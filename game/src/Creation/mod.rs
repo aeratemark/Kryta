@@ -166,7 +166,7 @@ impl Tables {
         inventory_path: impl AsRef<std::path::Path>,
         equipment_path: impl AsRef<std::path::Path>,
         worn_path: Option<&std::path::Path>,
-        log: &Log,
+        _log: &Log,
     ) -> Result<Self, String> {
         let mut tables = Tables::default();
 
@@ -186,14 +186,10 @@ impl Tables {
                 tables.items.push(item(&record, None, None)?);
             }
         } else {
-            log.out(
-                LogLevel::Warn,
-                "server.worldserver",
-                format!(
-                    "No creation inventory at {}: a creation screen will be sent no items.",
-                    inventory_path.display()
-                ),
-            );
+            return Err(format!(
+                "no creation inventory at {}: a creation screen with no items cannot be drawn, and a missing file is an error",
+                inventory_path.display()
+            ));
         }
 
         let equipment_path = equipment_path.as_ref();
@@ -213,19 +209,21 @@ impl Tables {
                 });
             }
         } else {
-            log.out(
-                LogLevel::Warn,
-                "server.worldserver",
-                format!(
-                    "No equipment table at {}: a creation screen will show no clothing.",
-                    equipment_path.display()
-                ),
-            );
+            return Err(format!(
+                "no equipment table at {}: a creation screen with no clothing cannot be drawn, and a missing file is an error",
+                equipment_path.display()
+            ));
         }
 
         // Which slot each kind of item is worn in. The client's own numbering: a kind no row names is
         // not worn, and an item of one is refused rather than placed somewhere unmeasured.
-        if let Some(worn_path) = worn_path {
+        let Some(worn_path) = worn_path else {
+            return Err(
+                "no equipped-slot table was named: a world that reads no worn slots can wear nothing"
+                    .to_string(),
+            );
+        };
+        {
             if worn_path.exists() {
                 let document = Document::read(worn_path).map_err(|error| error.to_string())?;
                 for record in document.records("slots")? {
@@ -241,14 +239,10 @@ impl Tables {
                     });
                 }
             } else {
-                log.out(
-                    LogLevel::Warn,
-                    "server.worldserver",
-                    format!(
-                        "No equipped-slot table at {}: nothing can be worn, and a character is drawn without what it holds.",
-                        worn_path.display()
-                    ),
-                );
+                return Err(format!(
+                    "no equipped-slot table at {}: nothing can be worn, and a missing file is an error",
+                    worn_path.display()
+                ));
             }
         }
 
@@ -693,6 +687,53 @@ fn item(
 mod tests {
     use super::*;
 
+    /// A missing file is an error, not a warning: ASURA D34 states the rule and its teeth - "a
+    /// missing or malformed file is an error, and the socket layer refuses to start without it".
+    #[test]
+    fn a_missing_creation_file_is_refused() {
+        let log = Log::new();
+        let error = Tables::load(
+            "../config/World/Vanilla/creation/does-not-exist.json",
+            "../config/World/Vanilla/creation/equipment.json",
+            Some(std::path::Path::new("../config/World/Vanilla/creation/worn_slots.json")),
+            &log,
+        )
+        .expect_err("a world with no creation inventory does not start");
+        assert!(error.contains("does-not-exist"), "{error}");
+    }
+
+    /// The configuration doc is an inventory, so a file that is not in it is a file nobody
+    /// classified. `docs/port/04-configuration.md` states the three kinds and where each lives.
+    #[test]
+    fn every_config_file_is_classified_in_the_configuration_doc() {
+        let doc = std::fs::read_to_string("../docs/port/04-configuration.md")
+            .expect("the configuration doc reads");
+        let mut unclassified = Vec::new();
+        let mut stack = vec![std::path::PathBuf::from("../config")];
+        while let Some(folder) = stack.pop() {
+            for entry in std::fs::read_dir(&folder).expect("the config tree lists") {
+                let path = entry.expect("a config entry").path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().and_then(|kind| kind.to_str()) == Some("json") {
+                    // One path separator, so a doc that names the file once names it on either
+                    // platform, and a tree the doc classifies as a unit - the map pack - counts as
+                    // classification for the files inside it.
+                    let name = path.to_string_lossy().replace('\\', "/").replace("../", "");
+                    let classified = doc.contains(&name)
+                        || (name.starts_with("config/World/Vanilla/maps/")
+                            && doc.contains("config/World/Vanilla/maps/"));
+                    if !classified {
+                        unclassified.push(name);
+                    }
+                }
+            }
+        }
+        assert!(
+            unclassified.is_empty(),
+            "these config files are not classified in docs/port/04-configuration.md: {unclassified:?}"
+        );
+    }
     fn tables() -> Tables {
         let log = Log::new();
         Tables::load(

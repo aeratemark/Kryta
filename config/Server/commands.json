@@ -1,19 +1,15 @@
 {
-  "note": "The command table: which names a player or an operator may type, and the operation each one runs",
-
-  "information": {
-    "what": "One row per command. `command` is what a player types, without the slash. `also` holds the other names the same command answers to. `operation` names a registered operation (game/src/Chat/Operations.rs) - the one binding there is: there is no enum of commands and no match on one, and a name the registry does not have is refused when this file is read, not when a player types it. `parameters` names the values the command takes, in order, and must be exactly what the operation declares. `surfaces` says who may type it: `chat`, `console`, or both; a row without it is a chat command, which is what the reference's own rows are.",
-    "why this is a file": "docs/decisions/0011-the-command-surface-is-content.md and docs/port/14-operator-surfaces.md. The command surface is content: the names, the argument rule and the binding to an operation are facts a server reads, and Rust keeps only the operation. A command is added or moved here without rebuilding the server, and no surface names a command in Rust.",
-    "where the rows come from": "the reference's own two dispatch points - GmCommands.c, which owns /tp, /teleport and /maps, and GmChat.c, which owns /stuck - as the working implementation ports them at ASURA crates/asura-world/src/chat.rs:126-163; the console rows are the reference's own console names from cs_server.cpp:68,89,92",
-    "not here": "the answers a command gives, and the conditions it refuses on. Those are the operation's own, in Rust, until the scripting layer of docs/port/11-content-and-behaviour.md takes them."
-  },
-
+  "note": "commands.json - the chat command surface: the names a player may type, what each takes, and the registered operation it runs.",
   "commands": [
     {
       "command": "tp",
-      "also": ["teleport"],
+      "also": [
+        "teleport"
+      ],
       "operation": "chat.transfer",
-      "parameters": ["destination"],
+      "parameters": [
+        "destination"
+      ],
       "doc": "a server transfer to the map the argument names, or one of the reference's refusals (unknown map, no config, already here)"
     },
     {
@@ -32,21 +28,27 @@
       "command": "server info",
       "operation": "world.status",
       "parameters": [],
-      "surfaces": ["console"],
+      "surfaces": [
+        "console"
+      ],
       "doc": "what this world is running, answered on the console and to an operator client; the reference's own console name for it (cs_server.cpp:92), and it needs no player session"
     },
     {
       "command": "server exit",
       "operation": "world.exit",
       "parameters": [],
-      "surfaces": ["console"],
+      "surfaces": [
+        "console"
+      ],
       "doc": "stop the world; the reference's own console name (cs_server.cpp:89), and the process exits with the reference's code 0 (Main.cpp:434-439)"
     },
     {
       "command": "server restart",
       "operation": "world.restart",
       "parameters": [],
-      "surfaces": ["console"],
+      "surfaces": [
+        "console"
+      ],
       "doc": "stop the world so a supervisor starts it again; the reference's own console name (cs_server.cpp:68), and the process exits with the reference's code 2, which its main documents for a restarter (Main.cpp:434-439)"
     }
   ]

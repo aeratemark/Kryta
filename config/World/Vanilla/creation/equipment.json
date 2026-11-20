@@ -1,9 +1,5 @@
 {
-  "note": "equipment.json - what a new character wears per campaign and profession, imported from ASURA's generated table by tools/import-creation-inventory.py.",
-  "information": {
-    "what a row means": "a set is one (campaign, profession) pair and the items the creation screen puts on a character of it. The item fields are the wire's own order, which is what GAME_SMSG_CREATE_NAMED_ITEM writes.",
-    "where the numbers come from": "the reference's GetDefaultEquipments (GmDefaultArmors.c), generated into ASURA crates/asura-world/src/default_equipment.rs."
-  },
+  "note": "equipment.json - what a new character wears, one set per campaign and profession.",
   "sets": [
     {
       "campaign": 0,

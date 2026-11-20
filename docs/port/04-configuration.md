@@ -163,7 +163,7 @@ added, and a field the file does not state keeps the table's value.
 | what a redirect's `is_explorable` carries (`TravelExplorable`: `0` for every travel by default, `1` for every travel, or `auto` for the destination's own kind); ASURA reads the same three words from `ASURA_TRAVEL_EXPLORABLE` and defaults to `0` because that is the value an explorable's load completes at (`ASURA/crates/asura-world/src/travel.rs:21-69`) | `worldserver.json`, the `World` section |
 | the outpost a fresh character starts in and has unlocked (`StartingOutpost`, 148 - the one unlock of R12, and the same fact the login's `FallbackOutpost` names) | `worldserver.json`, the `World` section |
 | half the side of a point doorway's box (`PointBoxHalfExtent`, 250 world units): a doorway stated as a wall never uses it, and `0` disables point doorways (`ASURA/config/Server/portals.json`, `point_box_half_extent`) | `worldserver.json`, the `World` section |
-| the world itself: every map record, the entry points where a character may stand, and the arches a step crosses | `worldserver.json`, `WorldPack`, naming `config/World/Vanilla`, whose `maps/` folder is the tree. A folder that is not its record's `map_id`, or a pack with no `maps/`, stops the program - serving half a world is worse than not serving (`docs/decisions/0014-the-world-content-is-a-pack.md`) |
+| the world itself: every map record, the entry points where a character may stand, and the arches a step crosses - the tree is classified here as one unit, so a file inside it needs no row of its own | `worldserver.json`, `WorldPack`, naming `config/World/Vanilla`, whose `config/World/Vanilla/maps/` folder is the tree (`<campaign>/<area>/<kind>/<map id>/{basic,spawns,portals}.json`). A folder that is not its record's `map_id`, or a pack with no `maps/`, stops the program - serving half a world is worse than not serving (`docs/decisions/0014-the-world-content-is-a-pack.md`) |
 | the creation screen's content: the bags and items a client is given, and what a new character wears per campaign and profession | `worldserver.json`, `InventoryFile` and `EquipmentFile`, naming `config/World/Vanilla/creation/inventory.json` and `config/World/Vanilla/creation/equipment.json` |
 | which slot of the client's equipped bag each kind of item is worn in | `worldserver.json`, `EquippedSlotsFile`, naming `config/World/Vanilla/creation/worn_slots.json`. The index is the client's own (its nine-slot equipped array, the placement inside the equipped bag, the agent's worn list), so it is content and not a table compiled in - a wrong one draws the character without the piece (`docs/game-rules.md` E234) |
 | the chat command surface: the names a player may type, what each takes, and which operation it runs | `worldserver.json`, `CommandsFile`, naming `config/Server/commands.json`. The surface is **content**, so the setting is only where the file is; the rows themselves are data (`docs/decisions/0011-the-command-surface-is-content.md`) |
@@ -194,6 +194,32 @@ layout and not a judgement per feature: it is what the thing **is**.
 | **game data** | the world's state: what exists, what a character has, where it stands | **database rows**, through the noun's repository | accounts, characters and their settings, item definitions (`item_template`), a character's bags and items, map records, spawns, instances, portals, travel |
 | **a setting** | a choice an operator makes and may share | **a JSON file** | a program's configuration, the world list, the profession sets a new character starts wearing, loot tables |
 | **what the client dictates** | a value the client decides and the server can only obey | **a constant in the code that answers with it**, citing the capture | message headers and sizes, the file check's bytes, the account settings block |
+
+**ASURA's rule is stricter than a table, and this tree takes it as binding** (`AGENTS.md` section 4a
+there, decisions D34, D35 and D39 in `ASURA/docs/reference/decisions/layer-decisions.md`):
+
+- **No hardcoded value, even when the contract never changes.** A compiled number is invisible and
+  unreachable; it goes in a file so it can be read and reviewed. A reader has **no built-in
+  fallback**, and **a missing or malformed file is an error that stops the program** - not a warning
+  that leaves a world half configured.
+- **A file holds values with their meaning, and no provenance or reporting.** "measured",
+  "implemented" and "unverified" are not configuration; they belong in `docs/` beside the recording
+  they name. Where a value is one of the client's own numbers and must not be changed, the file says
+  `immutable` - a note to the editor, not a runtime check.
+- **A key with no answer is `null`**, and the caller refuses the action with a logged reason rather
+  than choosing on the player's behalf.
+- **The rules read only.** A decision takes values as arguments; it holds no value of its own and reads
+  no file (that is the reference's arrangement too: a rule is code, a value is a file).
+- **A stored count is a second number to keep true.** A list's length is its count; a landing belongs
+  to the map that receives the traveller, not to the map that sends it (D39).
+
+Where this tree enforces it, rather than stating it:
+
+| the rule | the thing that fails when it is broken |
+|---|---|
+| a missing file is an error | `Creation::load` returns an error for a missing inventory, equipment table or worn-slot table; `Pack::load` refuses a pack with no `maps/` |
+| no built-in fallback | every reader requires its keys (`number`, `float`, `required`), and a `null` reaches the caller as `None` |
+| the doc is the inventory | `every_config_file_is_classified_in_the_configuration_doc` walks `config/` and fails, naming them, on any file this page does not classify |
 
 Two consequences:
 

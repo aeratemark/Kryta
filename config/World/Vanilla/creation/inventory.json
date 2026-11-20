@@ -1,10 +1,5 @@
 {
-  "note": "inventory.json - the bags and the items a new character's client is given, imported from ASURA's seed rows by tools/import-creation-inventory.py.",
-  "information": {
-    "what a row means": "a bag is a row of the client's inventory model: its id, its model, its kind and its slot count. An item carries the file id the client draws, its kind, its dyes, its flags and its name as UTF-16 units.",
-    "where the numbers come from": "ASURA crates/asura-store/src/state/inventory/seed.rs, whose rows came from a capture of the reference at its parity point.",
-    "why items and not nothing": "a client given no items has no inventory model, and it dies drawing the character it has just made."
-  },
+  "note": "inventory.json - the bags and the items a creation screen is given, before a profession is chosen.",
   "bags": [
     {
       "bag_id": 1,
