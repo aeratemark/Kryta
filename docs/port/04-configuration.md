@@ -196,6 +196,16 @@ layout and not a judgement per feature: it is what the thing **is**.
 | **what a server writes** | the state: what exists right now, what a character has, where it stands | **database rows**, through the noun's repository | accounts, characters and their settings, a character's bags and items, open instances, unlocks, travel records |
 | **what the client dictates** | a value the client decides and the server can only obey | **a constant in the code that answers with it**, citing the capture | message headers and sizes, the file check's bytes, the account settings block |
 
+## Content is held in memory, and a request path reads no file
+
+The server carries many players, their instances and their items. A request that read a file would put a
+read, a parse and a lock on the hot path of every player, so the world reads its content **once at
+start-up** - the pack (`game/src/Maps/Pack.rs`), the creation tables (`Creation::Tables`), the command
+table (`commands::Table`) - keeps it as plain in-memory structures, and answers from memory for the life
+of the process. Nothing is re-read when a client connects, travels, moves an item or looks at a map.
+
+`worldserver/tests/content_is_held.rs` enforces it: a module that serves a connection which reads a file
+fails the test, naming the file and the line. Content lives at load, requests live in memory.
 ## A file is read once, and validated where it is read
 
 `common/src/Configuration/Json.rs` holds the store: `Store::document(path)` reads and validates a file
