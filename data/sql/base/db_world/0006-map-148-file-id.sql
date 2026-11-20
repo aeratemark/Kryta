@@ -19,4 +19,8 @@
 -- A new file rather than an edit to 0002: an applied file is immutable, and the updater refuses a
 -- changed one instead of silently applying something else.
 
-UPDATE "map" SET "file_id" = 113021 WHERE "id" = 148;
+-- Content is not seeded here. A map record, its entry points and its doorways are the world
+-- pack's (config/World/Vanilla/maps/**), read at start-up by game/src/Maps/Pack.rs; a
+-- database row is for what a server writes (docs/decisions/0014-the-world-content-is-a-pack.md).
+
+-- The value is the pack's: `map_file_id` in map 148's `basic.json`.

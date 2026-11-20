@@ -1,3 +1,8 @@
+-- Content is not seeded here. A map record, its entry points and its doorways are the world
+-- pack's (`config/World/Vanilla/maps/<campaign>/<area>/<kind>/<map id>/`), read at start-up by
+-- `game/src/Maps/Pack.rs`; a database row is for what a server writes and for nothing else
+-- (`docs/decisions/0014-the-world-content-is-a-pack.md`, `docs/port/04-configuration.md`).
+
 -- A map's doorways: the wall a character crosses, and the facing an arrival is created with.
 --
 -- Ported from `ASURA/crates/asura-world/src/portals.rs` (503 lines), where these are one
@@ -33,19 +38,4 @@ COMMENT ON COLUMN "map_arrival"."angle" IS 'The facing, in radians, the arriving
 -- Ascalon City (pre-Searing) is still the one map with a doorway, and this is ASURA's own measured row
 -- for it (`ASURA/config/World/Vanilla/maps/Prophecies/Ascalon (pre-Searing)/Outposts/148/portals.json`):
 -- one wall leading to Lakeside County (146), and the arrival a character coming from 146 stands at.
-INSERT INTO "map_arch" ("map_id", "idx", "to_map", "from_x", "from_y", "to_x", "to_y") VALUES
-  (148, 0, 146, 7523.46875, 5129.55126953125, 7055.75, 5592.3486328125)
-ON CONFLICT ("map_id", "idx") DO UPDATE
-  SET "to_map" = EXCLUDED."to_map",
-      "from_x" = EXCLUDED."from_x",
-      "from_y" = EXCLUDED."from_y",
-      "to_x"   = EXCLUDED."to_x",
-      "to_y"   = EXCLUDED."to_y";
 
-INSERT INTO "map_arrival" ("map_id", "from_map", "x", "y", "plane", "angle") VALUES
-  (148, 146, 7629.69580078125, 5843.19384765625, 0, 0.5689498782157898)
-ON CONFLICT ("map_id", "from_map") DO UPDATE
-  SET "x"     = EXCLUDED."x",
-      "y"     = EXCLUDED."y",
-      "plane" = EXCLUDED."plane",
-      "angle" = EXCLUDED."angle";

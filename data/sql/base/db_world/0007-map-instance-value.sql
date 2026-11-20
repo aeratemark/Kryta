@@ -12,4 +12,8 @@
 
 ALTER TABLE "map" ADD COLUMN IF NOT EXISTS "instance_value" BIGINT;
 
-UPDATE "map" SET "instance_value" = 3138712889 WHERE "id" = 148;
+-- Content is not seeded here. A map record, its entry points and its doorways are the world
+-- pack's (config/World/Vanilla/maps/**), read at start-up by game/src/Maps/Pack.rs; a
+-- database row is for what a server writes (docs/decisions/0014-the-world-content-is-a-pack.md).
+
+-- The value is the pack's: `instance_value` in map 148's `basic.json`.
