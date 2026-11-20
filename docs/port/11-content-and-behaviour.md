@@ -64,7 +64,7 @@ The local WowWarband checkout provides these concrete references:
 ## Chat is the server's command line, and its text now reaches the client
 
 Chat carries player conversation and server commands. Command names and aliases are content:
-`data/commands.json` maps a name to an operation, and the current reader resolves that operation through
+`config/Server/commands.json` maps a name to an operation, and the current reader resolves that operation through
 the shared registry (`game/src/Chat/Commands.rs`, `game/src/Chat/Operations.rs`). A mapped GM command
 calls the registered Rust function; Lua is not required for that call
 (`docs/decisions/0011-the-command-surface-is-content.md`).
@@ -281,7 +281,7 @@ current limits and proof are in `docs/port/10-separation-guide.md`. Chat works: 
 text frames, the answer path and the broadcast are in, its frames come from measurement rather than
 ASURA's table (`docs/decisions/0012-chat-text-is-sent.md`), and both halves were read on the owner's live
 client - the server's answers and a player's own line. The command rows and their arguments are in
-`data/commands.json`, and every row names a registered operation
+`config/Server/commands.json`, and every row names a registered operation
 (`game/src/Chat/Operations.rs`), so the chat line, the console and the control endpoint are one
 execution path; the alias table and the `/maps` text are still Rust, which is where a rule belongs until
 this document's scripting layer takes it. A Lua runtime, content loading, world APIs, a command

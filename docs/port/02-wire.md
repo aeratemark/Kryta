@@ -122,7 +122,7 @@ The frames, with the reference's own wire sizes:
 
 - The two answers whose length follows a counted field (`0x0188`'s name and settings) are sized from
   what they carry; the rest are fixed by the reference's table.
-- The inventory is the reference's own: six bags, the items it creates before a profession is chosen, and the chosen profession's starting set, imported from its rows by `tools/import-creation-inventory.py` into `data/inventory.json` and `data/equipment.json`. A creation screen is sent about 180 item messages in all for a profession's set; what this tree sends
+- The inventory is the reference's own: six bags, the items it creates before a profession is chosen, and the chosen profession's starting set, imported from its rows by `tools/import-creation-inventory.py` into `config/World/Vanilla/creation/inventory.json` and `config/World/Vanilla/creation/equipment.json`. A creation screen is sent about 180 item messages in all for a profession's set; what this tree sends
   today is the reference's six bags, its pre-choice items and the chosen set, which is enough for the
   client to have an inventory model to draw.
 - The screens are the client's, and the wire carries their outcome: the campaign and profession go out as
@@ -134,7 +134,7 @@ The frames, with the reference's own wire sizes:
   `docs/game-rules.md` R59-R67, and what the client's own code says about each screen is E221-E229.
 - **A colour is not a field of the confirm.** The five armour-piece colours leave as seven `0x0084`
   after every `0x8060`, in the fixed slot order `4, 2, 3, 6, 5, 0, 1`; this tree answers the preview but
-  never reads those, so a created character's armour keeps the colours in `data/equipment.json`
+  never reads those, so a created character's armour keeps the colours in `config/World/Vanilla/creation/equipment.json`
   (`docs/game-rules.md` E226-E227).
 - In this tree: `game/src/Server/Packets/`, the size table in `WorldSession`, and the row the confirm
   writes (`docs/decisions/0007-character-schema.md`).

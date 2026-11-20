@@ -504,7 +504,7 @@ because the reference's structure is this tree's authority for how a thing is ar
 
 | ASURA file | lines | this tree | verdict |
 |---|---|---|---|
-| `default_equipment.rs` | 2,960 | `data/equipment.json` | ported as data: 32 sets, 179 `ItemSpec`s, values checked against the file (map 0 / profession 1's first two items match field for field) |
+| `default_equipment.rs` | 2,960 | `config/World/Vanilla/creation/equipment.json` | ported as data: 32 sets, 179 `ItemSpec`s, values checked against the file (map 0 / profession 1's first two items match field for field) |
 | `pathfind.rs` | 1,794 | `game/Terrain/Pathfind.rs` | ported, and wired: a walk is answered from the map's own graph |
 | `agent.rs` | 1,516 | `game/Agents/mod.rs`, the four handlers in `game/Handlers/MovementHandler.rs` | ported: `AgentState`, `Motion`, `Standing`, `densify`, the cadence, the tolerance and every handler |
 | `map_data.rs` | 1,196 | `game/Terrain/MapData.rs` | ported whole, importer included |
@@ -521,7 +521,7 @@ because the reference's structure is this tree's authority for how a thing is ar
 | `graph_dump.rs` | 473 | `game/Terrain/GraphDump.rs` | ported whole |
 | `gwdat.rs` | 431 | `game/Pack/Gwdat.rs` | ported whole |
 | `fa_compress.rs` | 402 | `game/Pack/FaCompress.rs` | ported whole |
-| `chat.rs` | 354 | `game/Chat/`, `data/commands.json`, and `answer_chat_message` + `answer_line` in `game/Handlers/ChatHandler.rs` | ported: the channel rule, `alias_key`; the command table is now **data** (`0011`); `/maps` uses a shared map-list function, with chat output unchanged. The three text frames are **not** ASURA's - they are the measured ones (`0012-chat-text-is-sent.md`) |
+| `chat.rs` | 354 | `game/Chat/`, `config/Server/commands.json`, and `answer_chat_message` + `answer_line` in `game/Handlers/ChatHandler.rs` | ported: the channel rule, `alias_key`; the command table is now **data** (`0011`); `/maps` uses a shared map-list function, with chat output unchanged. The three text frames are **not** ASURA's - they are the measured ones (`0012-chat-text-is-sent.md`) |
 | `pathfind/directional.rs` | 320 | `game/Terrain/Pathfind/Directional.rs` | ported whole, its PROVISIONAL caveat kept |
 | `replay.rs` | 302 | nothing | ASURA's own capture-replay harness; this tree's equivalent is `recordings/` and the `--ignored` end-to-end tests |
 | `map_spawns.rs` | 264 | rows: `map_spawn` | ported as data (466 points, with the facing each states) |

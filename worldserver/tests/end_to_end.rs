@@ -532,9 +532,9 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         // bags, the templates the world database holds, and the items the confirm wrote. This is the
         // block the client sees, so it is compared byte for byte, not only by its headers.
         let tables = game::creation::Tables::load(
-            "../data/inventory.json",
-            "../data/equipment.json",
-            Some(std::path::Path::new("../data/equipped-slots.json")),
+            "../config/World/Vanilla/creation/inventory.json",
+            "../config/World/Vanilla/creation/equipment.json",
+            Some(std::path::Path::new("../config/World/Vanilla/creation/worn_slots.json")),
             &Log::new(),
         )
         .expect("the creation data");
@@ -725,9 +725,9 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         // equip and a destroy. Each one is a row in the character database and an answer to the
         // client; the items are the ones the confirm wrote, read back through the same repository.
         let tables = game::creation::Tables::load(
-            "../data/inventory.json",
-            "../data/equipment.json",
-            Some(std::path::Path::new("../data/equipped-slots.json")),
+            "../config/World/Vanilla/creation/inventory.json",
+            "../config/World/Vanilla/creation/equipment.json",
+            Some(std::path::Path::new("../config/World/Vanilla/creation/worn_slots.json")),
             &Log::new(),
         )
         .expect("the creation data");

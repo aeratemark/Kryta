@@ -1,6 +1,6 @@
 //! One item's definition: what it is, once, however many of it exist.
 //!
-//! The record lists a creation screen starts from (`data/inventory.json`, `data/equipment.json`) carry
+//! The record lists a creation screen starts from (`config/World/Vanilla/creation/inventory.json`, `config/World/Vanilla/creation/equipment.json`) carry
 //! the whole item, because that is what the client is told about it; a template is the same fields
 //! without the per-instance ones - the runtime id, the bag and the slot - and the world's start-up
 //! seeds one template per distinct definition into `kryta_world.item_template`

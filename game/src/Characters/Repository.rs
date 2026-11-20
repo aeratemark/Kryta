@@ -1073,9 +1073,9 @@ mod tests {
         let mut world = crate::world::World::new(2);
         world
             .load_creation(
-                    "../data/inventory.json",
-                    "../data/equipment.json",
-                    Some(std::path::Path::new("../data/equipped-slots.json")),
+                    "../config/World/Vanilla/creation/inventory.json",
+                    "../config/World/Vanilla/creation/equipment.json",
+                    Some(std::path::Path::new("../config/World/Vanilla/creation/worn_slots.json")),
                     &log,
                 )
             .expect("the creation data");

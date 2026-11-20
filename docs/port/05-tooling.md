@@ -14,7 +14,7 @@ borrowed, and the borrow is the thing that breaks when that tree moves.
 
 Two consequences:
 
-- An imported row set is data, not a link: `data/inventory.json` and `data/equipment.json` are this
+- An imported row set is data, not a link: `config/World/Vanilla/creation/inventory.json` and `config/World/Vanilla/creation/equipment.json` are this
   tree's files, and `tools/import-creation-inventory.py` is the record of where they came from. Running
   it again is provenance, not a dependency - nothing in `cargo test` or either program calls it.
 - A tool that must depend on something external says so at the top of its own file, and says what
@@ -90,7 +90,7 @@ The clients' own codes were checked too: `kryta-supervisor status` answers 1 whe
 
 ## One command surface, one registry
 
-`data/commands.json` is the whole command surface: every row names a registered operation and the values
+`config/Server/commands.json` is the whole command surface: every row names a registered operation and the values
 it takes, and there is no enum of commands in Rust and no match on one. `game/src/Chat/Operations.rs`
 holds the registry, `chat.transfer`, `chat.maps` and `chat.stuck` are registrations like `world.status`,
 and a row whose operation the world does not register - or whose parameter count the operation does not
@@ -183,7 +183,7 @@ rather than starting nothing.
 | `/accounts` | the rows the login reads: create, remove, and set the EULA version | done |
 | `/characters` | every row of the character table, as the login's list reads it, with how many items each holds and the maps it may travel to (R12), a level edit (1 to 20, R48) and a remove action that deletes the row with its own items and unlocks | done - a character is written by the creation confirm, not here; correcting its level and removing it are the operator's acts (`DatabaseCharacters::set_level`, `remove`, the reference's `DeleteFromDB`) |
 | `/worlds` | the realm list and `data/realms.json` merged over it | done - read only, from the login's own reader |
-| `/content` | the maps and their spawn points (editable), each map's own party cap (editable, R15), the item templates, the profession sets a creation screen may choose from, and the copies the world has open | done - the load's own rows, edited where they matter; the running-instances table is the world's `instance` rows, the same ones its tick disposes; `0` clears a map's cap so the world's `PartySizeCap` applies; the sets are read from `data/equipment.json` through the noun's own loader (`InventoryFile`/`EquipmentFile` in `manage.json`) |
+| `/content` | the maps and their spawn points (editable), each map's own party cap (editable, R15), the item templates, the profession sets a creation screen may choose from, and the copies the world has open | done - the load's own rows, edited where they matter; the running-instances table is the world's `instance` rows, the same ones its tick disposes; `0` clears a map's cap so the world's `PartySizeCap` applies; the sets are read from `config/World/Vanilla/creation/equipment.json` through the noun's own loader (`InventoryFile`/`EquipmentFile` in `manage.json`) |
 | `/schema` | each database's own record of what its updater has applied, against the files on disk | done - read only; `changed` is the one to act on before a server refuses to start |
 | `/settings` | each program's own JSON, key by key, as the file states it | done - read only, passwords masked by the reader; `WorldConfigFile` and `AuthConfigFile` in `manage.json` say where the files are |
 | `/status` | the running world's own answer to `world.status`, asked of its local control endpoint | done - one operation carried by the world's own queue (`docs/port/14-operator-surfaces.md`); a world that is unavailable or refuses is drawn differently from an empty answer, and `ControlPort`/`ControlCredentialFile` in `manage.json` configure it |

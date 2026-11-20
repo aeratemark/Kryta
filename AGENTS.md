@@ -170,7 +170,8 @@ authserver links shared;   worldserver links shared, game, scripts
 | `scripts/` | `ScriptMgr` and `AddScripts`: content written against hooks | `src/server/scripts/` |
 | `modules/` | `mod-*`, out of tree | `modules/` |
 | `authserver/`, `worldserver/` | the two programs, each with its own config file | `src/server/apps/` |
-| `data/` | the content tree and its updater input | `data/` |
+| `data/` | the content tree and its updater input: the schema and seeded rows, and the extracted path graphs | `data/` |
+| `config/` | the world's content and the machine's values, as JSON files with a README in each folder: `Server/` for what a machine chooses, `World/<pack>/` for what a world contains (`config/README.md`) | none - ASURA's `config/` arrangement, taken by the owner's direction |
 
 The socket layer is not a program. Sockets and sessions live in `game/Server/`, which is why one
 process owns one listener and still keeps the network as a subsystem.

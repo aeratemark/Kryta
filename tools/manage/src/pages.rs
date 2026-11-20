@@ -715,7 +715,7 @@ pub fn content(manage: &Manage) -> Response {
          <p class=\"note\">{items} template(s).</p>\n\
          <h2>profession sets</h2>\n\
          <p class=\"note\">The sets a creation screen may choose from, from the creation record \
-         list (<code>data/equipment.json</code>): a campaign and a profession, how many items the \
+         list (<code>config/World/Vanilla/creation/equipment.json</code>): a campaign and a profession, how many items the \
          set carries, and the first few of their <code>Gw.dat</code> file ids. A character is given \
          one of these at its confirm.</p>\n\
          <table>\n<tr><th>campaign</th><th>profession</th><th>items</th><th>first file ids</th></tr>\n\

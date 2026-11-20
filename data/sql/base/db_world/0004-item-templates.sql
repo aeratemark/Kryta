@@ -5,8 +5,8 @@
 -- value and the name. It is game data: the world's content, not a setting and not a player's
 -- (`docs/port/04-configuration.md`, "Three kinds of data").
 --
--- The creation screen's record lists name these definitions (`data/inventory.json`,
--- `data/equipment.json`) and the world's start-up seeds this table from them, once per definition;
+-- The creation screen's record lists name these definitions (`config/World/Vanilla/creation/inventory.json`,
+-- `config/World/Vanilla/creation/equipment.json`) and the world's start-up seeds this table from them, once per definition;
 -- a template repeated in another profession's set is the same item, so the key is what the client
 -- draws: the file id and the dyes.
 --

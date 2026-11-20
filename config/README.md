@@ -1,0 +1,28 @@
+# What this folder is
+
+The game's content and this machine's values, as files. The arrangement is ASURA's own
+(`research/ASURA/config/`): a `Server/` folder for what one machine chooses, and a `World/<pack>/`
+folder for what a world contains, with a README in each folder saying what belongs there. The rule
+behind it is `docs/port/04-configuration.md`: a program's settings file is its own
+(`worldserver/worldserver.json`), and every other value that describes the world or a service is a
+file here, named by a setting that only says where the file is.
+
+| folder | holds | who reads it |
+|---|---|---|
+| `Server/` | what a machine chooses for itself and what its services answer - the chat command surface, and later whatever else belongs to the server rather than to the world | `worldserver`, at start-up, through `worldserver.json` |
+| `World/` | the packs: the map catalogue, entry lists, doorways, and the creation screen's content. `Vanilla` is the faithful base - the client's own vocabulary and the values a faithful world runs on | `worldserver`, at start-up, through `worldserver.json` |
+
+Two consequences, and they are the point of the split:
+
+- **A pack is a folder, not a code change.** A second world pack is `World/<name>/` beside `Vanilla`,
+  and the setting that names the pack is what selects it.
+- **A file that has no reader does not exist here.** A setting arrives with the stage that reads it,
+  so this folder holds only what the programs actually load today.
+
+`data/` is not this folder, and the difference is where the content came from. `data/sql/` is the
+schema and the rows a world seeds from; `data/path-graphs.bin` is extracted from the client's archive.
+Those are the archive's and the database's. Everything in `config/` is a value this tree states,
+readable and editable by hand.
+
+Evidence and acceptance are not here. A file answers *what the value is*; the document that records
+where it came from is `docs/`, and it names the recording or the source beside the value.

@@ -112,7 +112,7 @@ pub struct World {
     realm: u32,
     maps: Vec<MapEntry>,
     /// The chat command surface: the names a player may type and the operation each runs, read from
-    /// `data/commands.json` (`docs/decisions/0011-the-command-surface-is-content.md`).
+    /// `config/Server/commands.json` (`docs/decisions/0011-the-command-surface-is-content.md`).
     commands: crate::chat::commands::Table,
     /// The operations every surface reaches (`game/src/Chat/Operations.rs`). The program builds the
     /// registry before the rows are read, so a row naming an operation this world does not have is
@@ -266,7 +266,7 @@ impl World {
 
     /// The chat command surface: the names a player may type, and the operation each one runs.
     ///
-    /// Read from `data/commands.json` at start-up (`docs/decisions/0011-the-command-surface-is-content.md`);
+    /// Read from `config/Server/commands.json` at start-up (`docs/decisions/0011-the-command-surface-is-content.md`);
     /// a world with no such file answers no command and said so when it started.
     pub fn commands(&self) -> &crate::chat::commands::Table {
         &self.commands

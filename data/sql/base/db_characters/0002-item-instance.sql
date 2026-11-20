@@ -8,7 +8,7 @@
 --
 -- A new character's rows are written at the creation confirm, from the creation record list's
 -- starting set; the load then draws the character's own rows rather than the template of a set. The
--- bags themselves are the client's inventory model (`data/inventory.json`, a setting), not rows.
+-- bags themselves are the client's inventory model (`config/World/Vanilla/creation/inventory.json`, a setting), not rows.
 
 CREATE TABLE IF NOT EXISTS "item_instance" (
     "id"             BIGSERIAL PRIMARY KEY,

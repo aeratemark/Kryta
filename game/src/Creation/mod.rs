@@ -32,7 +32,7 @@ pub struct Bag {
 
 /// One position of the client's equipped bag, and the kinds of item worn in it.
 ///
-/// Read from `data/equipped-slots.json`: the index is the client's own (its nine-dword equipped
+/// Read from `config/World/Vanilla/creation/worn_slots.json`: the index is the client's own (its nine-dword equipped
 /// array, its item placement inside the equipped bag, its agent's worn list), and a kind no row names
 /// is not worn at all. The order is the client's vocabulary, which is why it is content and not a
 /// table compiled in here (`docs/port/04-configuration.md`).
@@ -124,7 +124,7 @@ pub struct Tables {
     /// the ones that hang off the other bags.
     items: Vec<Item>,
     sets: Vec<EquipmentSet>,
-    /// The client's equipped slots, by item kind (`data/equipped-slots.json`).
+    /// The client's equipped slots, by item kind (`config/World/Vanilla/creation/worn_slots.json`).
     worn: Vec<WornSlot>,
 }
 
@@ -696,9 +696,9 @@ mod tests {
     fn tables() -> Tables {
         let log = Log::new();
         Tables::load(
-            "../data/inventory.json",
-            "../data/equipment.json",
-            Some(std::path::Path::new("../data/equipped-slots.json")),
+            "../config/World/Vanilla/creation/inventory.json",
+            "../config/World/Vanilla/creation/equipment.json",
+            Some(std::path::Path::new("../config/World/Vanilla/creation/worn_slots.json")),
             &log,
         )
         .expect("the creation data reads")

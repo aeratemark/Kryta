@@ -1,5 +1,19 @@
 # Configuration: settings in JSON
 
+Where a value lives is decided by one question: is it a number the program runs by, a value that
+describes the world, or a decision? A number the program runs by is a setting in its own program's
+file. A value that describes the world or a service is a file under `config/`, and the setting only
+says which file. A decision is code. `config/README.md` is the tree and what belongs in each folder;
+this page is the rule and the inventory.
+
+```text
+worldserver/worldserver.json     the game program's settings - the one file it reads
+authserver/authserver.json       the login program's settings
+config/Server/                   what a machine chooses and answers (commands.json today)
+config/World/<pack>/             what a world contains; Vanilla is the faithful base
+data/sql/, data/path-graphs.bin  the archive's and the database's: schema, seeded rows, extracted graphs
+```
+
 `worldserver` reads `Console.Enable` (default `true`): when enabled and standard input is an
 interactive terminal, it starts the embedded console. Supervised non-interactive input is not consumed.
 `Console.QueueCapacity` (default `64`) limits pending console requests and must be greater than zero.
@@ -149,9 +163,9 @@ added, and a field the file does not state keeps the table's value.
 | what a redirect's `is_explorable` carries (`TravelExplorable`: `0` for every travel by default, `1` for every travel, or `auto` for the destination's own kind); ASURA reads the same three words from `ASURA_TRAVEL_EXPLORABLE` and defaults to `0` because that is the value an explorable's load completes at (`ASURA/crates/asura-world/src/travel.rs:21-69`) | `worldserver.json`, the `World` section |
 | the outpost a fresh character starts in and has unlocked (`StartingOutpost`, 148 - the one unlock of R12, and the same fact the login's `FallbackOutpost` names) | `worldserver.json`, the `World` section |
 | half the side of a point doorway's box (`PointBoxHalfExtent`, 250 world units): a doorway stated as a wall never uses it, and `0` disables point doorways (`ASURA/config/Server/portals.json`, `point_box_half_extent`) | `worldserver.json`, the `World` section |
-| the creation screen's content: the bags and items a client is given, and what a new character wears per campaign and profession | `worldserver.json`, `InventoryFile` and `EquipmentFile`, naming `data/inventory.json` and `data/equipment.json` |
-| which slot of the client's equipped bag each kind of item is worn in | `worldserver.json`, `EquippedSlotsFile`, naming `data/equipped-slots.json`. The index is the client's own (its nine-slot equipped array, the placement inside the equipped bag, the agent's worn list), so it is content and not a table compiled in - a wrong one draws the character without the piece (`docs/game-rules.md` E234) |
-| the chat command surface: the names a player may type, what each takes, and which operation it runs | `worldserver.json`, `CommandsFile`, naming `data/commands.json`. The surface is **content**, so the setting is only where the file is; the rows themselves are data (`docs/decisions/0011-the-command-surface-is-content.md`) |
+| the creation screen's content: the bags and items a client is given, and what a new character wears per campaign and profession | `worldserver.json`, `InventoryFile` and `EquipmentFile`, naming `config/World/Vanilla/creation/inventory.json` and `config/World/Vanilla/creation/equipment.json` |
+| which slot of the client's equipped bag each kind of item is worn in | `worldserver.json`, `EquippedSlotsFile`, naming `config/World/Vanilla/creation/worn_slots.json`. The index is the client's own (its nine-slot equipped array, the placement inside the equipped bag, the agent's worn list), so it is content and not a table compiled in - a wrong one draws the character without the piece (`docs/game-rules.md` E234) |
+| the chat command surface: the names a player may type, what each takes, and which operation it runs | `worldserver.json`, `CommandsFile`, naming `config/Server/commands.json`. The surface is **content**, so the setting is only where the file is; the rows themselves are data (`docs/decisions/0011-the-command-surface-is-content.md`) |
 | the extracted graphs a serving world answers movement from | `worldserver.json`, `PathGraphs`, defaulting to `data/path-graphs.bin`. It is a portable `ASURAPG1` cache; it may omit maps, but the serving process never reads `Gw.dat` (`docs/decisions/0014-headless-navigation-assets.md`) |
 | the cache the manager inspects and the archive it uses for an explicit map export | `manage.json`, `PathGraphsFile` and manager-only `MapArchiveFile`. The latter is empty unless an operator intends an offline dump; neither key is read by `worldserver` |
 | loot tables: what a source drops and how often - a setting, not a row | a JSON file under `data/loot/`, arriving with the drop stage |

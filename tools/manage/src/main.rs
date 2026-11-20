@@ -1256,10 +1256,10 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         Some(auth_config)
     };
     let (inventory_file, _) = config
-        .value_string("InventoryFile", "data/inventory.json")
+        .value_string("InventoryFile", "config/World/Vanilla/creation/inventory.json")
         .map_err(|error| error.to_string())?;
     let (equipment_file, _) = config
-        .value_string("EquipmentFile", "data/equipment.json")
+        .value_string("EquipmentFile", "config/World/Vanilla/creation/equipment.json")
         .map_err(|error| error.to_string())?;
     let inventory_file = if inventory_file.is_empty() {
         None

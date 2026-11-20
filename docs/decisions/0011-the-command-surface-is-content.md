@@ -5,7 +5,7 @@ the shared API and registry described below remain planned.
 
 ## Decision
 
-`data/commands.json` holds command names, aliases and their mapping to an operation. The `execution`
+`config/Server/commands.json` holds command names, aliases and their mapping to an operation. The `execution`
 value names the registered Rust API function: for example, `tp` maps to the teleport function. The
 same function executes when called from a GM command, console, management tool or another authorized
 caller. Adding an alias to an existing mapping needs a data change, not another implementation.

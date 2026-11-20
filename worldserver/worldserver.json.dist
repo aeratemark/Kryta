@@ -61,7 +61,7 @@
   },
 
   "InventoryFile": {
-    "value": "data/inventory.json",
+    "value": "config/World/Vanilla/creation/inventory.json",
     "doc": "The bags and items a character-creation screen is given - a record list, read at start-up. A client with no items has no inventory model to draw."
   },
 
@@ -70,17 +70,17 @@
     "doc": "The extracted ASURAPG1 path-graph cache the server reads at start-up. It may contain only the maps that have been dumped; an undumped or custom map answers NoGraph, and worldserver never reads Gw.dat. The manager's navigation tool inspects and updates this file."
   },
   "EquipmentFile": {
-    "value": "data/equipment.json",
+    "value": "config/World/Vanilla/creation/equipment.json",
     "doc": "What a new character wears per campaign and profession - a record list of sets, read at start-up."
   },
 
   "EquippedSlotsFile": {
-    "value": "data/equipped-slots.json",
+    "value": "config/World/Vanilla/creation/worn_slots.json",
     "doc": "Which slot of the client's equipped bag each kind of item is worn in - a record list, read at start-up. The number is the client's own: a kind no row names is not worn, and a piece whose slot is wrong is a piece the character is drawn without."
   },
 
   "CommandsFile": {
-    "value": "data/commands.json",
+    "value": "config/Server/commands.json",
     "doc": "The chat command surface: the names a player may type, what each takes, and which server operation it runs. A record list, read at start-up; a name it grants with no operation behind it is refused then, not when a player types it (docs/decisions/0011-the-command-surface-is-content.md)."
   },
 

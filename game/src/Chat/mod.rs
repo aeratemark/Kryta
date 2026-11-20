@@ -8,7 +8,7 @@
 //! the alias rule and the answer `/maps` prints.
 //!
 //! **The command surface is a file, not this module.** Which names exist, what each takes and which
-//! operation it runs are rows in `data/commands.json`, read by [`commands::Table`]; the reference's own
+//! operation it runs are rows in `config/Server/commands.json`, read by [`commands::Table`]; the reference's own
 //! two dispatch points - `GameSrv_TryHandleGmCommand` (`GmCommands.c`, which owns `/tp`, `/teleport` and
 //! `/maps`) and `GameSrv_HandleChatCommand` (`GmChat.c`, which owns `/stuck`) - are that file's rows, and
 //! Rust keeps only the operations they name (`docs/decisions/0011-the-command-surface-is-content.md`).

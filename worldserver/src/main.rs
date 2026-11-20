@@ -298,13 +298,13 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     // character wears per campaign and profession. Reference: the same `SetInitialWorldSettings`
     // pass that loads a world's maps; a creation screen's equipment is content like any other.
     let (inventory_file, notes) = config
-        .value_string("InventoryFile", "data/inventory.json")
+        .value_string("InventoryFile", "config/World/Vanilla/creation/inventory.json")
         .map_err(|error| error.to_string())?;
     for note in notes {
         report(&note);
     }
     let (equipment_file, notes) = config
-        .value_string("EquipmentFile", "data/equipment.json")
+        .value_string("EquipmentFile", "config/World/Vanilla/creation/equipment.json")
         .map_err(|error| error.to_string())?;
     for note in notes {
         report(&note);
@@ -312,7 +312,7 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     // Which slot each kind of item is worn in. Content, like the two above: the number is the
     // client's own, and a wrong one draws a character without the piece it holds.
     let (worn_slots_file, notes) = config
-        .value_string("EquippedSlotsFile", "data/equipped-slots.json")
+        .value_string("EquippedSlotsFile", "config/World/Vanilla/creation/worn_slots.json")
         .map_err(|error| error.to_string())?;
     for note in notes {
         report(&note);
@@ -321,7 +321,7 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     // not a setting - the file is where the surface lives, and `CommandsFile` says where that file is
     // (`docs/decisions/0011-the-command-surface-is-content.md`).
     let (commands_file, notes) = config
-        .value_string("CommandsFile", "data/commands.json")
+        .value_string("CommandsFile", "config/Server/commands.json")
         .map_err(|error| error.to_string())?;
     for note in notes {
         report(&note);
