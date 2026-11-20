@@ -441,6 +441,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kryta-management-service"
+version = "0.1.0"
+dependencies = [
+ "kryta-manage",
+]
+
+[[package]]
 name = "kryta-supervisor"
 version = "0.1.0"
 dependencies = [

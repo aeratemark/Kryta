@@ -24,6 +24,7 @@ members = [
   # The administration tool: an operator's page, not a server. It links the same libraries the two
   # programs do, so what it writes is what they read.
   "tools/manage",
+  "tools/management-service",
   # The stack's own command: one process that starts the services this machine runs and stops them
   # together. It starts nothing a person did not list in `stack.json` (`tools/supervisor`).
   "tools/supervisor",

@@ -121,7 +121,7 @@ patchable client for debugging and automated research; its proposed role is reco
 
 ```powershell
 copy tools\manage\manage.json.dist tools\manage\manage.json   # then state the two database strings
-cargo run -p kryta-manage -- -c tools\manage\manage.json       # http://127.0.0.1:6602/
+cargo run -p kryta-management-service -- -c tools\manage\manage.json  # http://127.0.0.1:6602/
 ```
 
 `tools/manage/` is the Configuration Manager: the operator's web front door. It is not a game server -

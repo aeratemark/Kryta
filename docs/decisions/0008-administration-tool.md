@@ -1,7 +1,7 @@
 # 0008 - The administration tool is a program of its own, outside the two servers
 
-Status: accepted, taken because nothing in this tree could change game data except `psql` and a text
-editor. The owner may overrule it; if he does, this record is corrected rather than extended.
+Status: updated by the owner's direction to run the panel and management API as one management service.
+The existing database-backed panel routes remain in place during API migration.
 
 ## The question
 
@@ -16,16 +16,15 @@ nothing more.
 
 ## The decision
 
-A third binary, `tools/manage/` (cargo package `kryta-manage`), serving one HTML page over HTTP on
-loopback. It links `common`, `database`, `game` and `shared` - the same libraries the servers link - and
-reaches the data through the nouns' own repositories (`game/accounts`, `game/characters`). Neither server
-program knows it exists, and it serves no game protocol.
+The management service `tools/management-service/` serves the panel implemented in `tools/manage/`.
+It can be independently started or supervised with the stack. Account and character API operations
+are not implemented yet: existing panel routes access repositories directly and do not coordinate
+active sessions.
 
 ## Why
 
-1. **It is not a server.** Nothing about it is a client conversation, and putting operator power behind
-   the listener a client talks to is how a login surface becomes an admin hole. The portal keeps its four
-   routes exactly as the client expects them.
+1. **Separate operator service.** The management API is independent of the client-facing listeners.
+   The portal keeps its client routes; operator actions must coordinate with the relevant server owners.
 2. **The data access moves into the noun, not the tool.** `DatabaseAccounts` and `DatabaseCharacters` are
    library code, so the tool, the auth program and the world program ask one implementation what an
    account or a character is. A second copy of the SQL in the tool would drift from the schemas it

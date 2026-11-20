@@ -40,6 +40,11 @@ authentication remain to be designed; the same owners serve other supported call
 
 ## 2. Current state
 
+The management service `kryta-management-service` serves the Control Panel itself. Start it with
+`cargo run -p kryta-management-service`, or through the supervisor's stack. A numeric argument
+overrides the configured port for that run. Account and character routes still use the panel's
+repositories; their APIs, session invalidation and targeted disconnect remain to be implemented.
+
 - `game/src/Chat/Commands.rs` reads command rows and resolves each row's `operation` through the
   registry in `game/src/Chat/Operations.rs`; there is no enum of commands and no match on one. Every
   surface - the chat line, the console, the control endpoint - resolves the same rows and invokes the

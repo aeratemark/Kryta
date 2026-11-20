@@ -22,7 +22,7 @@
     },
     {
       "name": "manage",
-      "program": "kryta-manage",
+      "program": "kryta-management-service",
       "args": ["-c", "tools/manage/manage.json"],
       "port": 6602
     }
