@@ -105,10 +105,10 @@ The frames, with the reference's own wire sizes:
 | 7 | server -> client | `0x00DB`, `0x00B7` | 4, 9 | the empty unlocked-skill list, then the agent and the new professions |
 | 8 | server -> client | `0x0161` + `0x015A` + `0x013E` + `0x014B` per item | variable | the new set: each piece created, the profession it was made for, the slot it moves into, the location it changes to |
 | 9 | client -> server | `0x808B` | 16 + 2n | the confirm: the header, a counted name of `n` units, the packed appearance word and eight more bytes - 32 for a name of eight units, 30 for seven |
-| 10 | server -> client | `0x0188` | 102 for a name of eight units | written: the header, the id, the name, `0x2211`, the settings block |
+| 10 | server -> client | `0x0188` | 102 for a name of eight units | written: the header, the id, the name, a **map id**, the settings block. The u16 is a map id, not the `0x2211` OpenTyria fills it with: the creation capture carries `416`, the creation instance, there |
 | 11 | server -> client | `0x0099` | 5 | and where the character now is: the map it starts in. Without it the client dials the creation instance back and waits there |
-| 12 | server -> client | `0x018B` | 6 | refused: the header and the error code |
-| 13 | client -> server | `0x0084` | 12 per piece | the seven dye requests a client makes while a profession change is being applied |
+| 12 | server -> client | `0x018B` | 6 | refused: the header and the error code, which the client turns into text - 25 "you already have a character with the name", 29 "already in use by another player", 31 "not permitted", anything else its generic network error |
+| 13 | client -> server | `0x0084` | 4 per piece | the colour of one armour slot: `u8 equipSlot, u8 colour`. Seven follow **every** `0x8060`, in the fixed slot order **4, 2, 3, 6, 5, 0, 1**, carrying the five armour-piece colours and the two hand slots' - the creation screen's dye choice, not a field of `0x008B` |
 
 - The live client struct capture `ASURA/recordings/client/feature/character_creation/
   character_creation-live-necro_factions.jsonl` records five `0x014D` followed by `0x00B7`, `0x00DB`
@@ -126,11 +126,16 @@ The frames, with the reference's own wire sizes:
   today is the reference's six bags, its pre-choice items and the chosen set, which is enough for the
   client to have an inventory model to draw.
 - The screens are the client's, and the wire carries their outcome: the campaign and profession go out as
-  `0x8060` as the choice changes (E76's preview is that same pair), and what the appearance and name
-  screens collect arrives in the confirm - the counted name, the packed word holding sex, height, skin,
-  hair colour, face, profession and campaign, and eight more bytes (E73, E74). The owner's description of
-  the screen order is `docs/game-rules.md` R59-R67. Where R64's five armour-piece colours and R66's three
-  flags travel is not recorded by any source here.
+  `0x8060` - `u8 chapter, u8 profession`, chapter `0` for a PvP character and `1`-`3` for Prophecies,
+  Factions, Nightfall - as the choice changes, and what the appearance and name screens collect arrives
+  in the confirm: the counted name, the packed word holding sex, height, skin, hair colour, face,
+  profession and campaign, then 8 bytes of which only the first 4 are read, then the three flags
+  (Reforged `0x1`, Dhuum `0x2`, Melandru `0x4`). The owner's description of the screen order is
+  `docs/game-rules.md` R59-R67, and what the client's own code says about each screen is E221-E229.
+- **A colour is not a field of the confirm.** The five armour-piece colours leave as seven `0x0084`
+  after every `0x8060`, in the fixed slot order `4, 2, 3, 6, 5, 0, 1`; this tree answers the preview but
+  never reads those, so a created character's armour keeps the colours in `data/equipment.json`
+  (`docs/game-rules.md` E226-E227).
 - In this tree: `game/src/Server/Packets/`, the size table in `WorldSession`, and the row the confirm
   writes (`docs/decisions/0007-character-schema.md`).
 

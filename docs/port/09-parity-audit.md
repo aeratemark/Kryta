@@ -4,6 +4,12 @@ The ledger of Rule 0 (`AGENTS.md`). **Scope: the protocol and the packets only**
 messages, their fields, their builders, their handlers and the order they go in. This tree's own
 structure is not audited here and does not need to be: it is AzerothCore's.
 
+When another research project appears to show additional behavior, use the packet-sequence
+completeness criterion in `docs/research-sources.md` before adding a subject here. The source's
+adapter, architecture, or client build does not disqualify its packet evidence; the question is whether
+it completes a packet contract Kryta does not. A larger table or an isolated packet builder is not, by
+itself, a missing Kryta function.
+
 Every number below was measured on 2026-11-12 by reading ASURA's table and this tree's tables with
 the same script and diffing them row by row (`target/diff-tables.py`, `target/diff-headers.py`; the
 scripts are scratch and are not committed, the findings are).
@@ -94,13 +100,13 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x803E` | `GAME_CMSG_MOVE_TO_COORD` (14) | `agent.rs:710` | `answer_move_to_coord` | ported |
 | `0x8047` | `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` | `agent.rs:1117`, then `dispatch.rs:60-68` | `answer_last_position`, then `cross_portal` | ported (a taken correction crosses a doorway like a step) |
 | `0x804F` | `GAME_CMSG_UNEQUIP_ITEM` (6) | `item.rs:555`, `handle_unequip_item` | `CLIENT_UNEQUIP_ITEM`: ASURA's answer, a log line and nothing on the wire | ported |
-| `0x8060` | `GAME_CMSG_CHAR_CREATION_CHANGE_PROF` (4) | `creation.rs:275` | handled | ported |
+| `0x8060` | `GAME_CMSG_CHAR_CREATION_CHANGE_PROF` (4) | `creation.rs:275` | handled | ported: the body is `chapter, profession`, chapter `0` for a PvP character and `1`-`3` for Prophecies, Factions, Nightfall (`docs/game-rules.md` E226); the client sends it on entry, on every campaign change and on every profession change, and follows each one with seven `0x8084` |
 | `0x8064` | `GAME_CMSG_SEND_CHAT_MESSAGE` (286) | `chat.rs:193`, `handle_chat_message` | `answer_chat_message` | ported |
 | `0x8072` | `GAME_CMSG_ITEM_MOVE` (9) | `item.rs:255`, `move_item` | `answer_item_move` | ported |
 | `0x8088` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_SPAWN` | `agent.rs:1219`, `map.rs:13-20` | `load_map`, the entry position | ported: one `0x0196` frame, which is `spawn_block` whole (the answer used to append a first `0x001E` of its own; the ticker sends the ticks) |
 | `0x8089` | `GAME_CMSG_CHAR_CREATION_REQUEST_PLAYER` (2) | `creation.rs:190` | handled | ported |
 | `0x808A` | `GAME_CMSG_CHAR_CREATION_REQUEST_ARMORS` (2) | `creation.rs:259` | handled | ported |
-| `0x808B` | `GAME_CMSG_CHAR_CREATION_CONFIRM` (58) | `creation.rs:346` | handled | ported |
+| `0x808B` | `GAME_CMSG_CHAR_CREATION_CONFIRM` (58) | `creation.rs:346` | handled | **ported thin**: the counted name and the appearance word are read and written; the next dword (8 bytes of which only the first 4 are the appearance's unused half) and the trailing `createFlags` - Reforged `0x1`, Dhuum `0x2`, Melandru `0x4` (`docs/game-rules.md` E222-E223) - are read by neither this tree nor ASURA, and no column stores them |
 | `0x8090` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_PLAYERS` (19) | `player.rs:430` | handled | ported |
 | `0x8091` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_ITEMS` (4) | `item.rs:448` | handled | ported: ASURA sends no `0x015E` either |
 | `0x80B1` | `GAME_CMSG_PARTY_TRAVEL` (9) | `travel.rs:279`, `handle_party_travel` | `answer_party_travel` and `begin_transfer` | ported |
@@ -187,10 +193,10 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x017C` | instance load head | `instance_load_head(pve, pvp)` | `(0x3F, 0x3F)` - ASURA's own default | ported |
 | `0x017D` | the player's name | `instance_load_player_name` | same | ported |
 | `0x0186` | player-data start | `instance_player_data_start` | same | ported |
-| `0x0188` | creation success (1092) | `char_creation_success` | same | ported |
+| `0x0188` | creation success (1092) | `char_creation_success` | same | ported: the u16 after the name is a **map id** - the capture carries the creation instance `416` there, and two lineages name the field `mapId`; OpenTyria's `0x2211` is its own filler (`docs/game-rules.md` E231) |
 | `0x0189` | creation start | `char_creation_start` | same | ported |
 | `0x018A` | player-data done | `instance_player_data_done` | same | ported |
-| `0x018B` | creation error | `char_creation_error` | same | ported |
+| `0x018B` | creation error | `char_creation_error` | same | **ported thin**: the body is a `u32` code, and the code this tree sends is `0x0106` (262), which appears in no reading of the client's own create-error table - 25 "already have a character with the name", 29 "already in use", 31 "not permitted" per the binary read, 39 per a second client-table read (`docs/game-rules.md` E230) - so a refused name shows the client's generic network error instead of the name message |
 | `0x018E` | the load is over | `instance_load_finish` | same | ported |
 | `0x0196` | the entry position (26) | `instance_load_spawn_point` | same | ported |
 | `0x0198` | manifest done | `instance_manifest_done(phase, map_id)` | the 877 sentinel then the map, as ASURA sends them | ported |
@@ -221,7 +227,7 @@ setting that selects one.
 |---|---|---|---|
 | the greeting before the login | `session_info` then `heartbeat` | same | ported |
 | the login answer | one `character_info` per character, `account_settings`, `friend_stream_end`, `account_info`, `request_response` (`asura-auth/src/lib.rs:669-746`) | same five, same order | ported |
-| the creation conversation | `0x8089` -> the player-data block; `0x808A` -> the PvP half; `0x8060` -> removals, `0x00DB`, `0x00B7`, the new set; `0x808B` -> `0x0188` + `0x0099` (`creation.rs:190-519`) | same | ported |
+| the creation conversation | `0x8089` -> the player-data block; `0x808A` -> the PvP half; `0x8060` -> removals, `0x00DB`, `0x00B7`, the new set; `0x808B` -> `0x0188` + `0x0099` (`creation.rs:190-519`) | same | ported, with one message neither tree answers: after each `0x8060` the client sends seven `0x8084` (`{u8 equipSlot, u8 colour}`, slots `4, 2, 3, 6, 5, 0, 1`) carrying the armour colours it picked, and both trees ignore them - the created armour keeps the colours the equipment data names (`docs/game-rules.md` E226-E227) |
 | the items ask | the stream, the bags and items, four weapon sets, the gold, four faction caps, the hard-mode flag, the character summary, the map, ready-for-spawn, the manifest (`item.rs:70`) | same, plus the reference's own `0x0196`-before-manifest order | ported |
 | the spawn ask | the entry point (`agent.rs:1219`, `map.rs:13-20`) | the same one frame | ported |
 | the players ask | 34 frames, in one order (`player.rs:382-388` for the party) | the same 34, the same order | ported |
