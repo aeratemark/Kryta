@@ -13,7 +13,9 @@
 //!
 //! Run with `cargo test -p worldserver --test end_to_end -- --ignored --nocapture`, with the two
 //! servers of the same databases not running - the live world's sweep would otherwise dispose the
-//! instance row this test checks.
+//! instance row this test checks. The world's console output must carry its debug lines too (the
+//! `Console` appender at level 5 and the `server` logger at 5): the test reads a load's size from the
+//! program's own "is loading" line, the same line an operator reads in `Server.log`.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;

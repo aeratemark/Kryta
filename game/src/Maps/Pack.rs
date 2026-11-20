@@ -181,9 +181,14 @@ impl Pack {
                 });
             }
             for arrival in record.rows("arrivals")? {
+                // The file's own key is `from` (`ASURA/crates/asura-world/src/portals.rs:16-22`,
+                // `Arrival { from, x, y, angle }`): the receiving map states where a character
+                // arriving *from* that map stands. Reading a different name here left every arrival
+                // with source map 0, so a doorway crossing could not find its landing and a map
+                // with no spawn list (an explorable such as Lakeside County) refused its load.
                 self.arrivals.push(Arrival {
                     map_id: id,
-                    from_map: number(&arrival, "from_map")?.unwrap_or(0) as u32,
+                    from_map: number(&arrival, "from")?.unwrap_or(0) as u32,
                     x: float(&arrival, "x")?,
                     y: float(&arrival, "y")?,
                     plane: number(&arrival, "plane")?.unwrap_or(0) as i16,
@@ -293,6 +298,28 @@ mod tests {
         // an instance value is a destination the client can name and this world cannot load.
         let hostable = maps.iter().filter(|map| map.kind.is_some()).count();
         assert_eq!(hostable, 145, "the hostable records");
+    }
+
+    /// An arrival names the map it comes from, under the file's own key (`from`, ASURA's
+    /// `portals.rs` `Arrival { from, x, y, angle }`). A reader that looks for another name leaves
+    /// every arrival with source map 0, and then a doorway crossing finds no landing: the map it
+    /// leads to (an explorable such as Lakeside County, which states no spawn list) refuses its load.
+    #[test]
+    fn an_arrival_names_the_map_it_comes_from() {
+        let pack = shipped();
+        let arrivals = pack.arrivals().expect("the arrivals");
+        let lakeside = arrivals
+            .iter()
+            .find(|arrival| arrival.map_id == 146 && arrival.from_map == 148)
+            .expect("map 146 states an arrival from 148 in its own portals.json");
+        assert!(
+            (lakeside.x - 6602.0).abs() < 0.01 && (lakeside.y - 4485.0).abs() < 0.01,
+            "the arrival is the file's own point, {lakeside:?}"
+        );
+        assert!(
+            arrivals.iter().all(|arrival| arrival.from_map != 0),
+            "an arrival with source map 0 is a read that missed the file's `from` key"
+        );
     }
 
     #[test]

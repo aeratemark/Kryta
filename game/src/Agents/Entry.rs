@@ -48,10 +48,13 @@ pub struct Entering<'a> {
 
 /// Where the character stands on entry, or `None` when the map has nowhere to put it.
 ///
-/// The three branches are ASURA's, in its order: a crossing's landing wins; an **outpost** is entered
-/// at a random point of its own list, scattered (R13); every other map resumes where the character
-/// left it when it left from this map, and stands on the map's own first point otherwise
-/// (`agent.rs:478-545`). A point with no angle keeps `(1, 0)` (`map_spawns.rs:44-53`).
+/// The branches are ASURA's `Standing::arrival` (`agent.rs:478-545`), in its order: a doorway's
+/// landing wins; an **outpost** is entered at a random point of its own list, scattered (R13); every
+/// other map resumes where the character left it when it left from this map, and stands on the map's
+/// own first point otherwise. A map that states neither a point nor a saved position cannot be
+/// entered - the character-creation instance is the one exception, because it is a conversation and
+/// its catalogue row states no coordinate (see below). A point with no angle keeps `(1, 0)`
+/// (`map_spawns.rs:44-53`).
 pub fn entry_point(entering: &Entering) -> Option<(f32, f32, u16, (f32, f32))> {
     if let Some(landing) = entering.landing
         && landing.map_id == entering.map.id
@@ -69,53 +72,72 @@ pub fn entry_point(entering: &Entering) -> Option<(f32, f32, u16, (f32, f32))> {
         .filter(|spawn| spawn.map_id == entering.map.id)
         .copied()
         .collect();
-    if points.is_empty() {
+    if entering.map.kind == Some(map_kind::OUTPOST) {
+        if points.is_empty() {
+            // `Standing::arrival`: "outpost {} has no configured random spawn list".
+            return None;
+        }
+        let mut pick = [0u8; 8];
+        let choice = if getrandom::getrandom(&mut pick).is_ok() {
+            (u64::from_le_bytes(pick) % points.len() as u64) as usize
+        } else {
+            0
+        };
+        let point = points[choice];
+        let scatter = entering.scatter;
+        let mut angle = [0u8; 8];
+        let (dx, dy) = if getrandom::getrandom(&mut angle).is_ok() {
+            let raw = u64::from_le_bytes(angle);
+            let radians = (raw % 360) as f32 * std::f32::consts::PI / 180.0;
+            let radius = ((raw / 360) % scatter.max(1.0) as u64) as f32;
+            (radius * radians.cos(), radius * radians.sin())
+        } else {
+            (0.0, 0.0)
+        };
+        return Some((
+            point.x + dx,
+            point.y + dy,
+            point.plane.max(0) as u16,
+            point.direction(),
+        ));
+    }
+    // Every map that is not an outpost: the saved position is used only when it is a position in
+    // this map (a character saved elsewhere has no coordinate here), and a map that states neither
+    // a point nor a saved position refuses the load. The character-creation instance is exempt: it
+    // is a conversation that loads no geometry.
+    let saved_here = entering
+        .saved
+        .filter(|saved| saved.map_id == entering.map.id);
+    if saved_here.is_none()
+        && points.is_empty()
+        && entering.map.kind != Some(map_kind::CREATION)
+    {
+        // `Standing::arrival`: "map {} has no configured entry spawn or doorway arrival".
         return None;
     }
-    if entering.map.kind != Some(map_kind::OUTPOST) {
-        if let Some(saved) = entering.saved
-            && saved.map_id == entering.map.id
-        {
-            return Some((
-                saved.x,
-                saved.y,
-                saved.plane.max(0) as u16,
-                // A resumed position keeps the default direction: the facing of a saved position is
-                // not stored (`agent.rs:536-545`).
-                (1.0, 0.0),
-            ));
-        }
-        let first = points[0];
+    if let Some(saved) = saved_here {
         return Some((
+            saved.x,
+            saved.y,
+            saved.plane.max(0) as u16,
+            // A resumed position keeps the default direction: the facing of a saved position is not
+            // stored (`agent.rs:536-545`).
+            (1.0, 0.0),
+        ));
+    }
+    match points.first() {
+        Some(first) => Some((
             first.x,
             first.y,
             first.plane.max(0) as u16,
             first.direction(),
-        ));
+        )),
+        // The character-creation instance: `Standing::from_map` stands the character on the
+        // catalogue row's coordinate, and a row that states none is zero (`map_config.spawn_x`
+        // defaults to 0). This load is a conversation - the creation block is sent instead of a map
+        // load - so the point is never drawn.
+        None => Some((0.0, 0.0, 0, (1.0, 0.0))),
     }
-    let mut pick = [0u8; 8];
-    let choice = if getrandom::getrandom(&mut pick).is_ok() {
-        (u64::from_le_bytes(pick) % points.len() as u64) as usize
-    } else {
-        0
-    };
-    let point = points[choice];
-    let scatter = entering.scatter;
-    let mut angle = [0u8; 8];
-    let (dx, dy) = if getrandom::getrandom(&mut angle).is_ok() {
-        let raw = u64::from_le_bytes(angle);
-        let radians = (raw % 360) as f32 * std::f32::consts::PI / 180.0;
-        let radius = ((raw / 360) % scatter.max(1.0) as u64) as f32;
-        (radius * radians.cos(), radius * radians.sin())
-    } else {
-        (0.0, 0.0)
-    };
-    Some((
-        point.x + dx,
-        point.y + dy,
-        point.plane.max(0) as u16,
-        point.direction(),
-    ))
 }
 
 #[cfg(test)]
@@ -248,9 +270,47 @@ mod tests {
         assert_eq!(point, Some((123.0, 456.0, 1, (1.0, 0.0))));
     }
 
-    /// A map with no spawn point of its own cannot be entered at all.
+    /// A map with no spawn point of its own and no saved position cannot be entered: this is an
+    /// explorable entered from nowhere (`Standing::arrival`: "map {} has no configured entry spawn
+    /// or doorway arrival").
     #[test]
-    fn a_map_with_no_point_of_its_own_has_no_entry() {
+    fn a_map_with_no_point_and_no_saved_position_has_no_entry() {
+        let map = explorable();
+        let point = entry_point(&Entering {
+            map: &map,
+            spawns: &[],
+            landing: None,
+            saved: None,
+            scatter: 250.0,
+        });
+        assert_eq!(point, None);
+    }
+
+    /// A saved position in the map itself is resumed even when the map states no spawn list at all:
+    /// the character is standing there, so there is nowhere else it could be. This is the ASURA rule
+    /// whose check runs before the spawn list is consulted (`agent.rs:531-545`).
+    #[test]
+    fn a_saved_position_in_a_map_with_no_spawn_list_is_resumed() {
+        let map = explorable();
+        let point = entry_point(&Entering {
+            map: &map,
+            spawns: &[],
+            landing: None,
+            saved: Some(Position {
+                map_id: 146,
+                x: 6602.0,
+                y: 4485.0,
+                plane: 0,
+            }),
+            scatter: 250.0,
+        });
+        assert_eq!(point, Some((6602.0, 4485.0, 0, (1.0, 0.0))));
+    }
+
+    /// An outpost with no spawn list cannot be entered either, and says so with the outpost's own
+    /// refusal (`Standing::arrival`).
+    #[test]
+    fn an_outpost_with_no_spawn_list_has_no_entry() {
         let map = outpost();
         let point = entry_point(&Entering {
             map: &map,
@@ -260,5 +320,27 @@ mod tests {
             scatter: 250.0,
         });
         assert_eq!(point, None);
+    }
+
+    /// The character-creation instance is a conversation, not a place: it states no spawn point and
+    /// the load never runs, and the rule answers the catalogue row's coordinate (zero when the row
+    /// states none) instead of refusing (`Standing::arrival`/`Standing::from_map`).
+    #[test]
+    fn the_creation_instance_needs_no_spawn_list() {
+        let map = MapEntry {
+            id: 0,
+            kind: Some(map_kind::CREATION),
+            file_id: 0,
+            name: "Character Creation".to_string(),
+            instance_value: None,
+        };
+        let point = entry_point(&Entering {
+            map: &map,
+            spawns: &[],
+            landing: None,
+            saved: None,
+            scatter: 250.0,
+        });
+        assert_eq!(point, Some((0.0, 0.0, 0, (1.0, 0.0))));
     }
 }

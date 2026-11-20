@@ -485,10 +485,11 @@ keeps its traversal order, its tie-breaking and its quirks; the dump keeps its b
 2. **(done)** The doorway crossing (`portals.rs`, whole) and the travel's cycle, so a step through a
    map's own wall starts a transfer that lands on the receiving map's arrival. What is not here is
    named in 7.4: ASURA's seat reservation, which is its own deployment accounting.
-3. **(done)** The catalogue and the instance table's content: every record ASURA's pack states is a row
-   (265 of them: 145 with a type and an archive file - the maps this world puts a client in - and 120
-   that state only an `instance_value`, which is a destination the client can resolve and this world
-   cannot load), with 466 spawn points, 28 arches and 28 arrivals from the same per-map files. A load
+3. **(done)** The catalogue and the instance table's content: the world pack states every record ASURA's
+   pack states (265 of them: 145 with a type and an archive file - the maps this world puts a client in -
+   and 120 that state only an `instance_value`, which is a destination the client can resolve and this
+   world cannot load), with 467 entry points, 28 arches and 28 arrivals from the same per-map files; an
+   arrival names the map it comes from under the file's `from` key, and the receiving map owns it. A load
    sends **137** `{instance, value}` pairs in ten `0x01A0` batches. On this machine the world starts
    with `World of 265 map(s), 145 of them hosted` and loads the shipped path-graph cache. The cache is
    intentionally partial: each bound map can path, while a hosted or custom map without a graph reports
