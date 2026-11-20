@@ -63,7 +63,8 @@
 //! as what it is, through [`Document::records`], so one file can hold both settings and rows without
 //! either being squeezed into the other's shape.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -198,8 +199,84 @@ impl Document {
         }
         Ok(records)
     }
+
+    /// One object as a record: the shape a file with a single thing in it has.
+    ///
+    /// `""` is the document's root, and a dotted path reaches into it. This is the third shape a file
+    /// can have: settings, a record list, and one thing - a map's own description, a card of a pack.
+    pub fn record(&self, path: &str) -> Result<Record<'_>, String> {
+        let node = if path.is_empty() {
+            &self.root
+        } else {
+            follow(&self.root, path).ok_or_else(|| {
+                format!(
+                    "> Config: {} holds no '{}'",
+                    self.filename.display(),
+                    path
+                )
+            })?
+        };
+        if !node.is_object() {
+            return Err(format!(
+                "> Config: '{}' in {} is a {}, but a record is an object of fields",
+                path,
+                self.filename.display(),
+                kind(node)
+            ));
+        }
+        Ok(Record {
+            at: if path.is_empty() {
+                "root".to_string()
+            } else {
+                path.to_string()
+            },
+            filename: &self.filename,
+            value: node,
+        })
+    }
 }
 
+/// The documents this process has read, each one parsed and validated once.
+///
+/// A file is read at load and held here, so a reader asks for it as often as it likes and the file is
+/// parsed once - and a file that does not parse fails **at load**, where the program can stop and say
+/// so, rather than on the first request that happens to need it. A file that fails is not cached: the
+/// next reader tries again and gets the same error, which is how a bad edit stays loud instead of
+/// half-remembered.
+#[derive(Debug, Default)]
+pub struct Store {
+    documents: Mutex<HashMap<PathBuf, Arc<Document>>>,
+}
+
+impl Store {
+    /// An empty store.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The document at `path`: read and validated on the first call, handed back from memory after.
+    pub fn document(&self, path: impl AsRef<Path>) -> Result<Arc<Document>, ConfigError> {
+        let path = path.as_ref();
+        if let Ok(documents) = self.documents.lock()
+            && let Some(document) = documents.get(path)
+        {
+            return Ok(Arc::clone(document));
+        }
+        let document = Arc::new(Document::read(path)?);
+        if let Ok(mut documents) = self.documents.lock() {
+            documents.insert(path.to_path_buf(), Arc::clone(&document));
+        }
+        Ok(document)
+    }
+
+    /// How many documents are held: what a start-up line reports.
+    pub fn held(&self) -> usize {
+        self.documents
+            .lock()
+            .map(|documents| documents.len())
+            .unwrap_or_default()
+    }
+}
 /// One row of a record list.
 #[derive(Debug, Clone)]
 pub struct Record<'a> {
@@ -801,5 +878,34 @@ mod tests {
         let error = document.records("accounts").unwrap_err();
         assert!(error.contains("is a object"), "{error}");
         assert!(document.records("nothing").unwrap_err().contains("holds no"));
+    }
+}
+
+#[cfg(test)]
+mod store_tests {
+    use super::*;
+
+    /// A file is parsed once: the second reader gets the same document, not a second parse.
+    #[test]
+    fn a_document_is_read_once() {
+        let path = std::env::temp_dir().join("kryta-store-once.json");
+        std::fs::write(&path, "{\"RealmServerPort\": 6112}").expect("the file");
+        let store = Store::new();
+        let first = store.document(&path).expect("the document reads");
+        let second = store.document(&path).expect("the second read is cached");
+        assert!(Arc::ptr_eq(&first, &second), "one parsed document, shared");
+        assert_eq!(store.held(), 1);
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// A file that does not parse fails here, at load, and is not remembered as if it had.
+    #[test]
+    fn a_broken_file_fails_at_load_and_is_not_cached() {
+        let path = std::env::temp_dir().join("kryta-store-broken.json");
+        std::fs::write(&path, "{ this is not json").expect("the file");
+        let store = Store::new();
+        assert!(store.document(&path).is_err(), "a broken file is an error now");
+        assert_eq!(store.held(), 0, "and nothing half-parsed is remembered");
+        std::fs::remove_file(&path).ok();
     }
 }

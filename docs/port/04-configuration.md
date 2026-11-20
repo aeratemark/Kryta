@@ -196,6 +196,15 @@ layout and not a judgement per feature: it is what the thing **is**.
 | **what a server writes** | the state: what exists right now, what a character has, where it stands | **database rows**, through the noun's repository | accounts, characters and their settings, a character's bags and items, open instances, unlocks, travel records |
 | **what the client dictates** | a value the client decides and the server can only obey | **a constant in the code that answers with it**, citing the capture | message headers and sizes, the file check's bytes, the account settings block |
 
+## A file is read once, and validated where it is read
+
+`common/src/Configuration/Json.rs` holds the store: `Store::document(path)` reads and validates a file
+the first time it is asked for and hands the same parsed document to every later reader, so a start-up
+pays for each file once and no request re-parses one. **A file that does not parse fails at load** - the
+program stops and names it - and a failed file is deliberately not cached, so the next reader gets the
+same error instead of a half-remembered document.
+
+`Store::held()` is what a start-up line reports: the number of documents this process actually read.
 ## A world is read from its files on every start, and nothing is seeded
 
 This is the design, not a preference. Every start of the program reads `config/`: the pack's maps, their
