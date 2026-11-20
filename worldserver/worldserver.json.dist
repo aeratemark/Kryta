@@ -65,14 +65,9 @@
     "doc": "The bags and items a character-creation screen is given - a record list, read at start-up. A client with no items has no inventory model to draw."
   },
 
-  "GwDat": {
-    "value": "Gw.dat",
-    "doc": "Path to the client's Gw.dat archive, where a map's geometry - the path graph a walk is answered from - lives. A world without it says so, and every walk answers NoGraph, which is what the working implementation answers for a map it holds no graph for."
-  },
-
   "PathGraphs": {
-    "value": "",
-    "doc": "A path-graph dump to answer walks from instead of importing them out of Gw.dat at start-up. Empty means import from the archive, which is what the working implementation does when no dump is named (ASURA/crates/asura-worldserver/src/main.rs:372-391). This tree has no dumper yet, so only a dump brought from there loads."
+    "value": "data/path-graphs.bin",
+    "doc": "The extracted ASURAPG1 path-graph cache the server reads at start-up. It may contain only the maps that have been dumped; an undumped or custom map answers NoGraph, and worldserver never reads Gw.dat. The manager's navigation tool inspects and updates this file."
   },
   "EquipmentFile": {
     "value": "data/equipment.json",

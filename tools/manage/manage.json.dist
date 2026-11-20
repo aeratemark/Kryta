@@ -85,6 +85,14 @@
     "value": "data/equipment.json",
     "doc": "The profession sets a creation screen may choose from. The content page lists them, which set carries what."
   },
+  "PathGraphsFile": {
+    "value": "data/path-graphs.bin",
+    "doc": "The portable extracted navigation cache. The manager inspects this file through /navigation and GET /api/navigation/maps; it is the file worldserver reads, never Gw.dat."
+  },
+  "MapArchiveFile": {
+    "value": "",
+    "doc": "An optional client archive used only when the manager explicitly dumps one selected map into PathGraphsFile. Empty disables the dump action. Worldserver never reads this setting."
+  },
 
   "ControlPort": {
     "value": 0,

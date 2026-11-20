@@ -400,70 +400,17 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
         ),
     );
 
-    // The client's own archive: the file a map's geometry is a chunk of. Its path is a setting, because
-    // where a client's `Gw.dat` sits is this machine's fact and not a law; a world started without one
-    // says so and every walk answers `NoGraph`, which is what it answers for a map it holds no graph
-    // for (`game/Pack/Gwdat.rs`, `ASURA/crates/asura-world/src/gwdat.rs`).
-    let (gw_dat, notes) = config
-        .value_string("GwDat", "Gw.dat")
-        .map_err(|error| error.to_string())?;
-    for note in notes {
-        report(&note);
-    }
-    match game::pack::GwDat::open(&gw_dat) {
-        Ok(archive) => log.out(
-            LogLevel::Info,
-            "server.worldserver",
-            format!(
-                "The client archive at {gw_dat} holds {} entries (header {} bytes, table at {}); a map's file id is looked up in it.",
-                archive.len(),
-                archive.header().header_size,
-                archive.header().mft_offset
-            ),
-        ),
-        Err(error) => log.out(
-            LogLevel::Warn,
-            "server.worldserver",
-            format!("No client archive at {gw_dat}: {error}. Every walk answers NoGraph until one is reachable (GwDat)."),
-        ),
-    }
-    // The path graphs, which is what a move to a point is answered from: the same blob a map's geometry
-    // comes from. `ASURA/crates/asura-worldserver/src/main.rs:366-391`, with the dump's name and the
-    // archive's path as this program's settings rather than that program's arguments (rule 7).
+    // The path graphs are extracted data. ASURA's standard startup at
+    // `crates/asura-worldserver/src/main.rs:366-391` may fall back to the client archive; Kryta's
+    // serving process is detached from that archive and reads only the shipped cache. A cache may be
+    // partial: maps it does not contain remain `NoGraph`, including future custom maps.
     let (graph_dump, notes) = config
-        .value_string("PathGraphs", "")
+        .value_string("PathGraphs", "data/path-graphs.bin")
         .map_err(|error| error.to_string())?;
     for note in notes {
         report(&note);
     }
-    let graphs = if graph_dump.trim().is_empty() {
-        load_graphs_from_archive(&gw_dat, &hostable, &log)
-    } else {
-        match game::terrain::pathfind::PathGraphs::from_dump(&graph_dump) {
-            Ok(graphs) => {
-                let bound = graphs.bind(&hostable);
-                log.out(
-                    LogLevel::Info,
-                    "server.worldserver",
-                    format!(
-                        "Path graphs from the dump {graph_dump}: {bound} of {} map(s) bound.",
-                        world.maps().len()
-                    ),
-                );
-                graphs
-            }
-            Err(error) => {
-                log.out(
-                    LogLevel::Warn,
-                    "server.worldserver",
-                    format!(
-                        "Could not read the path-graph dump {graph_dump}: {error}; falling back to {gw_dat}."
-                    ),
-                );
-                load_graphs_from_archive(&gw_dat, &hostable, &log)
-            }
-        }
-    };
+    let graphs = load_path_graphs(&graph_dump, &hostable, &log)?;
     world.set_graphs(graphs);
 
     let (bags, items, sets) = world.load_creation(&inventory_file, &equipment_file, &log)?;
@@ -927,45 +874,30 @@ impl Options {
     }
 }
 
-/// Import the graphs out of a `Gw.dat`, logging what was found or why nothing was.
+/// Load the extracted cache before opening the listener.
 ///
-/// `ASURA/crates/asura-worldserver/src/main.rs:542-567`, `load_graphs_from_archive`: the count, the
-/// catalogue's size and the map ids that are pathable, or the reason every walk will be refused.
-fn load_graphs_from_archive(
-    archive: &str,
+/// The cache is not required to cover every map. The archive is intentionally absent from this call
+/// path: a missing graph belongs to that map, not to server startup.
+fn load_path_graphs(
+    dump: &str,
     maps: &[game::world::MapEntry],
     log: &Log,
-) -> game::terrain::pathfind::PathGraphs {
-    match game::terrain::pathfind::PathGraphs::load(archive, maps) {
-        Ok(graphs) => {
-            let with_graphs = graphs.maps();
-            log.out(
-                LogLevel::Info,
-                "server.worldserver",
-                format!(
-                    "Path graphs from {archive}: {} of {} map(s) ({}).",
-                    with_graphs.len(),
-                    maps.len(),
-                    with_graphs
-                        .iter()
-                        .map(|map_id| map_id.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-            );
-            graphs
-        }
-        Err(error) => {
-            log.out(
-                LogLevel::Warn,
-                "server.worldserver",
-                format!(
-                    "No path graphs, so every walk will be refused: could not open {archive}: {error}. Point GwDat at the client archive, or PathGraphs at a dump written by ASURA's dumper (this tree has none yet)."
-                ),
-            );
-            game::terrain::pathfind::PathGraphs::empty()
-        }
+) -> Result<game::terrain::pathfind::PathGraphs, String> {
+    if dump.trim().is_empty() {
+        return Err("PathGraphs must name the extracted path-graph cache".to_string());
     }
+    let graphs = game::terrain::pathfind::PathGraphs::from_dump(dump)
+        .map_err(|error| format!("cannot read PathGraphs {dump}: {error}"))?;
+    let bound = graphs.bind(maps);
+    log.out(
+        LogLevel::Info,
+        "server.worldserver",
+        format!(
+            "Path graphs from {dump}: {bound} of {} hosted map(s) bound; other maps have no graph.",
+            maps.len()
+        ),
+    );
+    Ok(graphs)
 }
 
 fn print_usage() {

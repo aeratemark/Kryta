@@ -266,10 +266,11 @@ setting that selects one.
    `graph_dump.rs`), the table-driven arithmetic (`Terrain/PathTables.rs`: `PathReciproc` and
    `PathSqrt`) and the finder (`Terrain/Pathfind.rs` plus `Pathfind/Directional.rs`) are all in, and
    the world installs them before its listener opens (`worldserver/src/main.rs`, port of
-   `ASURA/crates/asura-worldserver/src/main.rs:366-391`): `PathGraphs` from the `PathGraphs` dump when
-   one is named, from `Gw.dat` otherwise, and a map with no graph still answers `NoGraph` and nothing
-   on the wire, exactly as the working implementation does. Proved on this machine's archive: the
-   world logs `Path graphs from F:/GW/GW1/Gw.dat: 1 of 2 map(s) (148)`, and map 148 - entry
+   `ASURA/crates/asura-worldserver/src/main.rs:366-391`). Kryta deliberately omits ASURA's archive
+   fallback: it loads the shipped `PathGraphs` cache, binds whichever maps it contains, and a map with
+   no graph answers `NoGraph` and nothing on the wire (`docs/decisions/0014-headless-navigation-assets.md`).
+   The importer remains an offline management capability. It was proved against this machine's archive:
+   map 148 - entry
    `0x0001B97D`, whose path chunk is `0x20000008` (`0xEEFE704C` signature, version 12) - walks from its
    own spawn point `(9541.87, 4796.46)` to `(9600, 4850)` with `Found`.
    The three move handlers broadcast their answer to the other players in the copy before the walker
@@ -450,11 +451,10 @@ road.
      unimportable blob and an absent one), `PathGraphs::load` (1507) and `PathGraphs::import` (1562).
      A test loads map 148 from this machine's real `Gw.dat` through `PathGraphs::load`, binds it, and
      **the map walks from its own spawn point** - while map 146, unbound, still answers `NoGraph`.
-     **The walking subject is ported end to end and wired in**: the world program installs the graphs
-     before its listener opens (`worldserver/src/main.rs`, port of
-     `ASURA/crates/asura-worldserver/src/main.rs:366-391` - a `PathGraphs` dump when one is named,
-     `Gw.dat` otherwise), `World` holds them, and `WorldSession` answers `0x803E` and `0x803D` from
-     them. On this machine the world logs `Path graphs from F:/GW/GW1/Gw.dat: 1 of 2 map(s) (148)`.
+     **The walking subject is ported end to end and wired in**: before its listener opens, the world
+     program reads its required extracted `PathGraphs` cache (`worldserver/src/main.rs`). It never
+     opens `Gw.dat`; the manager performs a selected-map export offline. `World` holds the resulting
+     graphs and `WorldSession` answers `0x803E` and `0x803D` from them.
    - `PathStaticData::import` (490) and `read` (506): the `PATH_DATA_SIGNATURE`/`PATH_DATA_VERSION`
      check, then `read_planes` (535) -> `read_plane` (551) -> per plane `read_counts` (578),
      `skip_tag11` (606), `read_vectors` (618), `read_trapezoids` (639), `read_root_node` (681),
@@ -469,9 +469,9 @@ road.
      trapezoid naming itself as its neighbour answering `None` (1025), the spawn points of the
      reference's configured maps landing inside the graphs in the archive (1045), and a plane walking
      to the position's trapezoid and stopping at a dead end (1146).
-   Then the three callers that need it, in one commit: `import_graph` (pathfind.rs 1703-1744) and
-   `PathGraphs::load` / `PathGraphs::import` (1507-1592); the world's start-up then reads a `Gw.dat`
-   (or a dump) the way ASURA does.
+   `import_graph` (pathfind.rs 1703-1744) and `PathGraphs::load` / `PathGraphs::import`
+   (1507-1592) remain archive-import tools; `worldserver` instead reads the extracted dump through
+   `PathGraphs::from_dump`.
 
 Nothing in 1-4 is restructured or improved. The types keep ASURA's names and field order; the search
 keeps its traversal order, its tie-breaking and its quirks; the dump keeps its byte layout.
@@ -490,8 +490,9 @@ keeps its traversal order, its tie-breaking and its quirks; the dump keeps its b
    that state only an `instance_value`, which is a destination the client can resolve and this world
    cannot load), with 466 spawn points, 28 arches and 28 arrivals from the same per-map files. A load
    sends **137** `{instance, value}` pairs in ten `0x01A0` batches. On this machine the world starts
-   with `World of 265 map(s), 145 of them hosted`, imports **144** graphs out of `Gw.dat` in 12 s, and
-   holds 131 MB.
+   with `World of 265 map(s), 145 of them hosted` and loads the shipped path-graph cache. The cache is
+   intentionally partial: each bound map can path, while a hosted or custom map without a graph reports
+   `NoGraph`. `worldserver` never opens `Gw.dat`.
 
 ## 9. The world crate, file by file: what "ported" means here
 
@@ -527,7 +528,7 @@ because the reference's structure is this tree's authority for how a thing is ar
 | `instance_table.rs` | 223 | `game/Maps/InstanceTable.rs` | ported; the content is every `map` row with an `instance_value` |
 | `cartography.rs` | 219 | `game/Maps/Cartography.rs` | ported: the grid's announcement and its slices |
 | `dispatch.rs` | 218 | the dispatch in `WorldSession` | ported: 22 arms, 37 messages |
-| `spawns.rs` | 197 | `GwDat`/`PathGraphs` settings, `World.SpawnScatter` | ported as configuration |
+| `spawns.rs` | 197 | `PathGraphs` setting, `World.SpawnScatter` | ported as configuration |
 | `capture.rs` | 195 | nothing | ASURA's own capture reader (see `replay.rs`) |
 | `character_defaults.rs` | 186 | `World.Appearance` | ported as configuration |
 | `travel_targets.rs` | 166 | `game/Maps/TravelTargets.rs` | ported: the twenty aliases |
@@ -546,9 +547,9 @@ Two crates beside it carry rules the login and the world both use:
 | `asura-rules/src/lib.rs` | 283 | `game/Maps/Placement.rs` | ported whole; its one datum is 7a's decision |
 | `asura-auth/src/lib.rs` + `travel.rs` | 933 + 339 | `authserver/src/Server/` | ported: the 15 auth messages, the file check, the portal login, the travel record |
 
-**The catalogue, measured on this machine.** `cargo test -p game --lib every_hosted_map -- --ignored --nocapture`
-imports all 144 graphs out of `Gw.dat` and asks every hosted map with a spawn point to walk from one of its
-own points to a nearby one: **136 of 138 walk**, none answers `NoGraph`, and the two that refuse are
+**The catalogue, measured on this machine before the headless separation.** `cargo test -p game --lib every_hosted_map -- --ignored --nocapture`
+formerly imported 144 graphs out of `Gw.dat` and asked every hosted map with a spawn point to walk from one of its
+own points to a nearby one: **136 of 138 walked**, none answered `NoGraph`, and the two that refused were
 `119` (Augury Rock mission) and `642` (Eye of the North outpost). Both are `unplaced` records whose
 `spawns.json` states no plane, so the row says plane 0 while the point lies on plane 21 and 22
 (`trapezoid_at` finds it there) - and ASURA reads the same 0 (`map_spawns.rs:36-38`,

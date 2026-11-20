@@ -12,6 +12,7 @@
 //! database to point at.
 
 mod pages;
+mod navigation;
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -66,6 +67,10 @@ pub struct Manage {
     /// The creation record lists' paths: the content page shows the profession sets they hold.
     inventory_file: Option<String>,
     equipment_file: Option<String>,
+    /// The portable graph cache the manager inspects and selected-map exports update.
+    path_graphs_file: String,
+    /// An explicit client archive used only by the manager's offline dump action.
+    map_archive_file: String,
     /// The running world's local control endpoint, when `manage.json` names one: the status page asks
     /// it for `world.status`. This is the manager's connection to the world, never a second world.
     control: Option<Control>,
@@ -106,6 +111,10 @@ impl Manage {
             ("POST", "/services/restart") => self.service_action(request, "restart"),
             ("GET", "/configuration") => pages::configuration(),
             ("GET", "/assets") => pages::assets(),
+            ("GET", "/navigation") => pages::navigation_cache(self, None),
+            ("POST", "/navigation/dump") => self.dump_navigation_page(request),
+            ("GET", "/api/navigation/maps") => self.navigation_api(),
+            ("POST", "/api/navigation/dump") => self.dump_navigation_api(request),
             ("GET", "/console") => pages::console(self, None),
             ("POST", "/console/run") => self.run_operation(request),
             ("GET", "/logs") => pages::logs(),
@@ -295,6 +304,96 @@ impl Manage {
             };
         let result = self.world_operation(operation, &arguments);
         pages::console(self, Some((operation, arguments, result)))
+    }
+
+    /// Inspect the extracted graphs. This manager API reads an operator asset, not state the running
+    /// world owns, so it does not go through the world-operation queue.
+    pub fn inspect_navigation(&self) -> Result<navigation::Inspection, String> {
+        navigation::inspect(&self.path_graphs_file)
+    }
+
+    fn dump_navigation(&self, map_id: u32) -> Result<navigation::DumpResult, String> {
+        if self.map_archive_file.trim().is_empty() {
+            return Err("MapArchiveFile is empty; the manager has no archive selected for offline extraction".to_string());
+        }
+        let Some(source) = self.maps.as_ref() else {
+            return Err("no world database is configured, so the manager cannot resolve a map id".to_string());
+        };
+        let (maps, _) = source.load()?;
+        let map = maps
+            .iter()
+            .find(|map| map.id == map_id)
+            .ok_or_else(|| format!("map {map_id} is not in the world database"))?;
+        navigation::dump_map(&self.path_graphs_file, &self.map_archive_file, map)
+    }
+
+    fn navigation_api(&self) -> Response {
+        match self.inspect_navigation() {
+            Ok(inspection) => Response::new(
+                200,
+                "application/json; charset=utf-8",
+                serde_json::json!({
+                    "path": inspection.path,
+                    "bytes": inspection.bytes,
+                    "maps": inspection.maps.iter().map(|map| serde_json::json!({
+                        "map_id": map.map_id,
+                        "file_id": map.file_id,
+                        "planes": map.planes,
+                        "trapezoids": map.trapezoids,
+                    })).collect::<Vec<_>>(),
+                })
+                .to_string(),
+            ),
+            Err(error) => Response::new(
+                500,
+                "application/json; charset=utf-8",
+                serde_json::json!({"error": error}).to_string(),
+            ),
+        }
+    }
+
+    fn dump_navigation_api(&self, request: &Request) -> Response {
+        let map_id = form_fields(&request.body_text())
+            .get("map_id")
+            .and_then(|value| value.parse::<u32>().ok());
+        let Some(map_id) = map_id else {
+            return Response::new(400, "application/json; charset=utf-8", "{\"error\":\"map_id is required\"}");
+        };
+        match self.dump_navigation(map_id) {
+            Ok(result) => Response::new(
+                200,
+                "application/json; charset=utf-8",
+                serde_json::json!({
+                    "map_id": result.map_id,
+                    "file_id": result.file_id,
+                    "cache": result.cache,
+                    "graph_count": result.graph_count,
+                    "bytes": result.bytes,
+                })
+                .to_string(),
+            ),
+            Err(error) => Response::new(
+                400,
+                "application/json; charset=utf-8",
+                serde_json::json!({"error": error}).to_string(),
+            ),
+        }
+    }
+
+    fn dump_navigation_page(&self, request: &Request) -> Response {
+        let map_id = form_fields(&request.body_text())
+            .get("map_id")
+            .and_then(|value| value.parse::<u32>().ok());
+        let result = match map_id {
+            Some(map_id) => self.dump_navigation(map_id).map(|result| {
+                format!(
+                    "Dumped map {} from blob {:#X}; {} graph(s), {} bytes in {}.",
+                    result.map_id, result.file_id, result.graph_count, result.bytes, result.cache
+                )
+            }),
+            None => Err("A numeric map id is required.".to_string()),
+        };
+        pages::navigation_cache(self, Some(result))
     }
 
     fn set_eula(&self, request: &Request) -> Response {
@@ -1172,6 +1271,12 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
     } else {
         Some(equipment_file)
     };
+    let (path_graphs_file, _) = config
+        .value_string("PathGraphsFile", "data/path-graphs.bin")
+        .map_err(|error| error.to_string())?;
+    let (map_archive_file, _) = config
+        .value_string("MapArchiveFile", "")
+        .map_err(|error| error.to_string())?;
 
     let (control_port, _) = config
         .value::<u16>("ControlPort", 0)
@@ -1239,6 +1344,8 @@ fn run(config_path: &std::path::Path) -> Result<(), String> {
         auth_config,
         inventory_file,
         equipment_file,
+        path_graphs_file,
+        map_archive_file,
         control,
         supervisor,
         token: Some(token),

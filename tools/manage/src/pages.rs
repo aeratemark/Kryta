@@ -116,6 +116,7 @@ fn navigation(title: &str) -> String {
             &[
                 ("/configuration", "configuration", "configuration"),
                 ("/assets", "assets", "assets"),
+                ("/navigation", "navigation", "navigation"),
             ],
         ),
     ];
@@ -212,6 +213,52 @@ pub fn assets() -> Response {
         "<p>Generic JSON asset browsing, editing, validation, and saving are not implemented yet. \
          Step 6 will add that workflow without introducing specialized game-asset editors. This page \
          does not change game data.</p>",
+    )
+}
+
+/// The extracted path graphs, their inspection API, and the selected-map export action.
+pub fn navigation_cache(manage: &Manage, action: Option<Result<String, String>>) -> Response {
+    let outcome = match action {
+        Some(Ok(message)) => format!("<p class=\"note\">{}</p>", escape(&message)),
+        Some(Err(error)) => format!("<p class=\"note\">{}</p>", escape(&error)),
+        None => String::new(),
+    };
+    let cache = match manage.inspect_navigation() {
+        Ok(inspection) => {
+            let rows = inspection
+                .maps
+                .iter()
+                .map(|map| {
+                    format!(
+                        "<tr><td>{}</td><td><code>{:#X}</code></td><td>{}</td><td>{}</td></tr>",
+                        map.map_id, map.file_id, map.planes, map.trapezoids
+                    )
+                })
+                .collect::<String>();
+            format!(
+                "<p><code>{}</code>: {} bytes, {} graph(s). The JSON form is <code>/api/navigation/maps</code>.</p>\n\
+                 <table><tr><th>map id</th><th>file id</th><th>planes</th><th>trapezoids</th></tr>{rows}</table>",
+                escape(&inspection.path),
+                inspection.bytes,
+                inspection.maps.len()
+            )
+        }
+        Err(error) => format!("<p class=\"note\">{}</p>", escape(&error)),
+    };
+    page(
+        "navigation",
+        &format!(
+            "<p>This is the server-owned extracted navigation cache. The world reads it but never a client archive. \
+             A cache may intentionally omit maps; an omitted map has no graph. The manager API can inspect it \
+             and its dump action replaces one selected map from its explicit offline archive source.</p>\n\
+             {outcome}<h2>Path-graph cache</h2>{cache}\n\
+             <h2>Dump one map</h2><form class=\"editor-form\" method=\"post\" action=\"/navigation/dump\">\n\
+             <label>Map id<input required type=\"text\" name=\"map_id\" placeholder=\"148\"></label>\n\
+             <div class=\"actions\"><button>Dump map into cache</button></div></form>\n\
+             <p>The programmatic equivalent is <code>POST /api/navigation/dump</code> with form field \
+             <code>map_id</code>. It needs <code>MapArchiveFile</code> and the world database in \
+             <code>manage.json</code>.</p>"
+        ),
     )
 }
 
