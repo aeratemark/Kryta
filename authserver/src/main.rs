@@ -232,6 +232,60 @@ fn run(args: &[String]) -> Result<(), String> {
     let schema = std::path::Path::new("data/sql/base/db_auth");
     let files = collect_files(schema, UpdateState::Released)
         .map_err(|error| format!("the login schema at {} is not readable: {error}", schema.display()))?;
+    // The first administrator: a file, not a SQL seed (`config/Server/admin.json`,
+    // `docs/decisions/0013-the-admin-identity-is-a-file.md`). It is read at every start and writes an
+    // account only when the table is empty, so editing it later changes nothing about existing accounts.
+    {
+        let (admin_file, notes) = config
+            .value_string("AdminAccountFile", "config/Server/admin.json")
+            .map_err(|error| error.to_string())?;
+        for note in notes {
+            report(&note);
+        }
+        let path = std::path::Path::new(&admin_file);
+        if path.exists() {
+            let document = common::configuration::json::Document::read(path)
+                .map_err(|error| error.to_string())?;
+            let record = document.record("")?;
+            let username = record.required("username")?;
+            let token = record.required("password")?;
+            let user_id = record
+                .text("user_id")?
+                .unwrap_or_else(|| format!("00000000-0000-0000-0000-{:012X}", 0));
+            let empty = login
+                .query_with("SELECT count(*)::text FROM \"account\"", &[])
+                .map_err(|error| format!("the account table cannot be read: {error}"))?
+                .first()
+                .map(|row| row.get::<usize, String>(0) == "0")
+                .unwrap_or(false);
+            if empty {
+                login
+                    .query_with(
+                        "INSERT INTO \"account\" (\"username\", \"user_id\", \"token\", \"eula\", \"active\") \
+                         VALUES ($1, $2, $3, 1, true) ON CONFLICT (\"username\") DO NOTHING",
+                        &[&username, &user_id, &token],
+                    )
+                    .map_err(|error| format!("the first administrator cannot be written: {error}"))?;
+                log.out(
+                    LogLevel::Info,
+                    "server.authserver",
+                    format!("The first administrator '{username}' was created from {admin_file}."),
+                );
+            } else {
+                log.out(
+                    LogLevel::Debug,
+                    "server.authserver",
+                    format!("Accounts exist; {admin_file} is not applied."),
+                );
+            }
+        } else {
+            log.out(
+                LogLevel::Warn,
+                "server.authserver",
+                format!("No administrator file at {admin_file}: no account is created from a file."),
+            );
+        }
+    }
     let summary = login.apply_updates(&files, &log)?;
     log.out(
         LogLevel::Info,

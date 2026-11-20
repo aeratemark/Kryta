@@ -202,7 +202,11 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
         // operator wants the tables rebuilt from the files as they are. The world and login databases
         // hold state and no content, so dropping the schema there costs nothing that is not recreated;
         // the character database is refused, because it holds what players earned.
-        if reset_schema && kind != DatabaseKind::Character {
+        // Only the world database is reset: it holds state and no content, and the files rebuild it.
+        // The login database holds accounts and the character database holds what players earned, so
+        // neither is dropped by a flag - a changed file there is `--recheck-schema`, which deletes
+        // nothing (`docs/port/04-configuration.md`).
+        if reset_schema && kind == DatabaseKind::World {
             pool.query_with("DROP SCHEMA IF EXISTS public CASCADE", &[])
                 .map_err(|error| format!("the {label} schema cannot be dropped: {error}"))?;
             pool.query_with("CREATE SCHEMA public", &[])

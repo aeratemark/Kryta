@@ -1,0 +1,6 @@
+{
+  "note": "admin.json - the first administrator account, created when the account table is empty. Edit it before the first start; the program reads it at every start and creates the account only when there is none.",
+  "username": "admin",
+  "password": "admin",
+  "user_id": "0F5A2C1E-1111-2222-3333-444455556666"
+}
