@@ -74,6 +74,17 @@ const SELECT_CHARACTERS: &str = "SELECT \"uuid\", \"name\", \"appearance\", \"pr
 \"secondary_profession\", \"campaign\", \"level\", \"is_pvp\", \"helm_status\", \"last_outpost\" \
 FROM \"characters\"";
 
+/// The statement a creation confirm runs.
+///
+/// `ON CONFLICT (name) DO NOTHING` is the rule the reference enforces with a unique name: a name that
+/// is taken writes nothing, and the empty answer is what says so. The account is the portal's own uuid
+/// from the gameplay connection's version message, so the world needs no second database.
+const INSERT_CHARACTER: &str = "INSERT INTO \"characters\" (\"uuid\", \"account_uuid\", \"name\", \
+\"appearance\", \"primary_profession\", \"secondary_profession\", \"unlocked_professions\", \
+\"campaign\", \"level\", \"is_pvp\", \"helm_status\", \"gold\", \"last_outpost\", \"experience\") \
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
+ON CONFLICT (\"name\") DO NOTHING RETURNING 1";
+
 /// The row an item a character owns is: everything the client is told about it, plus where it sits.
 ///
 /// The definition lives on the row, not behind `template_id`: a load draws a character's items from
@@ -157,6 +168,78 @@ impl DatabaseCharacters {
     /// Every character, for the administration tool's page: the rows as they are, in name order.
     pub fn list(&self) -> Vec<Character> {
         self.read(&format!("{SELECT_CHARACTERS} ORDER BY \"name\""), Vec::new())
+    }
+
+    /// How many characters there are, without reading their rows.
+    pub fn count(&self) -> Result<usize, String> {
+        let reply = self.pool.lock().map_err(|_| {
+            "the character database pool is poisoned; no character can be counted".to_string()
+        })?
+        .query_reply("SELECT count(*)::bigint FROM \"characters\"", Vec::new());
+        match reply.recv() {
+            Ok(Ok(rows)) => rows
+                .first()
+                .map(|row| row.get::<usize, i64>(0) as usize)
+                .ok_or_else(|| "the character table counted no row".to_string()),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err("the character database answered no query: it is shutting down".to_string()),
+        }
+    }
+
+    /// How many characters each account owns, keyed by the portal uuid the account's own list uses.
+    ///
+    /// The manager's directory shows one line per account; asking once for every account's count is
+    /// the difference between one grouped query and one query per account.
+    pub fn counts_by_account(&self) -> Result<std::collections::HashMap<String, usize>, String> {
+        let reply = self.pool.lock().map_err(|_| {
+            "the character database pool is poisoned; no character can be counted".to_string()
+        })?
+        .query_reply(
+            "SELECT \"account_uuid\", count(*)::bigint FROM \"characters\" GROUP BY \"account_uuid\"",
+            Vec::new(),
+        );
+        let rows = match reply.recv() {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(error)) => return Err(error),
+            Err(_) => {
+                return Err(
+                    "the character database answered no query: it is shutting down".to_string(),
+                );
+            }
+        };
+        let mut counts = std::collections::HashMap::new();
+        for row in &rows {
+            let account: String = row.get(0);
+            let count: i64 = row.get(1);
+            counts.insert(account, count.max(0) as usize);
+        }
+        Ok(counts)
+    }
+
+    /// Write the creation row used by the game confirm and the operator panel.
+    /// ASURA/crates/asura-world/src/creation.rs:381-475 creates the traits and character.
+    pub fn insert_creation(&self, uuid: &str, account: &str, name: &str, appearance: u32,
+        profession: u8, campaign: u8, start_map: u16) -> Result<bool, String> {
+        let reply = self.pool.lock().map_err(|_| "the character database pool is poisoned".to_string())?.query_reply(
+            INSERT_CHARACTER, vec![Param::Text(uuid.to_string()), Param::Text(account.to_string()),
+                Param::Text(name.to_string()), Param::Integer(i64::from(appearance)),
+                Param::Integer(i64::from(profession)), Param::Integer(0),
+                Param::Integer(1i64 << (profession & 0x1f)), Param::Integer(i64::from(campaign)),
+                Param::Integer(1), Param::Flag(campaign == 0), Param::Integer(1),
+                Param::Integer(0), Param::Integer(i64::from(start_map)), Param::Integer(0)]);
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(!rows.is_empty()),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err("the character database is shutting down".to_string()),
+        }
+    }
+
+    /// Rename a character only within the account selected by the operator.
+    pub fn rename_for_account(&self, account: &str, uuid: &str, name: &str) -> Result<bool, String> {
+        let reply = self.pool.lock().map_err(|_| "the character database pool is poisoned".to_string())?.query_reply(
+            "UPDATE \"characters\" SET \"name\" = $1 WHERE \"account_uuid\" = $2 AND \"uuid\" = $3 RETURNING 1",
+            vec![Param::Text(name.to_string()), Param::Text(account.to_string()), Param::Text(uuid.to_string())]);
+        match reply.recv() { Ok(Ok(rows)) => Ok(!rows.is_empty()), Ok(Err(error)) => Err(error), Err(_) => Err("the character database is shutting down".to_string()) }
     }
 
     /// Set a character's level - the row's own column, which a load reads back into the list and the

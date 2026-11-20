@@ -435,6 +435,7 @@ dependencies = [
  "common",
  "database",
  "game",
+ "getrandom 0.2.17",
  "serde_json",
  "shared",
  "tokio",

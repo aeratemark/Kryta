@@ -72,6 +72,17 @@ impl DatabaseAccounts {
             .collect()
     }
 
+    /// How many accounts there are, without reading their rows.
+    ///
+    /// The manager's overview is a count of what exists, so it asks the database to count instead
+    /// of listing every account and discarding the rows it did not need.
+    pub fn count(&self) -> Result<usize, String> {
+        let rows = self.query("SELECT count(*)::bigint FROM \"account\"", Vec::new())?;
+        rows.first()
+            .map(|row| row.get::<usize, i64>(0) as usize)
+            .ok_or_else(|| "the account table counted no row".to_string())
+    }
+
     /// One account by the name the client types.
     pub fn find(&self, username: &str) -> Result<Option<Account>, String> {
         let rows = self.query(SELECT_ONE, vec![Param::Text(username.to_string())])?;

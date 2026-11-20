@@ -283,7 +283,9 @@ mod tests {
         let pack = shipped();
         let (maps, spawns) = pack.load_maps().expect("the maps");
         assert_eq!(maps.len(), 265, "every map record the client can resolve");
-        assert_eq!(spawns.len(), 466, "and every entry point the pack states");
+        // 467, not 466: the third entry point of map 148 left the SQL seed and joined the pack in
+        // `9d508ba`, and the count is the pack's own statement of what it states.
+        assert_eq!(spawns.len(), 467, "and every entry point the pack states");
         assert_eq!(pack.arches().expect("the arches").len(), 28);
         assert_eq!(pack.arrivals().expect("the arrivals").len(), 28);
 

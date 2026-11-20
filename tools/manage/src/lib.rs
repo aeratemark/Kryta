@@ -1,9 +1,21 @@
-//! `kryta-manage`: the administration tool - every piece of game data an operator changes, on one page.
+//! `kryta-manage`: the administration tool - the operator's front door to the state the two server
+//! programs keep.
 //!
 //! It is not a server. No client talks to it, it serves no game protocol, and neither server program
 //! knows it exists. What it does is read and write the state the two programs already keep: rows in the
-//! login and character databases, and the JSON content files. The data access is the nouns' own code
-//! (`game::accounts`, `game::characters`), so what this page changes is exactly what the server reads.
+//! login, character and world databases, and the JSON content files. The data access is the nouns'
+//! own code (`game::accounts`, `game::characters`, `game::maps`, ...), so what this page changes is
+//! exactly what the server reads.
+//!
+//! The arrangement is layered, and each layer only knows the one below it:
+//!
+//! - `web` - the HTTP helpers, the shell every page is drawn into, the components a page is built
+//!   from, and the panel's stylesheet. Nothing here knows what an account is.
+//! - `view` - the game's own names for the numbers a row stores (campaigns, professions, map ids),
+//!   and the row shapes a page lists.
+//! - `pages` - one module per destination, a function from the tool's state to an HTML body.
+//! - this file - the routing table, the data sources, and the two owners the manager asks (the
+//!   supervisor for process lifecycle, the running world for operations).
 //!
 //! Why a page rather than SQL by hand: the state is spread over two databases and four content files,
 //! and a wrong `UPDATE` against a live account is not something a person should be doing from memory.
@@ -11,8 +23,10 @@
 //! Settings are in `manage.json` (`docs/port/05-tooling.md`); the tool refuses to start without a
 //! database to point at.
 
-mod pages;
 mod navigation;
+mod pages;
+mod view;
+mod web;
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -50,9 +64,8 @@ pub struct Manage {
     accounts: Arc<game::accounts::DatabaseAccounts>,
     /// The character database, when the tool opened one: the characters page.
     characters: Option<Arc<game::characters::DatabaseCharacters>>,
-    /// The world database, when the tool opened one: the content page.
-    maps: Option<Arc<game::maps::DatabaseMaps>>,
-    /// The item templates, when the world database is open: what the content page counts.
+    /// The world database's item templates, when the world database is open: what a creation
+    /// confirmation points a written item row at.
     items: Option<Arc<game::data_stores::DatabaseItems>>,
     /// The instance table, when the world database is open: what the content page shows running.
     instances: Option<Arc<game::districts::DatabaseInstances>>,
@@ -61,12 +74,10 @@ pub struct Manage {
     /// The databases whose updater records the schema page shows.
     schemas: Vec<DatabaseSchema>,
     /// The two server programs' own settings files, when the tool is told where they are: the
-    /// settings page shows them. A file is shown and validated, never rewritten (`manage.json`).
+    /// settings page shows them, and the world's own `WorldPack` names the content the world serves.
+    /// A file is shown and validated, never rewritten (`manage.json`).
     world_config: Option<String>,
     auth_config: Option<String>,
-    /// The creation record lists' paths: the content page shows the profession sets they hold.
-    inventory_file: Option<String>,
-    equipment_file: Option<String>,
     /// The portable graph cache the manager inspects and selected-map exports update.
     path_graphs_file: String,
     /// An explicit client archive used only by the manager's offline dump action.
@@ -99,49 +110,128 @@ pub struct Supervisor {
 
 impl Manage {
     /// One page, answered.
+    ///
+    /// The routing table is the one place that knows the panel's addresses. Every route names a
+    /// page module and nothing else; a route that mutates is a `POST` and answers another page or a
+    /// redirect, so a browser's back button never re-runs a write.
     fn answer(&self, request: &Request) -> Response {
         if !self.authorised(request) {
-            return Response::html(401, pages::unauthorised());
+            return pages::unauthorised();
         }
+        let segments: Vec<&str> = request
+            .path
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect();
+        match request.method.as_str() {
+            "GET" => self.get(&segments, request),
+            "POST" => self.post(&segments, request),
+            _ => pages::method_not_allowed(&request.path),
+        }
+    }
 
-        match (request.method.as_str(), request.path.as_str()) {
-            ("GET", "/") => pages::dashboard(self),
-            ("GET", "/services") => pages::services(self, None),
-            ("POST", "/services/stop") => self.service_action(request, "stop"),
-            ("POST", "/services/restart") => self.service_action(request, "restart"),
-            ("GET", "/configuration") => pages::configuration(),
-            ("GET", "/assets") => pages::assets(),
-            ("GET", "/navigation") => pages::navigation_cache(self, None),
-            ("POST", "/navigation/dump") => self.dump_navigation_page(request),
-            ("GET", "/api/navigation/maps") => self.navigation_api(),
-            ("POST", "/api/navigation/dump") => self.dump_navigation_api(request),
-            ("GET", "/console") => pages::console(self, None),
-            ("POST", "/console/run") => self.run_operation(request),
-            ("GET", "/logs") => pages::logs(),
-            ("GET", "/status") => pages::world_status(self),
-            ("GET", "/accounts") => pages::accounts(
-                self,
-                request
-                    .query("account")
-                    .and_then(|value| value.parse::<i64>().ok()),
+    /// The pages a `GET` opens.
+    fn get(&self, segments: &[&str], request: &Request) -> Response {
+        match segments {
+            [] => pages::overview::page(self),
+            ["static", "style.css"] => Response::new(
+                200,
+                web::layout::STYLE_TYPE,
+                web::layout::STYLE.as_bytes(),
             ),
-            ("GET", "/characters") => pages::characters(self, request.query("account")),
-            ("GET", "/worlds") => pages::worlds(self),
-            ("GET", "/content") => pages::content(self),
-            ("POST", "/content/spawn") => self.add_spawn(request),
-            ("POST", "/content/spawn/remove") => self.remove_spawn(request),
-            ("POST", "/content/party-cap") => self.set_party_cap(request),
-            ("GET", "/settings") => pages::settings(self),
-            ("GET", "/schema") => pages::schema(self),
-            ("POST", "/characters/delete") => self.delete_character(request),
-            ("POST", "/characters/level") => self.set_level(request),
-            ("POST", "/accounts/eula") => self.set_eula(request),
-            ("POST", "/accounts/create") => self.create(request),
-            ("POST", "/accounts/update") => self.update_account(request),
-            ("POST", "/accounts/active") => self.set_account_active(request),
-            ("POST", "/accounts/delete") => self.delete(request),
-            ("GET", "/health") => Response::text(200, "ok\n"),
-            (_, path) => Response::html(404, pages::missing(path)),
+            ["health"] => Response::text(200, "ok\n"),
+            ["players"] => {
+                // The old address: a page that named an account is sent to its own page.
+                if let Some(account) = request
+                    .query("account")
+                    .and_then(|value| value.parse::<i64>().ok())
+                {
+                    return web::http::redirect(&format!("/players/{account}"));
+                }
+                pages::players::index(self)
+            }
+            ["players", id] => by_id(id, |id| pages::players::account(self, id)),
+            ["players", id, "characters"] => {
+                by_id(id, |id| pages::characters::roster(self, id))
+            }
+            ["players", id, "characters", uuid] => {
+                by_id(id, |id| pages::characters::detail(self, id, uuid))
+            }
+            ["services"] => pages::services::page(self, None),
+            ["services", "status"] => pages::services::status_fragment(self),
+            ["console"] => pages::console::page(self, None),
+            ["console", "operations"] => pages::console::operations_fragment(self),
+            ["content"] => pages::content::page(self),
+            ["worlds"] => pages::worlds::page(self),
+            ["navigation"] => pages::navigation::page(
+                self,
+                None,
+                request.query("inspect") == Some("1"),
+            ),
+            ["status"] => pages::status::page(self),
+            ["status", "data"] => pages::status::fragment(self),
+            ["settings"] => pages::settings::page(self),
+            ["schema"] => pages::schema::page(self),
+            ["api", "navigation", "maps"] => self.navigation_api(),
+            // The old addresses stay bookmarks: they redirect to the hierarchy's own pages.
+            ["accounts"] => {
+                let target = match request.query("account") {
+                    Some(account) => format!("/players/{account}"),
+                    None => "/players".to_string(),
+                };
+                web::http::redirect(&target)
+            }
+            ["characters"] => {
+                let target = match (
+                    request.query("account"),
+                    request.query("character"),
+                ) {
+                    (Some(account), Some(character)) => {
+                        format!("/players/{account}/characters/{character}")
+                    }
+                    (Some(account), None) => format!("/players/{account}/characters"),
+                    (None, _) => "/players".to_string(),
+                };
+                web::http::redirect(&target)
+            }
+            _ => pages::missing(&request.path),
+        }
+    }
+
+    /// The pages a form `POST`s to.
+    fn post(&self, segments: &[&str], request: &Request) -> Response {
+        match segments {
+            ["players", "create"] => pages::players::create(self, request),
+            ["players", id, "update"] => {
+                by_id(id, |id| pages::players::update(self, request, id))
+            }
+            ["players", id, "active"] => {
+                by_id(id, |id| pages::players::set_active(self, request, id))
+            }
+            ["players", id, "eula"] => {
+                by_id(id, |id| pages::players::set_eula(self, request, id))
+            }
+            ["players", id, "delete"] => {
+                by_id(id, |id| pages::players::delete(self, request, id))
+            }
+            ["players", id, "characters"] => {
+                by_id(id, |id| pages::characters::create(self, request, id))
+            }
+            ["players", id, "characters", uuid, "rename"] => {
+                by_id(id, |id| pages::characters::rename(self, request, id, uuid))
+            }
+            ["players", id, "characters", uuid, "level"] => {
+                by_id(id, |id| pages::characters::set_level(self, request, id, uuid))
+            }
+            ["players", id, "characters", uuid, "delete"] => {
+                by_id(id, |id| pages::characters::delete(self, request, id, uuid))
+            }
+            ["services", "stop"] => pages::services::action(self, request, "stop"),
+            ["services", "restart"] => pages::services::action(self, request, "restart"),
+            ["console", "run"] => pages::console::run(self, request),
+            ["navigation", "dump"] => self.dump_navigation_page(request),
+            ["api", "navigation", "dump"] => self.dump_navigation_api(request),
+            _ => pages::method_not_allowed(&request.path),
         }
     }
 
@@ -170,6 +260,161 @@ impl Manage {
             .unwrap_or(false)
     }
 
+    // The data sources a page asks. Each accessor answers the noun's own repository, so a page
+    // never owns a second copy of the data or the SQL.
+
+    /// The login database's account table.
+    pub fn accounts(&self) -> &game::accounts::DatabaseAccounts {
+        &self.accounts
+    }
+
+    /// The character database, when `manage.json` names one.
+    pub fn characters(&self) -> Option<&game::characters::DatabaseCharacters> {
+        self.characters.as_deref()
+    }
+
+    /// The world database's item templates.
+    pub fn items(&self) -> Option<&game::data_stores::DatabaseItems> {
+        self.items.as_deref()
+    }
+
+    /// The world database's instance table.
+    pub fn instances(&self) -> Option<&game::districts::DatabaseInstances> {
+        self.instances.as_deref()
+    }
+
+    /// The realm list the login program reads.
+    pub fn worlds(&self) -> Option<&shared::worlds::WorldList> {
+        self.worlds.as_deref()
+    }
+
+    /// The tool's log, for the views that load content (the creation record, the pack).
+    pub fn log(&self) -> &Log {
+        &self.log
+    }
+
+    /// Say one line, as every action this tool takes does.
+    pub fn say(&self, text: impl Into<String>) {
+        self.log.out(LogLevel::Info, "manage", text);
+    }
+
+    /// The world program's settings file, when one is named.
+    pub fn world_config(&self) -> Option<&str> {
+        self.world_config.as_deref()
+    }
+
+    /// The login program's settings file, when one is named.
+    pub fn auth_config(&self) -> Option<&str> {
+        self.auth_config.as_deref()
+    }
+
+    /// The accounts, for a page that lists them.
+    pub fn list_accounts(&self) -> Result<Vec<game::accounts::Account>, String> {
+        self.accounts.list()
+    }
+
+    /// The characters of one account, for the account workspace. A character remains owned by the
+    /// account that created it; this is not a second character inventory kept by the manager.
+    pub fn characters_of_account(
+        &self,
+        account: &str,
+    ) -> Option<Vec<game::characters::Character>> {
+        self.characters
+            .as_ref()
+            .map(|characters| characters.for_account(account))
+    }
+
+    /// What one character holds, read through the repository the load uses.
+    pub fn list_items_of(&self, uuid: &str) -> Option<Vec<game::characters::HeldItem>> {
+        self.characters
+            .as_ref()
+            .and_then(|characters| characters.items_of(uuid).ok())
+    }
+
+    /// The maps one character may travel to, read through the repository the load's gate uses (R12).
+    pub fn list_unlocks(&self, uuid: &str) -> Option<Vec<u32>> {
+        self.characters
+            .as_ref()
+            .and_then(|characters| characters.unlocked_maps(uuid).ok())
+    }
+
+    /// The world list, when the login database answered.
+    pub fn list_worlds(&self) -> Option<Vec<shared::worlds::Realm>> {
+        self.worlds
+            .as_ref()
+            .map(|worlds| worlds.worlds().values().cloned().collect())
+    }
+
+    /// The copies the instance table records, when a world database is configured.
+    pub fn list_instances(&self) -> Option<Vec<game::districts::InstanceRow>> {
+        self.instances.as_ref()?.rows().ok()
+    }
+
+    /// Where the two programs' settings files are, when the tool was told: the settings page reads
+    /// them from these paths and never writes them.
+    pub fn config_paths(&self) -> (Option<&str>, Option<&str>) {
+        (self.world_config.as_deref(), self.auth_config.as_deref())
+    }
+
+    /// The world's own map pack, read through the pack reader the world uses.
+    ///
+    /// The content of a world is the pack (`docs/decisions/0014-the-world-content-is-a-pack.md`):
+    /// the manager reads it with the same reader so a page shows the maps, entry points and
+    /// arrivals the world will serve, not rows nothing reads.
+    pub fn world_pack(&self) -> Result<game::maps::pack::Pack, String> {
+        let world_config = self.world_config.as_deref().ok_or_else(|| {
+            "the world program's settings file is not named in manage.json (WorldConfigFile)"
+                .to_string()
+        })?;
+        let config = Config::load_json(world_config, false, Policy::default())
+            .map_err(|error| error.to_string())?;
+        let (pack_path, _) = config
+            .value_string("WorldPack", "config/World/Vanilla")
+            .map_err(|error| error.to_string())?;
+        if pack_path.trim().is_empty() {
+            return Err("the world program names no WorldPack".to_string());
+        }
+        game::maps::pack::Pack::load(&pack_path, &self.log)
+    }
+
+    /// Every map name the world's pack states, keyed by id: what the pages call an outpost.
+    pub fn map_names(&self) -> std::collections::HashMap<u32, String> {
+        self.world_pack()
+            .ok()
+            .and_then(|pack| pack.load_maps().ok())
+            .map(|(maps, _)| {
+                maps.into_iter()
+                    .map(|map| (map.id, map.name))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The creation record lists the world runs from, read through the noun's own loader.
+    pub fn creation_tables(&self) -> Result<game::creation::Tables, String> {
+        let world_config = self.world_config.as_deref().ok_or_else(|| {
+            "the world program's settings file is not named in manage.json (WorldConfigFile)"
+                .to_string()
+        })?;
+        let config = Config::load_json(world_config, false, Policy::default())
+            .map_err(|error| error.to_string())?;
+        let (inventory, _) = config
+            .value_string("InventoryFile", "config/World/Vanilla/creation/inventory.json")
+            .map_err(|error| error.to_string())?;
+        let (equipment, _) = config
+            .value_string("EquipmentFile", "config/World/Vanilla/creation/equipment.json")
+            .map_err(|error| error.to_string())?;
+        let (worn, _) = config
+            .value_string("EquippedSlotsFile", "config/World/Vanilla/creation/worn_slots.json")
+            .map_err(|error| error.to_string())?;
+        game::creation::Tables::load(
+            &inventory,
+            &equipment,
+            Some(std::path::Path::new(&worn)),
+            &self.log,
+        )
+    }
+
     /// The running world's own status, asked of its control endpoint.
     ///
     /// One operation, carried by the world's request queue and executed on the world's update thread,
@@ -178,7 +423,6 @@ impl Manage {
     pub fn world_status(&self) -> Result<String, String> {
         self.world_operation("world.status", &BTreeMap::new())
     }
-
 
     /// Call one registered operation through the same endpoint as `kryta-cli`. The world retains
     /// argument validation, queue ownership and execution; this browser route is only an adapter.
@@ -276,37 +520,6 @@ impl Manage {
         Ok(answer)
     }
 
-    fn service_action(&self, request: &Request, action: &str) -> Response {
-        let form = form_fields(&request.body_text());
-        let Some(name) = form.get("service").filter(|name| service_name(name)) else {
-            return Response::html(
-                400,
-                pages::message(
-                    "A service name contains only letters, digits, dot, dash, or underscore.",
-                ),
-            );
-        };
-        let result = self.supervisor_request(&format!("{action} {name}"));
-        pages::services(self, Some((action, name, result)))
-    }
-
-    fn run_operation(&self, request: &Request) -> Response {
-        let form = form_fields(&request.body_text());
-        let Some(operation) = form
-            .get("operation")
-            .filter(|operation| !operation.trim().is_empty())
-        else {
-            return Response::html(400, pages::message("An operation name is required."));
-        };
-        let arguments =
-            match operation_arguments(form.get("arguments").map(String::as_str).unwrap_or("")) {
-                Ok(arguments) => arguments,
-                Err(error) => return Response::html(400, pages::message(&error)),
-            };
-        let result = self.world_operation(operation, &arguments);
-        pages::console(self, Some((operation, arguments, result)))
-    }
-
     /// Inspect the extracted graphs. This manager API reads an operator asset, not state the running
     /// world owns, so it does not go through the world-operation queue.
     pub fn inspect_navigation(&self) -> Result<navigation::Inspection, String> {
@@ -315,16 +528,17 @@ impl Manage {
 
     fn dump_navigation(&self, map_id: u32) -> Result<navigation::DumpResult, String> {
         if self.map_archive_file.trim().is_empty() {
-            return Err("MapArchiveFile is empty; the manager has no archive selected for offline extraction".to_string());
+            return Err(
+                "MapArchiveFile is empty; the manager has no archive selected for offline extraction"
+                    .to_string(),
+            );
         }
-        let Some(source) = self.maps.as_ref() else {
-            return Err("no world database is configured, so the manager cannot resolve a map id".to_string());
-        };
-        let (maps, _) = source.load()?;
+        let pack = self.world_pack()?;
+        let (maps, _) = pack.load_maps()?;
         let map = maps
             .iter()
             .find(|map| map.id == map_id)
-            .ok_or_else(|| format!("map {map_id} is not in the world database"))?;
+            .ok_or_else(|| format!("map {map_id} is not in the world pack"))?;
         navigation::dump_map(&self.path_graphs_file, &self.map_archive_file, map)
     }
 
@@ -354,11 +568,15 @@ impl Manage {
     }
 
     fn dump_navigation_api(&self, request: &Request) -> Response {
-        let map_id = form_fields(&request.body_text())
+        let map_id = web::http::form_fields(&request.body_text())
             .get("map_id")
             .and_then(|value| value.parse::<u32>().ok());
         let Some(map_id) = map_id else {
-            return Response::new(400, "application/json; charset=utf-8", "{\"error\":\"map_id is required\"}");
+            return Response::new(
+                400,
+                "application/json; charset=utf-8",
+                "{\"error\":\"map_id is required\"}",
+            );
         };
         match self.dump_navigation(map_id) {
             Ok(result) => Response::new(
@@ -382,7 +600,7 @@ impl Manage {
     }
 
     fn dump_navigation_page(&self, request: &Request) -> Response {
-        let map_id = form_fields(&request.body_text())
+        let map_id = web::http::form_fields(&request.body_text())
             .get("map_id")
             .and_then(|value| value.parse::<u32>().ok());
         let result = match map_id {
@@ -394,423 +612,7 @@ impl Manage {
             }),
             None => Err("A numeric map id is required.".to_string()),
         };
-        pages::navigation_cache(self, Some(result))
-    }
-
-    fn set_eula(&self, request: &Request) -> Response {
-        let form = form_fields(&request.body_text());
-        let Some(username) = form.get("username") else {
-            return Response::html(400, pages::message("A request with no account name."));
-        };
-        let version: i64 = match form.get("version").map(|value| value.parse()) {
-            Some(Ok(version)) => version,
-            _ => 0,
-        };
-        match self.accounts.set_eula(username, version) {
-            Ok(true) => {
-                self.say(format!("{username}: the EULA version is now {version}"));
-                pages::redirect("/accounts")
-            }
-            Ok(false) => Response::html(
-                404,
-                pages::message(&format!("No account is called {username}.")),
-            ),
-            Err(error) => Response::html(
-                500,
-                pages::message(&format!("The account table said: {error}")),
-            ),
-        }
-    }
-
-    fn create(&self, request: &Request) -> Response {
-        let form = form_fields(&request.body_text());
-        let Some(username) = form.get("username") else {
-            return Response::html(400, pages::message("A request with no account name."));
-        };
-        let user_id = form
-            .get("user_id")
-            .cloned()
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| {
-                format!(
-                    "00000000-0000-0000-0000-{:012}",
-                    random_u64() % 1_000_000_000_000
-                )
-            });
-        let token = form
-            .get("token")
-            .cloned()
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| {
-                format!(
-                    "00000000-0000-0000-0000-{:012}",
-                    random_u64() % 1_000_000_000_000
-                )
-            });
-        match self.accounts.create(username, &user_id, &token) {
-            Ok(true) => {
-                self.say(format!("{username}: created"));
-                pages::redirect("/accounts")
-            }
-            Ok(false) => Response::html(
-                409,
-                pages::message(&format!("An account is already called {username}.")),
-            ),
-            Err(error) => Response::html(
-                500,
-                pages::message(&format!("The account table said: {error}")),
-            ),
-        }
-    }
-
-    /// Update the three values the portal reads for an existing account. The stable row id comes from
-    /// the page, so a renamed login remains the same account.
-    fn update_account(&self, request: &Request) -> Response {
-        let form = form_fields(&request.body_text());
-        let Some(id) = form.get("id").and_then(|value| value.parse::<i64>().ok()) else {
-            return Response::html(400, pages::message("A valid account id is required."));
-        };
-        let Some(username) = form
-            .get("username")
-            .filter(|value| !value.trim().is_empty())
-        else {
-            return Response::html(400, pages::message("An account login name is required."));
-        };
-        let Some(user_id) = form.get("user_id") else {
-            return Response::html(400, pages::message("An account user id is required."));
-        };
-        let Some(token) = form.get("token") else {
-            return Response::html(400, pages::message("An account token is required."));
-        };
-        match self.accounts.update(id, username, user_id, token) {
-            Ok(true) => {
-                self.say(format!("account {id}: updated as {username}"));
-                pages::redirect("/accounts")
-            }
-            Ok(false) => Response::html(404, pages::message(&format!("No account has id {id}."))),
-            Err(error) => Response::html(
-                500,
-                pages::message(&format!("The account table said: {error}")),
-            ),
-        }
-    }
-
-    /// Deactivate or reactivate an account without removing its row or character data. The auth server
-    /// applies the state at its next login lookup; it does not terminate a connection already in play.
-    fn set_account_active(&self, request: &Request) -> Response {
-        let form = form_fields(&request.body_text());
-        let Some(id) = form.get("id").and_then(|value| value.parse::<i64>().ok()) else {
-            return Response::html(400, pages::message("A valid account id is required."));
-        };
-        let active = matches!(form.get("active").map(String::as_str), Some("true"));
-        match self.accounts.set_active(id, active) {
-            Ok(true) => {
-                let state = if active { "activated" } else { "deactivated" };
-                self.say(format!("account {id}: {state}"));
-                pages::redirect("/accounts")
-            }
-            Ok(false) => Response::html(404, pages::message(&format!("No account has id {id}."))),
-            Err(error) => Response::html(
-                500,
-                pages::message(&format!("The account table said: {error}")),
-            ),
-        }
-    }
-
-    fn delete(&self, request: &Request) -> Response {
-        let form = form_fields(&request.body_text());
-        let Some(username) = form.get("username") else {
-            return Response::html(400, pages::message("A request with no account name."));
-        };
-        match self.accounts.delete(username) {
-            Ok(true) => {
-                self.say(format!(
-                    "{username}: removed (its characters are untouched)"
-                ));
-                pages::redirect("/accounts")
-            }
-            Ok(false) => Response::html(
-                404,
-                pages::message(&format!("No account is called {username}.")),
-            ),
-            Err(error) => Response::html(
-                500,
-                pages::message(&format!("The account table said: {error}")),
-            ),
-        }
-    }
-
-    /// `POST /characters/delete`: remove a character and the records that are its own - its items,
-    /// its unlocks, its row. A character is *written* by the creation confirm and not here; removing
-    /// one is the operator's act, and the page's button is the reason this route exists.
-    fn delete_character(&self, request: &Request) -> Response {
-        let Some(characters) = self.characters.as_ref() else {
-            return Response::html(
-                503,
-                pages::message("No character database is configured in manage.json."),
-            );
-        };
-        let form = form_fields(&request.body_text());
-        let Some(uuid) = form.get("uuid").cloned() else {
-            return Response::html(400, pages::message("A request with no character id."));
-        };
-        match characters.remove(&uuid) {
-            Ok(true) => {
-                self.say(format!(
-                    "character {uuid}: removed, with its items and unlocks"
-                ));
-                pages::redirect("/characters")
-            }
-            Ok(false) => Response::html(
-                404,
-                pages::message(&format!("No character has the id {uuid}.")),
-            ),
-            Err(error) => Response::html(
-                500,
-                pages::message(&format!("The character database said: {error}")),
-            ),
-        }
-    }
-
-    /// `POST /characters/level`: set a character's level, 1 to 20 (R46, R48). The range is the
-    /// game's rule, so it is checked here rather than in the row.
-    fn set_level(&self, request: &Request) -> Response {
-        let Some(characters) = self.characters.as_ref() else {
-            return Response::html(
-                503,
-                pages::message("No character database is configured in manage.json."),
-            );
-        };
-        let form = form_fields(&request.body_text());
-        let Some(uuid) = form.get("uuid").cloned() else {
-            return Response::html(400, pages::message("A request with no character id."));
-        };
-        let Some(level) = form.get("level").and_then(|value| value.parse::<u8>().ok()) else {
-            return Response::html(400, pages::message("A level is a number."));
-        };
-        if !(1..=20).contains(&level) {
-            return Response::html(
-                400,
-                pages::message("A level is between 1 and 20, the game's own range (R48)."),
-            );
-        }
-        match characters.set_level(&uuid, level) {
-            Ok(true) => {
-                self.say(format!("character {uuid}: level {level}"));
-                pages::redirect("/characters")
-            }
-            Ok(false) => Response::html(
-                404,
-                pages::message(&format!("No character has the id {uuid}.")),
-            ),
-            Err(error) => Response::html(
-                500,
-                pages::message(&format!("The character database said: {error}")),
-            ),
-        }
-    }
-
-    /// The accounts, for a page that lists them.
-    pub fn list_accounts(&self) -> Result<Vec<game::accounts::Account>, String> {
-        self.accounts.list()
-    }
-
-    /// The characters, when a character database is configured.
-    pub fn list_characters(&self) -> Option<Vec<game::characters::Character>> {
-        self.characters.as_ref().map(|characters| characters.list())
-    }
-
-    /// The characters of one account, for the account workspace. A character remains owned by the
-    /// account that created it; this is not a second character inventory kept by the manager.
-    pub fn characters_of_account(&self, account: &str) -> Option<Vec<game::characters::Character>> {
-        self.characters
-            .as_ref()
-            .map(|characters| characters.for_account(account))
-    }
-
-    /// What one character holds, read through the repository the load uses.
-    pub fn list_items_of(&self, uuid: &str) -> Option<Vec<game::characters::HeldItem>> {
-        self.characters
-            .as_ref()
-            .and_then(|characters| characters.items_of(uuid).ok())
-    }
-
-    /// The maps one character may travel to, read through the repository the load's gate uses (R12).
-    pub fn list_unlocks(&self, uuid: &str) -> Option<Vec<u32>> {
-        self.characters
-            .as_ref()
-            .and_then(|characters| characters.unlocked_maps(uuid).ok())
-    }
-
-    /// The world list, when the login database answered.
-    pub fn list_worlds(&self) -> Option<Vec<shared::worlds::Realm>> {
-        self.worlds
-            .as_ref()
-            .map(|worlds| worlds.worlds().values().cloned().collect())
-    }
-
-    /// The maps and their spawn points, when a world database is configured.
-    pub fn list_maps(&self) -> Option<(Vec<game::world::MapEntry>, Vec<game::maps::MapSpawn>)> {
-        let maps = self.maps.as_ref()?;
-        maps.load().ok()
-    }
-
-    /// The arrival points, when a world database is configured: where a portal crossing lands (R21).
-    pub fn list_arrivals(&self) -> Option<Vec<game::maps::Arrival>> {
-        self.maps.as_ref()?.arrivals().ok()
-    }
-
-    /// The copies the instance table records, when a world database is configured.
-    pub fn list_instances(&self) -> Option<Vec<game::districts::InstanceRow>> {
-        self.instances.as_ref()?.rows().ok()
-    }
-
-    /// The party cap a map states, or `None` when the world's own setting applies (R15).
-    pub fn party_cap(&self, map_id: u32) -> Option<u32> {
-        self.maps.as_ref()?.party_cap(map_id).ok().flatten()
-    }
-
-    /// The item templates, when a world database is configured.
-    pub fn list_items(&self) -> Option<Vec<game::data_stores::ItemDefinition>> {
-        let items = self.items.as_ref()?;
-        items.list().ok()
-    }
-
-    /// Where the two programs' settings files are, when the tool was told: the settings page reads
-    /// them from these paths and never writes them.
-    pub fn config_paths(&self) -> (Option<&str>, Option<&str>) {
-        (self.world_config.as_deref(), self.auth_config.as_deref())
-    }
-
-    /// The profession sets the creation record holds, read through the noun's own loader: what a
-    /// new character may be given, and the content page's view of it. Loading per request keeps the
-    /// page honest when the files change under it.
-    pub fn creation_sets(&self) -> Option<Vec<game::creation::EquipmentSet>> {
-        let inventory = self.inventory_file.as_deref()?;
-        let equipment = self.equipment_file.as_deref()?;
-        let log = Log::new();
-        game::creation::Tables::load(inventory, equipment, None, &log)
-            .ok()
-            .map(|tables| tables.sets().to_vec())
-    }
-
-    /// Add a spawn point to a map: what the load's entry placement reads (R13).
-    pub fn add_spawn(&self, request: &Request) -> Response {
-        let Some(maps) = self.maps.as_ref() else {
-            return Response::html(
-                503,
-                pages::message("No world database is configured in manage.json."),
-            );
-        };
-        let form = form_fields(&request.body_text());
-        let Some(map_id) = form
-            .get("map_id")
-            .and_then(|value| value.parse::<u32>().ok())
-        else {
-            return Response::html(400, pages::message("The form names no map."));
-        };
-        let x = form.get("x").and_then(|value| value.parse::<f32>().ok());
-        let y = form.get("y").and_then(|value| value.parse::<f32>().ok());
-        let plane = form
-            .get("plane")
-            .and_then(|value| value.parse::<i16>().ok())
-            .unwrap_or(0);
-        let (Some(x), Some(y)) = (x, y) else {
-            return Response::html(
-                400,
-                pages::message("A spawn point needs an x and a y as numbers."),
-            );
-        };
-        match maps.add_spawn(map_id, x, y, plane) {
-            Ok(index) => {
-                self.say(format!(
-                    "map {map_id}: spawn point {index} added at {x}, {y} (plane {plane})"
-                ));
-                pages::redirect("/content")
-            }
-            Err(error) => Response::html(
-                500,
-                pages::message(&format!("The world database said: {error}")),
-            ),
-        }
-    }
-
-    /// Remove a spawn point from a map.
-    pub fn remove_spawn(&self, request: &Request) -> Response {
-        let Some(maps) = self.maps.as_ref() else {
-            return Response::html(
-                503,
-                pages::message("No world database is configured in manage.json."),
-            );
-        };
-        let form = form_fields(&request.body_text());
-        let Some(map_id) = form
-            .get("map_id")
-            .and_then(|value| value.parse::<u32>().ok())
-        else {
-            return Response::html(400, pages::message("The form names no map."));
-        };
-        let Some(index) = form
-            .get("index")
-            .and_then(|value| value.parse::<i16>().ok())
-        else {
-            return Response::html(400, pages::message("The form names no spawn point."));
-        };
-        match maps.remove_spawn(map_id, index) {
-            Ok(true) => {
-                self.say(format!("map {map_id}: spawn point {index} removed"));
-                pages::redirect("/content")
-            }
-            Ok(false) => Response::html(
-                404,
-                pages::message(&format!("Map {map_id} has no spawn point {index}.")),
-            ),
-            Err(error) => Response::html(
-                500,
-                pages::message(&format!("The world database said: {error}")),
-            ),
-        }
-    }
-
-    /// `POST /content/party-cap`: a map's own party cap, as a row (R15). `0` clears it, so the
-    /// world's `PartySizeCap` applies again.
-    pub fn set_party_cap(&self, request: &Request) -> Response {
-        let Some(maps) = self.maps.as_ref() else {
-            return Response::html(
-                503,
-                pages::message("No world database is configured in manage.json."),
-            );
-        };
-        let form = form_fields(&request.body_text());
-        let Some(map_id) = form
-            .get("map_id")
-            .and_then(|value| value.parse::<u32>().ok())
-        else {
-            return Response::html(400, pages::message("The form names no map."));
-        };
-        let Some(cap) = form.get("cap").and_then(|value| value.parse::<u32>().ok()) else {
-            return Response::html(400, pages::message("A party cap is a number; 0 clears it."));
-        };
-        match maps.set_party_cap(map_id, cap) {
-            Ok(true) => {
-                self.say(format!(
-                    "map {map_id}: party cap {} (R15)",
-                    if cap == 0 {
-                        "cleared, the world's own applies".to_string()
-                    } else {
-                        cap.to_string()
-                    }
-                ));
-                pages::redirect("/content")
-            }
-            Ok(false) => {
-                Response::html(404, pages::message(&format!("No map is called {map_id}.")))
-            }
-            Err(error) => Response::html(
-                500,
-                pages::message(&format!("The world database said: {error}")),
-            ),
-        }
+        pages::navigation::page(self, Some(result), true)
     }
 
     /// Each database's schema files, with what its own `updates` record says about them.
@@ -858,10 +660,6 @@ impl Manage {
         }
         out
     }
-
-    fn say(&self, text: impl Into<String>) {
-        self.log.out(LogLevel::Info, "manage", text);
-    }
 }
 
 /// One connection to the tool.
@@ -870,8 +668,11 @@ pub struct ManageSession {
 }
 
 impl ManageSession {
-    /// Answer one connection: read a request, answer it, close.
-    pub async fn run(self, mut io: SessionIo) {
+    /// Answer one connection: read a request, answer it on the blocking pool, close.
+    ///
+    /// Every repository call is a blocking wait on the database pool's worker queue, so the page is
+    /// built off the async thread and the runtime keeps accepting connections meanwhile.
+    async fn answer(self, mut io: SessionIo) {
         let request = match read_request(&mut io).await {
             Ok(request) => request,
             Err(HttpError::Incomplete) => {
@@ -881,7 +682,7 @@ impl ManageSession {
             Err(error) => {
                 let _ = write_response(
                     &mut io,
-                    &Response::text(400, format!("a request was expected: {error}\\n")),
+                    &Response::text(400, format!("a request was expected: {error}\n")),
                 )
                 .await;
                 let _ = io.close().await;
@@ -890,87 +691,45 @@ impl ManageSession {
         };
 
         self.manage
-            .say(format!("{} {}", request.method, request.path));
-        let response = self.manage.answer(&request);
+            .say(format!("{} {} ->", request.method, request.path));
+        let manage = Arc::clone(&self.manage);
+        let response = match tokio::task::spawn_blocking(move || manage.answer(&request)).await {
+            Ok(response) => response,
+            Err(_) => Response::text(500, "The management request could not be completed.\n"),
+        };
         let _ = write_response(&mut io, &response).await;
         let _ = io.close().await;
     }
 }
 
 impl Session for ManageSession {
-    fn run(self: Box<Self>, mut io: SessionIo) -> SessionFuture {
+    fn run(self: Box<Self>, io: SessionIo) -> SessionFuture {
         Box::pin(async move {
-            let request = match read_request(&mut io).await {
-                Ok(request) => request,
-                Err(HttpError::Incomplete) => {
-                    let _ = io.close().await;
-                    return;
-                }
-                Err(error) => {
-                    let _ = write_response(
-                        &mut io,
-                        &Response::text(400, format!("a request was expected: {error}\n")),
-                    )
-                    .await;
-                    let _ = io.close().await;
-                    return;
-                }
-            };
-
-            self.manage
-                .say(format!("{} {} ->", request.method, request.path));
-            let response = self.manage.answer(&request);
-            let _ = write_response(&mut io, &response).await;
-            let _ = io.close().await;
+            self.answer(io).await
         })
     }
 }
 
-/// The fields of a URL-encoded form body.
-fn form_fields(body: &str) -> std::collections::HashMap<String, String> {
-    body.split('&')
-        .filter_map(|pair| pair.split_once('='))
-        .map(|(key, value)| (unescape(key), unescape(value)))
-        .collect()
-}
-
-/// A stack service is an identifier, not a free-form supervisor command. Keeping that boundary here
-/// lets the page select only existing protocol verbs and prevents a form value from becoming a second
-/// command language.
-fn service_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
-}
-
-/// The console's argument area uses one `name=value` assignment per line, the same named values the
-/// world endpoint accepts. The endpoint still decides whether the names and count are valid for its
-/// registration.
-fn operation_arguments(text: &str) -> Result<BTreeMap<String, String>, String> {
-    let mut arguments = BTreeMap::new();
-    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        let Some((name, value)) = line.split_once('=') else {
-            return Err(format!("An argument must be name=value: {line}"));
-        };
-        let name = name.trim();
-        if name.is_empty()
-            || !name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-        {
-            return Err(format!(
-                "An argument name is letters, digits, or underscore: {name}"
-            ));
-        }
-        if arguments
-            .insert(name.to_string(), value.trim().to_string())
-            .is_some()
-        {
-            return Err(format!("An argument is named twice: {name}"));
-        }
+/// Read one URL segment as the row id it names.
+fn by_id(segment: &str, route: impl FnOnce(i64) -> Response) -> Response {
+    match segment.parse::<i64>() {
+        Ok(id) => route(id),
+        Err(_) => pages::error(404, "players", "No page is at this address."),
     }
-    Ok(arguments)
+}
+
+/// Some entropy for an identifier a request did not state.
+pub(crate) fn random_u64() -> u64 {
+    let mut bytes = [0u8; 8];
+    if getrandom(&mut bytes).is_err() {
+        return 1;
+    }
+    u64::from_le_bytes(bytes)
+}
+
+/// The operating system's entropy, through the same call the servers use.
+fn getrandom(bytes: &mut [u8]) -> Result<(), ()> {
+    shared::cryptography::handshake::random_into(bytes).map_err(|_| ())
 }
 
 /// Read only the existing supervisor control port from its stack file. The service rows remain owned
@@ -988,74 +747,9 @@ fn supervisor_port(path: &str) -> Result<u16, String> {
     Ok(port as u16)
 }
 
-/// Decode one URL-encoded field: `+` is a space, and `%XX` is a byte.
-fn unescape(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'+' => {
-                out.push(b' ');
-                index += 1;
-            }
-            b'%' if index + 2 < bytes.len() => {
-                let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).unwrap_or("");
-                match u8::from_str_radix(hex, 16) {
-                    Ok(byte) => {
-                        out.push(byte);
-                        index += 3;
-                    }
-                    Err(_) => {
-                        out.push(bytes[index]);
-                        index += 1;
-                    }
-                }
-            }
-            byte => {
-                out.push(byte);
-                index += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// Some entropy for an identifier a request did not state.
-fn random_u64() -> u64 {
-    let mut bytes = [0u8; 8];
-    if getrandom(&mut bytes).is_err() {
-        return 1;
-    }
-    u64::from_le_bytes(bytes)
-}
-
-/// The operating system's entropy, through the same call the servers use.
-fn getrandom(bytes: &mut [u8]) -> Result<(), ()> {
-    shared::cryptography::handshake::random_into(bytes).map_err(|_| ())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn console_arguments_are_named_once_and_left_for_the_world_to_validate() {
-        let arguments =
-            operation_arguments("destination=ascalon\nmode=hard").expect("arguments parse");
-        assert_eq!(arguments.get("destination"), Some(&"ascalon".to_string()));
-        assert_eq!(arguments.get("mode"), Some(&"hard".to_string()));
-        assert!(operation_arguments("destination=ascalon\ndestination=kryta").is_err());
-        assert!(operation_arguments("not an assignment").is_err());
-    }
-
-    #[test]
-    fn a_service_name_cannot_change_the_supervisor_line() {
-        assert!(service_name("world"));
-        assert!(service_name("world-2"));
-        assert!(!service_name("world restart auth"));
-        assert!(!service_name("world\nquit"));
-    }
 
     #[test]
     fn only_a_real_control_port_is_read_from_a_stack_file() {
@@ -1069,6 +763,14 @@ mod tests {
         std::fs::write(&path, "{\"control_port\":0}").expect("stack is rewritten");
         assert!(supervisor_port(&path.to_string_lossy()).is_err());
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_route_that_names_a_row_id_refuses_a_word() {
+        let response = by_id("not-a-number", |_| {
+            unreachable!("a refused route never calls its page")
+        });
+        assert_eq!(response.status, 404);
     }
 }
 
@@ -1185,7 +887,8 @@ fn run(config_path: &std::path::Path, port_override: Option<u16>) -> Result<(), 
         ))
     });
 
-    // The world database: the maps and their spawn points, read by the same repository the load uses.
+    // The world database: the item templates a creation confirm points at, and the running copies
+    // its tick disposes. The world's maps and items are the pack's, read through `world_pack`.
     let world_pool = match config.value_string("WorldDatabaseInfo", "") {
         Ok((info, _)) if !info.is_empty() => {
             let settings = read_settings(&config, DatabaseKind::World)?;
@@ -1207,9 +910,6 @@ fn run(config_path: &std::path::Path, port_override: Option<u16>) -> Result<(), 
         }
         _ => None,
     };
-    let maps = world_pool
-        .as_ref()
-        .map(|pool| Arc::new(game::maps::DatabaseMaps::new(Arc::clone(pool), log.clone())));
     let items = world_pool.as_ref().map(|pool| {
         Arc::new(game::data_stores::DatabaseItems::new(
             Arc::clone(pool),
@@ -1261,22 +961,6 @@ fn run(config_path: &std::path::Path, port_override: Option<u16>) -> Result<(), 
         None
     } else {
         Some(auth_config)
-    };
-    let (inventory_file, _) = config
-        .value_string("InventoryFile", "config/World/Vanilla/creation/inventory.json")
-        .map_err(|error| error.to_string())?;
-    let (equipment_file, _) = config
-        .value_string("EquipmentFile", "config/World/Vanilla/creation/equipment.json")
-        .map_err(|error| error.to_string())?;
-    let inventory_file = if inventory_file.is_empty() {
-        None
-    } else {
-        Some(inventory_file)
-    };
-    let equipment_file = if equipment_file.is_empty() {
-        None
-    } else {
-        Some(equipment_file)
     };
     let (path_graphs_file, _) = config
         .value_string("PathGraphsFile", "data/path-graphs.bin")
@@ -1342,15 +1026,12 @@ fn run(config_path: &std::path::Path, port_override: Option<u16>) -> Result<(), 
     let manage = Arc::new(Manage {
         accounts,
         characters,
-        maps,
         items,
         instances,
         worlds: Some(Arc::new(world_list)),
         schemas,
         world_config,
         auth_config,
-        inventory_file,
-        equipment_file,
         path_graphs_file,
         map_archive_file,
         control,
@@ -1387,13 +1068,13 @@ fn run(config_path: &std::path::Path, port_override: Option<u16>) -> Result<(), 
             };
             let manage = Arc::clone(&manage);
             let log = log.clone();
-            // One connection at a time, on the current thread: an operator's page is not a load.
-            let session = ManageSession {
-                manage: Arc::clone(&manage),
-            };
-            let io = SessionIo::new(stream);
-            session.run(io).await;
-            log.out(LogLevel::Debug, "manage", format!("{peer} closed"));
+            // Browsers can open idle connections before sending requests. Each connection must
+            // run independently, and blocking database and control calls run on the blocking pool.
+            tokio::spawn(async move {
+                let session = ManageSession { manage };
+                session.answer(SessionIo::new(stream)).await;
+                log.out(LogLevel::Debug, "manage", format!("{peer} closed"));
+            });
         }
     })
 }

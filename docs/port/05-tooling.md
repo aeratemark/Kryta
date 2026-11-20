@@ -127,8 +127,24 @@ cargo run -p kryta-management-service -- -c tools\manage\manage.json  # http://1
 `tools/manage/` is the Configuration Manager: the operator's web front door. It is not a game server -
 no client talks to it, it serves no game protocol, and neither server program knows it exists
 (`docs/decisions/0008-administration-tool.md`). It links the same libraries the servers link and reaches
-existing data through the nouns' own repositories, so what a legacy data page writes is what a server
-reads. Its scope and ordered delivery record are canonical in `14-operator-surfaces.md`.
+existing data through the nouns' own repositories, so what a page writes is what a server reads. Its
+scope and ordered delivery record are canonical in `14-operator-surfaces.md`.
+
+The panel is layered, and each layer knows only the one below it. `web/` holds the shell every page is
+drawn into, the panel's stylesheet and the components a page is built from; `view/` holds the game's own
+names for the numbers a row stores and the row shapes a page lists; `pages/` holds one module per
+destination; and `lib.rs` holds one routing table plus the two owners the panel asks - the supervisor for
+process lifecycle, the running world for operations. Its destinations follow the game's ownership, not
+the database layout: Players leads to the accounts, an account owns its characters, and a character's
+page owns its progress, position, inventory, titles and unlocks.
+
+Three rules keep the surface trustworthy. A page is served before any other process is asked: the
+supervisor's status, the world's registered operations and the world's own status are probed by the page
+after it has answered, so a missing or slow owner never delays a page. A destination that does not work
+is not in the rail - there is no placeholder page pretending to be a roadmap step. And every write
+answers a `303` whose `Location` header the browser follows, so a form's outcome is the page it names.
+The stylesheet is one asset (`GET /static/style.css`) served from the program's own memory; there is no
+JavaScript except the three probes, and the pages work without it.
 
 `tools/supervisor/` is the fourth binary, and it is the one command that runs the stack: it reads
 `tools/supervisor/stack.json` - a service per row, with the program, its arguments and the port it
@@ -174,30 +190,33 @@ rather than starting nothing.
 
 | page | is | state |
 |---|---|---|
-| `/` | Configuration Manager overview and the six-destination application shell | done - foundation only; the legacy data summary remains below it |
+| `/` | the overview: the counts, the live world's own answer (probed after the page), and the working areas | done - unreachable data is named, not shown as zero |
+| `/players` | the account directory and a new account's form | done - an account is the login identity; it is the entry point that owns characters |
+| `/players/{id}` | one account: identity, EULA state, activation and removal, and the players it owns, with its section tabs | done - Shared storage and Account unlocks are named as not recorded by this server yet |
+| `/players/{id}/characters` | the account's roster as the login's own list reads it, with the creation form | done - a character can be created here from the creation record lists and the pack's campaign spawn data |
+| `/players/{id}/characters/{uuid}` | one character: campaign, profession pair, level, gold, last outpost, position, appearance; its inventory and equipment; its titles; its unlocked maps (R12); rename, level (1 to 20, R48) and removal | done - the game does not record titles yet, and the page says so instead of showing none; removal deletes the row with its own items and unlocks |
 | `/services` | the running supervisor's state and its named stop/restart controls | done against the existing loopback channel: `SupervisorStackFile` supplies its `control_port`; the manager cannot start a missing supervisor because it has no start protocol and must not become one |
-| `/configuration` | server-settings workflow | navigation only - roadmap step 5 is pending; no file is edited |
-| `/assets` | generic JSON game-asset workflow | navigation only - roadmap step 6 is pending; no asset is edited |
-| `/console` | browser adapter for the live operation registry | done against the existing world endpoint: lists `world.operations`, submits named `name=value` arguments to `/v1/operations`, and displays the world's result or refusal; it does not dispatch commands itself |
-| `/logs` | monitoring surface for services and their output | navigation only - roadmap step 4 is pending; no log is read |
-| `/accounts` | the rows the login reads: create, remove, and set the EULA version | done |
-| `/characters` | every row of the character table, as the login's list reads it, with how many items each holds and the maps it may travel to (R12), a level edit (1 to 20, R48) and a remove action that deletes the row with its own items and unlocks | done - a character is written by the creation confirm, not here; correcting its level and removing it are the operator's acts (`DatabaseCharacters::set_level`, `remove`, the reference's `DeleteFromDB`) |
+| `/console` | browser adapter for the live operation registry | done against the existing world endpoint: lists `world.operations` (asked after the page), submits named `name=value` arguments to `/v1/operations`, and displays the world's result or refusal; it does not dispatch commands itself |
+| `/status` | the running world's own answer to `world.status`, asked of its local control endpoint | done - one operation carried by the world's own queue (`docs/port/14-operator-surfaces.md`); a world that is unavailable or refuses is drawn differently from an empty answer, and `ControlPort`/`ControlCredentialFile` in `manage.json` configure it |
 | `/worlds` | the realm list and `data/realms.json` merged over it | done - read only, from the login's own reader |
-| `/content` | the maps and their spawn points (editable), each map's own party cap (editable, R15), the item templates, the profession sets a creation screen may choose from, and the copies the world has open | done - the load's own rows, edited where they matter; the running-instances table is the world's `instance` rows, the same ones its tick disposes; `0` clears a map's cap so the world's `PartySizeCap` applies; the sets are read from `config/World/Vanilla/creation/equipment.json` through the noun's own loader (`InventoryFile`/`EquipmentFile` in `manage.json`) |
+| `/content` | the world pack's maps with their entry points and the arrival points they state (R13/R21), the item definitions and profession sets a creation screen draws from, and the copies the world has open | done - read only for now: content is the pack (`0014-the-world-content-is-a-pack.md`), read through the same reader the world uses; editing it is roadmap step 6 and is not pretended |
+| `/navigation` | the extracted path-graph cache: inspection, and one selected map dumped in from `MapArchiveFile` | done - the cache is an operator asset, not state the running world owns |
 | `/schema` | each database's own record of what its updater has applied, against the files on disk | done - read only; `changed` is the one to act on before a server refuses to start |
 | `/settings` | each program's own JSON, key by key, as the file states it | done - read only, passwords masked by the reader; `WorldConfigFile` and `AuthConfigFile` in `manage.json` say where the files are |
-| `/status` | the running world's own answer to `world.status`, asked of its local control endpoint | done - one operation carried by the world's own queue (`docs/port/14-operator-surfaces.md`); a world that is unavailable or refuses is drawn differently from an empty answer, and `ControlPort`/`ControlCredentialFile` in `manage.json` configure it |
+| `/accounts`, `/characters` | the old addresses | redirect (`303` with its `Location`) to the hierarchy's own pages, so bookmarks keep working |
 
-Proved end to end on this machine: the page lists both accounts, `POST /accounts/eula` set a version and
-the row read back as `version 26`, `POST /accounts/create` wrote a row and `POST /accounts/delete` removed
-it, each answering a redirect to the list. The new pages were fetched against the live databases:
-`/characters` listed the rows the creation confirm wrote, `/worlds` listed world 2 "Kryta" at
-127.0.0.1:6113, `/content` listed map 148 "Ascalon City (pre-Searing)" with its spawn point
-(9541.87, 4796.46, plane 0), and `/settings` listed both programs' files with the connection strings'
-passwords masked. The writes were exercised too: `POST /content/spawn` wrote a spawn point and
-`POST /content/spawn/remove` removed it, and `POST /content/party-cap` set a map's cap to 12 and cleared
-it with 0. The last full check fetched every page - `/`, `/accounts`, `/characters`, `/worlds`,
-`/content`, `/settings`, `/schema` - and each answered 200.
+Proved on this machine against the checked-in databases. Every page answered `200` in 9-107 ms, and the
+stylesheet (`GET /static/style.css`, 10.8 KB) is served once instead of being repeated inside every page.
+The hierarchy was exercised end to end: `POST /players/create` wrote an account and answered `303` to
+`/players/9`; `POST /players/9/characters` created a character from the creation record lists and the
+pack's campaign spawn; the roster and the character page read it back (level 1, Prophecies, Warrior,
+Ascalon City (pre-Searing)); `POST .../level` set 5 and `.../rename` renamed it; `.../delete` removed the
+character with its items and unlocks; and `POST /players/9/delete` removed the account - each answer a
+`303` with the `Location` a browser follows. The content page listed the pack's maps (Random Arenas,
+Heroes Ascent, ...) with their entry points and stated arrivals, and the item definitions and profession
+sets - the world database's content tables are empty by design (`0013-content-is-the-pack.sql`), so the
+page reads the pack itself. The probes answered without delaying their pages: `/services/status`,
+`/console/operations` and `/status/data` reported that their owners were not running.
 
 `/status` was proved against a live world on this machine, three ways. With the world running and
 `Control.Enable` on, `kryta-cli 7878 worldserver/control.credential world.status` answered

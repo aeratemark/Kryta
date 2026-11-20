@@ -71,19 +71,11 @@
   },
   "WorldConfigFile": {
     "value": "worldserver/worldserver.json",
-    "doc": "The world program's own settings file, shown by the settings page and never written by this tool. Relative to where the tool is started. Empty leaves that half of the page out."
+    "doc": "The world program's own settings file, shown by the settings page and never written by this tool. Its WorldPack names the content the world serves, and its InventoryFile/EquipmentFile/EquippedSlotsFile are the creation lists the character page reads. Relative to where the tool is started. Empty leaves the world half of the panel out."
   },
   "AuthConfigFile": {
     "value": "authserver/authserver.json",
     "doc": "The login program's own settings file, shown by the settings page and never written by this tool. Relative to where the tool is started. Empty leaves that half of the page out."
-  },
-  "InventoryFile": {
-    "value": "config/World/Vanilla/creation/inventory.json",
-    "doc": "The creation record list: the bags and the items a new character is given. The content page shows the profession sets it holds. Relative to where the tool is started."
-  },
-  "EquipmentFile": {
-    "value": "config/World/Vanilla/creation/equipment.json",
-    "doc": "The profession sets a creation screen may choose from. The content page lists them, which set carries what."
   },
   "PathGraphsFile": {
     "value": "data/path-graphs.bin",

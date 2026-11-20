@@ -77,6 +77,9 @@ pub struct Response {
     pub content_type: &'static str,
     /// The body.
     pub body: Vec<u8>,
+    /// Where a redirect sends the client, when it sends one. A 303 is an answer a client acts on:
+    /// without `Location` it is a document that says "moved" and moves nothing.
+    pub location: Option<String>,
 }
 
 impl Response {
@@ -86,6 +89,7 @@ impl Response {
             status,
             content_type,
             body: body.into(),
+            location: None,
         }
     }
 
@@ -97,6 +101,19 @@ impl Response {
     /// A `text/plain` body.
     pub fn text(status: u16, body: impl Into<Vec<u8>>) -> Self {
         Self::new(status, "text/plain; charset=utf-8", body)
+    }
+
+    /// A `303 See Other` that names where the client goes next.
+    pub fn redirect(to: impl Into<String>) -> Self {
+        let to = to.into();
+        let body = format!("<p>moved to <a href=\"{to}\">{to}</a></p>");
+        Self::html(303, body).with_location(to)
+    }
+
+    /// The same response, sent with a `Location` header.
+    pub fn with_location(mut self, location: impl Into<String>) -> Self {
+        self.location = Some(location.into());
+        self
     }
 }
 
@@ -135,8 +152,12 @@ pub async fn read_request(io: &mut SessionIo) -> Result<Request, HttpError> {
 
 /// Write one response and close nothing: the caller owns the connection.
 pub async fn write_response(io: &mut SessionIo, response: &Response) -> std::io::Result<()> {
+    let location = match &response.location {
+        Some(location) => format!("Location: {location}\r\n"),
+        None => String::new(),
+    };
     let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n{location}Connection: close\r\n\r\n",
         response.status,
         reason(response.status),
         response.content_type,
@@ -311,5 +332,14 @@ mod tests {
     fn a_status_has_a_reason() {
         assert_eq!(reason(200), "OK");
         assert_eq!(reason(404), "Not Found");
+    }
+
+    #[test]
+    fn a_redirect_names_where_the_client_goes() {
+        let response = Response::redirect("/players/2");
+        assert_eq!(response.status, 303);
+        assert_eq!(response.location.as_deref(), Some("/players/2"));
+        assert!(String::from_utf8_lossy(&response.body).contains("href=\"/players/2\""));
+        assert!(Response::text(200, "ok").location.is_none());
     }
 }

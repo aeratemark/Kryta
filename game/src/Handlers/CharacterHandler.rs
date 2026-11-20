@@ -17,24 +17,12 @@
 //! **No frame, order or size changed when this moved out of `WorldSession.rs`.**
 
 use common::logging::LogLevel;
-use database::database::Param;
 use shared::cryptography::AuthCrypt;
 use shared::network::socket::SessionIo;
 
 use crate::server::packets::{character_packets, item_packets, misc_packets};
 use crate::server::protocol::GameVersion;
 use crate::server::world_session::WorldSession;
-
-/// The statement a creation confirm runs.
-///
-/// `ON CONFLICT (name) DO NOTHING` is the rule the reference enforces with a unique name: a name that
-/// is taken writes nothing, and the empty answer is what says so. The account is the portal's own uuid
-/// from the gameplay connection's version message, so the world needs no second database.
-const INSERT_CHARACTER: &str = "INSERT INTO \"characters\" (\"uuid\", \"account_uuid\", \"name\", \
-\"appearance\", \"primary_profession\", \"secondary_profession\", \"unlocked_professions\", \
-\"campaign\", \"level\", \"is_pvp\", \"helm_status\", \"gold\", \"last_outpost\", \"experience\") \
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
-ON CONFLICT (\"name\") DO NOTHING RETURNING 1";
 
 /// What a character-creation connection has chosen so far.
 ///
@@ -259,7 +247,6 @@ impl WorldSession {
             );
         }
         let account = crate::characters::uuid_text(&version.account);
-        let unlocked = 1i64 << (creation.profession & 0x1F);
 
         // Where the character starts, which is not where it was made: the first outpost this world
         // hosts. `GameSrv_HandleCharCreationConfirm` writes the character's starting map into its own
@@ -268,37 +255,16 @@ impl WorldSession {
         let starting_outpost = self.starting_outpost();
         let start_map = starting_outpost.map(|map| map.id as u16).unwrap_or(0);
 
-        let reply = match pool.lock() {
-            Ok(pool) => pool.query_reply(
-                INSERT_CHARACTER,
-                vec![
-                    Param::Text(crate::characters::uuid_text(&id)),
-                    Param::Text(account),
-                    Param::Text(name.clone()),
-                    Param::Integer(i64::from(appearance)),
-                    Param::Integer(i64::from(creation.profession)),
-                    Param::Integer(0), // secondary profession: the reference's creation default
-                    Param::Integer(unlocked),
-                    Param::Integer(i64::from(creation.campaign)),
-                    Param::Integer(1), // level 1
-                    Param::Flag(creation.campaign == 0),
-                    Param::Integer(1), // the helmet is shown
-                    Param::Integer(0), // gold: the reference's default for a new character
-                    Param::Integer(i64::from(start_map)), // the outpost it starts in
-                    Param::Integer(0), // experience
-                ],
-            ),
-            Err(_) => {
-                self.say(
-                    LogLevel::Error,
-                    format!("Gameplay connection from {peer}: the character database pool is poisoned."),
-                );
-                return;
-            }
-        };
+        let characters = crate::characters::DatabaseCharacters::new(
+            std::sync::Arc::clone(pool), self.log.clone(),
+        );
+        let reply = characters.insert_creation(
+            &crate::characters::uuid_text(&id), &account, &name, appearance,
+            creation.profession, creation.campaign, start_map,
+        );
 
-        match reply.recv() {
-            Ok(Ok(rows)) if rows.is_empty() => {
+        match reply {
+            Ok(false) => {
                 // `ON CONFLICT (name) DO NOTHING` wrote nothing: the name is taken.
                 self.say(
                     LogLevel::Debug,
@@ -311,7 +277,7 @@ impl WorldSession {
                 );
                 let _ = self.send(io, peer, crypt, &[refusal], "the refusal").await;
             }
-            Ok(Ok(_)) => {
+            Ok(true) => {
                 self.say(
                     LogLevel::Debug,
                     format!(
@@ -411,7 +377,7 @@ impl WorldSession {
                     .send(io, peer, crypt, &answer, "the character creation")
                     .await;
             }
-            Ok(Err(error)) => {
+            Err(error) => {
                 self.say(
                     LogLevel::Error,
                     format!(
@@ -423,14 +389,7 @@ impl WorldSession {
                 );
                 let _ = self.send(io, peer, crypt, &[refusal], "the refusal").await;
             }
-            Err(_) => {
-                self.say(
-                    LogLevel::Error,
-                    format!(
-                        "Gameplay connection from {peer}: the character database answered no query, so '{name}' was not written."
-                    ),
-                );
-            }
+
         }
     }
 }

@@ -254,6 +254,24 @@ impl DatabaseMaps {
         Ok(!rows.is_empty())
     }
 
+    /// Every map's own party cap, for a page that shows the whole table at once.
+    ///
+    /// A map that states no cap is absent from the answer, which is how the world's own
+    /// `PartySizeCap` still applies (R15) without a second read per map.
+    pub fn party_caps(&self) -> Result<std::collections::HashMap<u32, u32>, String> {
+        let rows = self.query(
+            "SELECT \"id\"::bigint, \"party_cap\"::bigint FROM \"map\" \
+             WHERE \"party_cap\" IS NOT NULL ORDER BY \"id\"",
+        )?;
+        let mut caps = std::collections::HashMap::new();
+        for row in &rows {
+            let id: i64 = read_number(row, "id")?;
+            let cap: i64 = read_number(row, "party_cap")?;
+            caps.insert(id as u32, cap as u32);
+        }
+        Ok(caps)
+    }
+
     /// Add a spawn point to a map at its next free index, and answer that index.
     ///
     /// The world's content is rows, and this is the administration tool's edit of one: the same

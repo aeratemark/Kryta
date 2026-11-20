@@ -57,11 +57,16 @@ repositories; their APIs, session invalidation and targeted disconnect remain to
   the service again. `worldserver` has an embedded interactive console, a standalone `kryta-cli`, and
   the local control endpoint; its two lifecycle rows, `server exit` and `server restart`, ask the world
   to stop and set the exit code the supervisor reads.
-- `tools/manage` is an existing application over the repositories. Its Accounts page creates, edits,
-  permanently removes, and activates/deactivates account rows through `game::accounts`; an inactive
-  account cannot start a later login but retains its characters and does not end a current session.
-  Its settings page reads and displays configuration; it does not edit settings. Its content pages
-  already offer some database edits.
+- `tools/manage` is the panel's implementation, layered as `web/` (the shell, its stylesheet, the
+  components and HTTP helpers), `view/` (the game's names for the numbers a row stores), `pages/` (one
+  module per destination) and one routing table in `lib.rs`. It was rebuilt around the game's own
+  hierarchy: Players leads to the accounts, an account owns its roster, and a character page owns its
+  progress, position, inventory, titles and unlocks. Accounts are created, edited, permanently removed
+  and activated/deactivated through `game::accounts`; characters are created from the creation record
+  lists and renamed, levelled (1 to 20, R48) and removed through `game::characters`. The settings,
+  worlds, schema and content pages read; the content page reads the world pack the way the world does.
+  A page never waits for another process: the supervisor's status, the world's registered operations
+  and the world's own status are probed after the page has answered.
 - Lua integration, API bindings and script-defined commands are planned, not implemented. Existing
   command wire behaviour and the live-client status are recorded in `0012` and `09-parity-audit.md`.
 - See `01-structure.md` for current stages and proof. The planned operator features below are not
@@ -80,11 +85,11 @@ configuration reader and asset readers without duplicating any of them.
 | Operator API | landed: the loopback `/v1/operations` endpoint invokes the shared registry | it is not yet a remote public API or an authorization system |
 | Standalone CLI | landed: `kryta-cli` uses the world endpoint and registry | it does not own world operations |
 | In-game CLI | landed for the existing chat command rows and live-client proof | GM authorization and new client-visible commands are not implemented |
-| Configuration Manager | foundation, supervisor client, and browser API console landed in `tools/manage` | monitoring, configuration edits, generic JSON assets, remote access, and a supervisor start verb remain separate work |
+| Configuration Manager | the layered panel in `tools/manage` (2026-11 rebuild): the Players→account→characters→character hierarchy, finished account and character writes, Services/Console/World status as async adapters, world content read from the pack, worlds/settings/schema read-only | monitoring (logs), configuration edits, generic JSON asset edits, remote access, and a supervisor start verb remain separate work; a destination without a function is not in the rail |
 
 The Configuration Manager delivery order is binding:
 
-1. **Management application foundation:** application structure, launch mechanism, and navigation for Overview, Services, Configuration, Assets, Console, and Logs.
+1. **Management application foundation:** application structure, launch mechanism, and navigation for the working destinations; a destination appears when it works, and the configuration, assets and logs destinations join when their own steps land.
 2. **Supervisor integration:** start, stop, restart, connect to an already-running stack, and report service state and failures through the existing supervisor.
 3. **Integrated console:** use the existing operator API and shared command registry; no parallel command system.
 4. **Monitoring:** show service state, server logs, and errors from their existing owners.
@@ -92,35 +97,42 @@ The Configuration Manager delivery order is binding:
 6. **JSON asset management:** generically browse, edit, validate, and persist existing JSON game assets; specialized editors are out of scope.
 7. **Integration and acceptance testing:** prove the complete operator workflow with the server both running and offline where a feature does not require a running service.
 
-`tools/manage` is the existing Rust, server-rendered web application; no UI framework is selected or
-introduced. Its
-pre-existing account, character, world, content, settings, schema, and world-status routes remain
-available as legacy routes, but they are not evidence that steps 2 through 6 are complete.
+`tools/manage` is the server-rendered web application; no UI framework is selected or introduced. The
+2026-11 rebuild replaced the patched, single-file page set with a layered arrangement and removed the
+destinations that had no function: the rail shows Overview, Players, World content, Worlds, Navigation,
+Services, Console, World status, Settings and Schema, and no page pretends to be a pending roadmap step.
 
-The foundation has an offline, responsive operator shell: grouped Workspace, Players and Server Data
-navigation; an explicit active work area; compact panels, metrics, directory lists and focused editors;
-and a small-screen layout. Accounts is the reference workflow: a compact account directory selects one
-account, whose inspector owns its login identity, activation, EULA state, deletion and link to that
-account's filtered character records. The other destinations retain their stated scope rather than
-pretending unfinished editors exist. It carries no JavaScript or external assets; future work extends
-this shell rather than replacing the manager with a second application.
+The shell is responsive and keeps the operator workstation look (`Kryta Control`); its stylesheet is
+one asset (`/static/style.css`) served from the program's own memory instead of being repeated inside
+every page. The hierarchy is the game's own. Players is the top-level destination leading to the account
+directory; an account page owns its identity, login state, section tabs (Overview, Characters, and the
+two account-wide areas this server does not record yet) and its players; a character page owns its
+progress, position, inventory, titles and unlocks. There is no JavaScript except three small probes (the
+supervisor's status, the world's registered operations and the world's own status), and every page
+works without them. Every write answers a `303` with the `Location` a browser follows. The old
+`/accounts` and `/characters` addresses redirect into the hierarchy, so bookmarks keep working. Future
+work extends this arrangement rather than patching a second page.
 
-The Services page now reads the existing `control_port` from `SupervisorStackFile` and calls only the
+The Services page reads the existing `control_port` from `SupervisorStackFile` and calls only the
 running supervisor's documented `status`, `stop <service>`, and `restart <service>` verbs. It cannot
 start a stack because the current supervisor exposes no start verb once it is absent; asking the manager
 to spawn one would make it a second process owner. The Console page asks the live world for
-`world.operations`, then sends the selected operation and named `name=value` arguments to the existing
-`/v1/operations` endpoint. The world remains responsible for validation, queueing, execution, and its
-answer. Both pages report an unavailable owner rather than simulating success.
+`world.operations` (after the page has answered), then sends the selected operation and named
+`name=value` arguments to the existing `/v1/operations` endpoint. The world remains responsible for
+validation, queueing, execution, and its answer. Both probes report an unavailable owner in the page
+rather than simulating success or delaying the page.
 
-**Validation and blocker.** `cargo test -p kryta-manage` passes the navigation, service-name,
-supervisor-port, and console-argument tests; `cargo check -p kryta-manage` passes. A direct launch with
-the checked-in local `manage.json` reached the login, character, and world databases, then stopped before
-binding because the current execution identity cannot read `worldserver/control.credential` (`Access is
-denied`, OS error 5). This is an environment access blocker for a live browser check, not proof that a
-pending feature works; no server process was started or changed. A run under the operator identity that
-owns the credential must fetch Services and Console against a running stack before this slice is accepted
-as a live workflow.
+**Validation.** `cargo test -p kryta-manage` passes the layout, component, view-label, name, redirect and
+port tests (20); `cargo check --workspace` and `cargo test -p shared` pass. A live run with the
+checked-in `manage.json` reached the login, character and world databases and served every page in
+9-107 ms. The write paths were exercised end to end on a throwaway account: create account (303 to
+`/players/9`), create character from the creation lists and the pack's campaign spawn, rename, set level,
+remove the character with its items and unlocks, remove the account - each answer a `303` with its
+`Location`, and the account and character were then removed. The probes were exercised without a
+running world and reported their owners unavailable instead of delaying their pages. The
+credential-reading blocker the earlier run recorded does not apply here: the panel read
+`worldserver/control.credential` and served the world-status page, which reported the refused
+connection as unavailable, not as an empty result.
 
 ## 3. The API contract to design
 
@@ -465,6 +477,41 @@ exit|restart|shutdown|idlerestart|idleshutdown`, `server set loglevel|motd|close
 `server info|debug|corpses`, `cs_server.cpp:55-94`), each row carrying an RBAC permission and
 `Console::Yes`.
 
+## Control panel hierarchy
+
+The operator panel follows the game's ownership, not the database layout. Accounts are the entry
+point for player administration: an account contains its character roster and slots (R59, E162),
+shared Xunlai storage (R49), and account-wide unlocks. A character's page owns its progress,
+carried gold (R45), position, inventory, equipment and character-specific unlocks. Parties and
+instances are live world concepts, linked to a character where applicable, not children of one
+account. Server services, settings, console and logs are server administration. The panel keeps
+these relationships visible and retains the selected account and character context across actions.
+
+Players is a top-level destination leading to the account directory. An account page exposes
+Account overview (identity, login state, removal), Characters, and the two account-wide areas as
+sections; the latter two are named as not recorded by this server yet rather than shown empty. The
+roster links to a character page with its progress, position, inventory and equipment, titles,
+unlocked maps (R12), and its rename, level (1 to 20, R48) and removal actions. The panel creates
+role-playing characters from the creation equipment and inventory and the world pack's campaign
+spawn data, through the shared character-row writer; PvP creation is refused because the spawn file
+names no PvP map. Slot capacity is not represented by the current account model and is not enforced.
+Creation initialization uses several database writes and cleans up on failure; cleanup failure is
+reported. Session coordination and account/character APIs remain outstanding: panel writes do not
+coordinate with online characters. Account deletion retains character rows; their policy needs an
+explicit decision before changing it. Titles are not recorded by this server yet, and the character
+page says so (the title messages are evidenced at E23 and E156-E158, but no table or handler exists).
+
+World content is the world pack (`docs/decisions/0014-the-world-content-is-a-pack.md`), so the content
+page reads the pack through the same reader the world uses and shows what the world will serve; editing
+the pack is the roadmap's generic asset workflow (step 6) and is not pretended. The world database's
+content tables are empty by design (`data/sql/base/db_world/0013-content-is-the-pack.sql`).
+
+ASURA `creation.rs:346-475` validates the name and reads defaults and campaign spawn data. The game
+handler still uses the world's first outpost and does not apply that validation; moving the row write
+into the repository does not claim to resolve those parity differences. The panel uses the ledger's
+R65 name rules and the campaign spawn file. Appearance flags and armour colour choices are not yet
+stored by the game creation handler (the `0x808B` audit row).
+
 ## 8. Technical design and first implementation slice
 
 This section is the design of the first slice. **The first slice and its contract have landed**: the
@@ -482,10 +529,11 @@ administrator authentication.
   processes the queue in the world update and invokes completion. `Main.cpp:338-342,400-408` starts
   the reference's SOAP and console threads. These establish ownership and execution order, not a
   requirement to copy SOAP's protocol or credentials into the manager.
-- `tools/manage/src/main.rs:639-653,812-822` starts Kryta's existing HTTP manager with its own
-  settings. `tools/supervisor/stack.json.dist` currently lists auth and world only, and
-  `tools/supervisor/src/main.rs:185-200,212` owns child processes and stack shutdown. The manager's
-  current local token mechanism is not the planned administrator login or a remote security model.
+- `tools/manage/src/lib.rs` (`run`) starts Kryta's existing HTTP manager with its own settings, and
+  its routing table names every address. `tools/supervisor/stack.json.dist` lists auth, world and the
+  manager, and `tools/supervisor/src/main.rs:185-200,212` owns child processes and stack shutdown. The
+  manager's current local token mechanism is not the planned administrator login or a remote security
+  model.
 - `docs/decisions/0008-administration-tool.md` records the current separate, loopback-only tool.
   The planned remote manager and live-operation connections extend that decision. When implemented,
   correct the decision and configuration documentation in the same change; do not claim the current
@@ -602,9 +650,12 @@ blocking the API and settings manager on playback or a map renderer.
    control endpoint produced "asked to restart (exit 2), request 1 of 5", a new world process, the
    stack still up with one world in it, and the restarted world answering again; `quit` stopped
    everything and left no process behind.
-4. **Configuration Manager foundation.** **Landed.** `tools/manage` supplies the stable six-destination
-   navigation and responsive shared shell. Overview is the front door; the existing data-management
-   routes are retained outside that navigation and do not change the roadmap's state.
+4. **Configuration Manager foundation.** **Landed, then rebuilt (2026-11).** `tools/manage` now
+   supplies a layered panel whose rail shows only working destinations (Overview, Players, World
+   content, Worlds, Navigation, Services, Console, World status, Settings, Schema), follows the game's
+   Players -> account -> characters -> character hierarchy, and answers every page before asking
+   another process. The old `/accounts` and `/characters` addresses redirect into it. Its proof is in
+   `docs/port/05-tooling.md`, "The administration tool".
 5. **Supervisor integration and integrated console.** **Implemented against current owners.** Services
    reads the supervisor's own `control_port` from `stack.json`, shows its status, and sends its existing
    named stop/restart verbs. Console asks the running world for its registrations and calls those same
