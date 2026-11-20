@@ -191,9 +191,37 @@ layout and not a judgement per feature: it is what the thing **is**.
 
 | kind | is | lives in | examples |
 |---|---|---|---|
-| **game data** | the world's state: what exists, what a character has, where it stands | **database rows**, through the noun's repository | accounts, characters and their settings, item definitions (`item_template`), a character's bags and items, map records, spawns, instances, portals, travel |
-| **a setting** | a choice an operator makes and may share | **a JSON file** | a program's configuration, the world list, the profession sets a new character starts wearing, loot tables |
+| **what a world is** | the content: every map, its entry points, its doorways, the items a new character is given, the command surface | **the pack's JSON files**, read on every start | map records, spawns, portals, creation sets, the command rows |
+| **a setting** | a choice an operator makes and may share | **a program's JSON file** | a program's configuration, the world list, loot tables |
+| **what a server writes** | the state: what exists right now, what a character has, where it stands | **database rows**, through the noun's repository | accounts, characters and their settings, a character's bags and items, open instances, unlocks, travel records |
 | **what the client dictates** | a value the client decides and the server can only obey | **a constant in the code that answers with it**, citing the capture | message headers and sizes, the file check's bytes, the account settings block |
+
+## A world is read from its files on every start, and nothing is seeded
+
+This is the design, not a preference. Every start of the program reads `config/`: the pack's maps, their
+entry points, their doorways, the creation screen's content, the command surface. A person edits a JSON
+file, restarts the program, and the change is live - maps, spawns, items, every feature - with no
+database step, no import and no migration. A database row is for what a server *writes while it runs*;
+it is never where content comes from.
+
+ASURA states the same rule in two places, and this tree takes both:
+
+- `ASURA/docs/guidance/game-packs.md`: "Load one selected profile for a server launch. Do not merge its
+  content with a base profile or search other profiles for missing data", and the authoring workflow is
+  "copy the base profile, modify that copy, and share the resulting profile".
+- `ASURA/config/World/README.md`: "Map descriptions are read from the selected pack, not from SQL...
+  Legacy SQL tables and database helpers still exist; their presence does not make them the serving
+  source."
+
+So `data/sql` is schema - it creates, alters and drops tables - and it seeds nothing. A schema file that
+writes a row is a defect, and `worldserver/tests/schema_has_no_content.rs` fails, naming the file and the
+line, when one does.
+
+**The one place this tree still seeds, and the fix.** The item templates are written into an
+`item_template` table at start-up from the creation content, and read back from it. The file is already
+the source, so the table is a projection kept for a join nothing needs: the load can take the
+definitions straight from the pack, and then no start-up writes a row at all. That is the next change;
+until it lands this paragraph names the exception rather than the rule.
 
 **ASURA's rule is stricter than a table, and this tree takes it as binding** (`AGENTS.md` section 4a
 there, decisions D34, D35 and D39 in `ASURA/docs/reference/decisions/layer-decisions.md`):

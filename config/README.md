@@ -12,6 +12,12 @@ file here, named by a setting that only says where the file is.
 | `Server/` | what a machine chooses for itself and what its services answer - the chat command surface, and later whatever else belongs to the server rather than to the world | `worldserver`, at start-up, through `worldserver.json` |
 | `World/` | the packs: the map catalogue, entry lists, doorways, and the creation screen's content. `Vanilla` is the faithful base - the client's own vocabulary and the values a faithful world runs on | `worldserver`, at start-up, through `worldserver.json` |
 
+**Every start reads these files, and nothing seeds a database.** Edit a file, restart the program, and
+the change is live - maps, spawns, items, every feature - with no database step. A database row is for
+what a server writes while it runs; it is never where content comes from, and `data/sql` is schema only
+(a schema file that writes a row fails `worldserver/tests/schema_has_no_content.rs`).
+`docs/port/04-configuration.md` states the rule and quotes ASURA's two statements of it.
+
 Two consequences, and they are the point of the split:
 
 - **A pack is a folder, not a code change.** A second world pack is `World/<name>/` beside `Vanilla`,
