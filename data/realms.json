@@ -14,6 +14,7 @@
       "address": "127.0.0.1",
       "localAddress": "127.0.0.1",
       "port": 6113,
+      "gamebuild": 39167,
       "doc": "The world this machine serves. The id is the map token a client carries back on its gameplay connection, so it must match a realmlist row's id; the port is where the world program will listen and is what a login hands out."
     }
   ]
