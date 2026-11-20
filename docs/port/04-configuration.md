@@ -213,11 +213,9 @@ So `data/sql` is schema - it creates, alters and drops tables - and it seeds not
 writes a row is a defect, and `worldserver/tests/schema_has_no_content.rs` fails, naming the file and the
 line, when one does.
 
-**The one place this tree still seeds, and the fix.** The item templates are written into an
-`item_template` table at start-up from the creation content, and read back from it. The file is already
-the source, so the table is a projection kept for a join nothing needs: the load can take the
-definitions straight from the pack, and then no start-up writes a row at all. That is the next change;
-until it lands this paragraph names the exception rather than the rule.
+**There is no exception.** A start-up writes no row: the item definitions are read from the creation
+content and held in memory (`definitions_as_templates`), never copied into a table and read back. If a
+reader needs content, it reads the pack; there is no second copy to disagree with the file.
 
 **The rules that hold a file to its job, binding in this tree** (`AGENTS.md` rule 7):
 

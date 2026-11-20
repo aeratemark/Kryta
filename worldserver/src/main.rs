@@ -498,50 +498,19 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
         );
     }
 
-    // The item templates: one row per distinct item the creation record lists name, seeded once.
-    // Reference: the same `SetInitialWorldSettings` pass that reads the world's item templates.
-    if let Some(pool) = world_pool.as_ref() {
-        let items = game::data_stores::DatabaseItems::new(std::sync::Arc::clone(pool), log.clone());
-        let definitions = world.creation().definitions();
-        match items.seed(&definitions) {
-            Ok(written) => match items.count() {
-                Ok(total) => log.out(
-                    LogLevel::Info,
-                    "server.worldserver",
-                    format!(
-                        "Item templates: {total} row(s) from {} definition(s); {written} written now.",
-                        definitions.len()
-                    ),
-                ),
-                Err(error) => log.out(
-                    LogLevel::Warn,
-                    "server.worldserver",
-                    format!("The item templates were seeded but cannot be counted: {error}"),
-                ),
-            },
-            Err(error) => log.out(
-                LogLevel::Error,
-                "server.worldserver",
-                format!("The item templates could not be seeded: {error}"),
-            ),
-        }
-        // And back into memory: a load resolves a character's held items against these rows.
-        match items.list() {
-            Ok(templates) => {
-                log.out(
-                    LogLevel::Info,
-                    "server.worldserver",
-                    format!("Item templates read back: {} row(s) held in memory.", templates.len()),
-                );
-                world.set_templates(templates);
-            }
-            Err(error) => log.out(
-                LogLevel::Error,
-                "server.worldserver",
-                format!("The item templates cannot be read back: {error}"),
-            ),
-        }
-    }
+    // The item definitions are the creation content's own: the pack says what an item is, and a load
+    // resolves a character's held items against these. No table, no seed, no read-back - a start-up
+    // writes nothing (AGENTS.md rule 7).
+    let templates = game::data_stores::definitions_as_templates(world.creation().definitions());
+    log.out(
+        LogLevel::Info,
+        "server.worldserver",
+        format!(
+            "Item definitions: {} read from the world pack; nothing is seeded.",
+            templates.len()
+        ),
+    );
+    world.set_templates(templates);
     let world = std::sync::Arc::new(world);
 
     // Stage 9. Reference: `sWorldSocketMgr.StartWorldNetwork(*ioContext, worldListener, worldPort,

@@ -21,7 +21,7 @@ use database::database::{DatabaseWorkerPool, Param};
 
 use crate::creation::Item;
 
-/// One item's definition, as the table holds it.
+/// One item's definition, as the pack states it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemDefinition {
     /// The table's row id.
@@ -73,6 +73,33 @@ pub struct DatabaseItems {
     log: Log,
 }
 
+/// The definitions a world runs with, built straight from the creation content's items.
+///
+/// The pack says what an item is; nothing copies it into a table first. The id is the definition's
+/// position, which is only an identity within one start - the client's key for an item is the item's
+/// own id, and the row a character holds carries its fields.
+pub fn definitions_as_templates(items: Vec<Item>) -> Vec<ItemDefinition> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| ItemDefinition {
+            id: index as i64 + 1,
+            file_id: item.file_id,
+            item_type: item.item_type,
+            dye_tint: item.dye_tint,
+            dye_colors: item.dye_colors,
+            materials: item.materials,
+            unk1: item.unk1,
+            flags: item.flags,
+            value: item.value,
+            model_id: item.model_id,
+            quantity: item.quantity,
+            profession: item.profession,
+            name: item.name.clone(),
+            modifiers: item.modifiers.clone(),
+        })
+        .collect()
+}
 impl DatabaseItems {
     /// A source that asks this pool.
     pub fn new(pool: Arc<Mutex<DatabaseWorkerPool>>, log: Log) -> Self {
@@ -230,78 +257,4 @@ fn parse_dwords(text: &str) -> Result<Vec<u32>, String> {
 fn number(row: &postgres::Row, at: usize) -> Result<i64, String> {
     row.try_get::<usize, i64>(at)
         .map_err(|error| format!("column {at}: {error}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use common::configuration::{Config, Policy};
-    use database::database::{read_settings, DatabaseKind};
-    use database::updater::{collect_files, UpdateState};
-    use std::path::Path;
-
-    #[test]
-    #[ignore = "needs the world database"]
-    fn definitions_are_seeded_once_and_read_back() {
-        let _serial = database::updater::apply::test_lock("world");
-        let log = Log::new();
-        let Some(config) =
-            Config::load_json("../worldserver/worldserver.json", false, Policy::default()).ok()
-        else {
-            panic!("the world program's configuration is not readable");
-        };
-        let settings = read_settings(&config, DatabaseKind::World).expect("the world settings");
-        let mut pool = DatabaseWorkerPool::open(DatabaseKind::World, &settings, &log)
-            .expect("the world pool opens");
-        let schema = collect_files(Path::new("../data/sql/base/db_world"), UpdateState::Released)
-            .expect("the world schema");
-        pool.apply_updates(&schema, &log).expect("the schema applies");
-        let items = DatabaseItems::new(Arc::new(Mutex::new(pool)), log.clone());
-
-        // Two definitions, one of which is repeated: the table holds two rows, not three.
-        let sword = crate::creation::Item {
-            id: 0,
-            bag_id: None,
-            slot: None,
-            file_id: 9_900_001,
-            item_type: 1,
-            dye_tint: 3,
-            dye_colors: 11,
-            materials: 0,
-            unk1: 0,
-            flags: 805_310_726,
-            value: 0,
-            model_id: 19_051,
-            quantity: 1,
-            profession: 1,
-            name: vec![33_025],
-            modifiers: vec![2_747_813_888],
-        };
-        let mut boots = sword.clone();
-        boots.file_id = 9_900_002;
-        boots.item_type = 4;
-
-        items.seed(&[sword.clone(), boots.clone(), sword.clone()]).expect("the seed writes");
-        let before = items.count().expect("the table counts");
-        items.seed(&[sword, boots]).expect("a second seed writes nothing new");
-        assert_eq!(items.count().expect("the table counts"), before, "the seed is idempotent");
-
-        let listed = items.list().expect("the table reads");
-        let read = listed
-            .iter()
-            .find(|template| template.file_id == 9_900_001)
-            .expect("the sword is a template");
-        assert_eq!(read.name, vec![33_025]);
-        assert_eq!(read.modifiers, vec![2_747_813_888]);
-        assert_eq!(read.flags, 805_310_726);
-
-        // Leave the table as it was found: only this test's own definitions go.
-        items
-            .query(
-                "DELETE FROM \"item_template\" WHERE \"file_id\" >= 9900000",
-                Vec::new(),
-            )
-            .expect("the test cleans up");
-        log.shutdown();
-    }
 }

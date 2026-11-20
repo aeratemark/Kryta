@@ -13,4 +13,4 @@ pub mod items;
 #[path = "PvpItems.rs"]
 pub mod pvp_items;
 
-pub use items::{DatabaseItems, ItemDefinition};
+pub use items::{definitions_as_templates, DatabaseItems, ItemDefinition};
