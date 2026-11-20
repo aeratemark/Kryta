@@ -1046,20 +1046,27 @@ fn run(config_path: &std::path::Path, port_override: Option<u16>) -> Result<(), 
         .build()
         .map_err(|error| error.to_string())?;
 
-    runtime.block_on(async move {
+    // The last reference to the manager must not be dropped on the runtime's thread: the database
+    // pool's connections are closed by `postgres`'s blocking client, whose `Drop` starts a tokio
+    // runtime of its own, and a runtime started inside a runtime aborts the process. The serving
+    // future takes only a clone and the original stays here, so a failed bind answers an error page
+    // instead of a crash (proved by starting the panel while another holds the port).
+    let serving = Arc::clone(&manage);
+    let log_for_loop = log.clone();
+    let served = runtime.block_on(async move {
         let listener = TcpListener::bind(format!("{bind}:{port}"))
             .await
             .map_err(|error| format!("cannot listen on {bind}:{port}: {error}"))?;
         // The supervisor reads this line, and an independent launch displays the panel URL.
         let ready = format!("READY: listening on http://{bind}:{port}/ - the administration tool");
         println!("{ready}");
-        log.out(LogLevel::Info, "manage", ready);
+        log_for_loop.out(LogLevel::Info, "manage", ready);
 
         loop {
             let (stream, peer) = match listener.accept().await {
                 Ok(accepted) => accepted,
                 Err(error) => {
-                    log.out(
+                    log_for_loop.out(
                         LogLevel::Warn,
                         "manage",
                         format!("a connection could not be accepted: {error}"),
@@ -1067,8 +1074,8 @@ fn run(config_path: &std::path::Path, port_override: Option<u16>) -> Result<(), 
                     continue;
                 }
             };
-            let manage = Arc::clone(&manage);
-            let log = log.clone();
+            let manage = Arc::clone(&serving);
+            let log = log_for_loop.clone();
             // Browsers can open idle connections before sending requests. Each connection must
             // run independently, and blocking database and control calls run on the blocking pool.
             tokio::spawn(async move {
@@ -1077,5 +1084,10 @@ fn run(config_path: &std::path::Path, port_override: Option<u16>) -> Result<(), 
                 log.out(LogLevel::Debug, "manage", format!("{peer} closed"));
             });
         }
-    })
+    });
+    // `manage` (and the pools inside it) and the runtime are dropped here, on the program's own
+    // thread, never inside the runtime: the pools' close is allowed to start its own runtime.
+    drop(runtime);
+    drop(manage);
+    served
 }
