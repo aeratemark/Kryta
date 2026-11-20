@@ -14,18 +14,57 @@ use std::path::{Path, PathBuf};
 /// Every statement that writes rows, as opposed to shaping the schema.
 const SEEDING: [&str; 3] = ["INSERT INTO", "UPDATE ", "DELETE FROM"];
 
+/// The files applied before this rule existed. They are history: an applied migration is immutable,
+/// so they stay as they were and `0013-content-is-the-pack.sql` removes what they seeded, once.
+const HISTORY: [&str; 7] = [
+    "0002-maps.sql",
+    "0006-map-148-file-id.sql",
+    "0007-map-instance-value.sql",
+    "0008-map-doorways.sql",
+    "0009-map-spawn-angle.sql",
+    "0011-map-catalogue.sql",
+    "0012-map-content.sql",
+];
+
+/// A statement a schema file may still make: the updater's own version record, and removing content
+/// rows that an earlier migration seeded (`0013-content-is-the-pack.sql`). Content is never written.
+fn allowed(statement: &str) -> bool {
+    if statement.starts_with("INSERT INTO \"schema_version\"")
+        || statement.starts_with("INSERT INTO schema_version")
+    {
+        return true;
+    }
+    if let Some(rest) = statement.strip_prefix("DELETE FROM \"") {
+        for table in [
+            "map\"",
+            "map_spawn\"",
+            "map_arch\"",
+            "map_arrival\"",
+            "item_template\"",
+        ] {
+            if rest.starts_with(table) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[test]
 fn no_schema_file_seeds_content() {
     let mut seeding = Vec::new();
     for file in sql_files(Path::new("../data/sql")) {
+        if HISTORY.contains(&file.file_name().and_then(|name| name.to_str()).unwrap_or("")) {
+            continue;
+        }
         let text = std::fs::read_to_string(&file).expect("a schema file reads");
         for (number, line) in text.lines().enumerate() {
             let statement = line.trim_start();
+            // A comment that names the statement is documentation, not a seed.
+            if statement.starts_with("--") || allowed(statement) {
+                continue;
+            }
             for pattern in SEEDING {
-                // A comment that names the statement is documentation, not a seed.
-                if statement.starts_with("--") {
-                    break;
-                }
                 if statement.starts_with(pattern) {
                     seeding.push(format!("{}:{}: {statement}", file.display(), number + 1));
                 }
