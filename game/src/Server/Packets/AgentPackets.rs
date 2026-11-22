@@ -47,6 +47,22 @@ pub const WORLD_REMOVE_AGENT: u16 = 0x0021;
 /// `GAME_SMSG_AGENT_UPDATE_POSITION` (`0x002C`): where an agent is, sent to everyone else.
 pub const AGENT_UPDATE_POSITION: u16 = 0x002C;
 
+/// `GAME_SMSG_NPC_UPDATE_PROPERTIES` (`0x0056`): one NPC definition, once per connection.
+pub const NPC_UPDATE_PROPERTIES: u16 = 0x0056;
+/// `GAME_SMSG_NPC_UPDATE_MODEL` (`0x0057`): an NPC definition's model files.
+pub const NPC_UPDATE_MODEL: u16 = 0x0057;
+/// `GAME_SMSG_AGENT_UPDATE_SCALE` (`0x009A`): an agent's scale word.
+pub const AGENT_UPDATE_SCALE: u16 = 0x009A;
+/// `GAME_SMSG_AGENT_UPDATE_NPC_NAME` (`0x009B`): one NPC agent's own name.
+pub const AGENT_UPDATE_NPC_NAME: u16 = 0x009B;
+/// `GAME_SMSG_NPC_UPDATE_WEAPONS` (`0x006D`): the items an NPC holds.
+pub const NPC_UPDATE_WEAPONS: u16 = 0x006D;
+/// `GAME_SMSG_AGENT_UPDATE_SPEED_BASE` (`0x0027`): the speed an agent walks at.
+pub const AGENT_UPDATE_SPEED_BASE: u16 = 0x0027;
+/// The movement mode `0x002B` carries when a walk starts
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs:500`, `AGENT_SPEED_MODE_START`).
+pub const AGENT_SPEED_MODE_START: u32 = 1;
+
 /// The property an agent's energy is reported through.
 ///
 /// Evidence: `ASURA`'s `agent.rs`, which records the reference's own numbers: energy 41, health 42,
@@ -82,18 +98,32 @@ pub const AGENT_PROPERTY_ENERGY_REGEN: u32 = 43;
 pub const CHAR_CLASS_PLAYER_BASE: u32 = 0x3000_0000;
 /// `1` for a living body, `4` for a dropped item.
 pub const AGENT_TYPE_LIVING: u8 = 1;
+/// An item lying on the ground (`ASURA/crates/asura-protocol/src/game/mod.rs:1554-1579`).
+pub const AGENT_TYPE_ITEM: u8 = 4;
+/// `AGENT_PROPERTY_ACTION`: the action an agent is in, 1 while it holds a pickup or a cast, 0 when it
+/// is done (`ASURA/crates/asura-protocol/src/game/mod.rs:534`, `AGENT_PROPERTY_ACTION`).
+pub const AGENT_PROPERTY_ACTION: u32 = 8;
+/// `AGENT_PROPERTY_TARGET`: what the agent's action is aimed at
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs:537`, `AGENT_PROPERTY_TARGET`).
+pub const AGENT_PROPERTY_TARGET: u32 = 39;
+/// The model word an NPC agent is drawn with: the class nibble over its definition index
+/// (`pre-searing-load-3.jsonl` seq 233: `0x200005B3` for definition `0x5B3`, against `0x30000035`
+/// for player 0x35 at seq 221; `ASURA/crates/asura-protocol/src/game/mod.rs:1581-1584`).
+pub const CHAR_CLASS_NPC_BASE: u32 = 0x2000_0000;
 
 /// One agent, in the field order `GAME_SMSG_WORLD_CREATE_AGENT` writes it.
 ///
-/// Source: `ASURA`'s `crates/asura-protocol/src/game/mod.rs`, its `CreateAgent` struct and
-/// `world_create_agent` builder, which transcribe the reference's `GameSrv_BuildCreateAgentMsg`
-/// field for field. The one field that differs between a player and an item on the ground is
-/// `agent_type`; the rest is what the reference fills from its `GmAgent`.
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1426-1490`, its `CreateAgent` struct and
+/// `CreateAgent::LIVING`, which transcribe the reference's `GameSrv_BuildCreateAgentMsg` field for
+/// field. `agent_type` is the field that differs between a living body and an item on the ground;
+/// `h000b`, `h001e`, `h0023` and `h0027` are carried by the caller because the live server fills them
+/// per body. A player's create finishes with `..CreateAgent::LIVING`, whose values are the ones this
+/// builder used to write as constants, so a player's bytes are unchanged.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CreateAgent {
     /// The id the rest of the stream refers to this body by.
     pub agent_id: u32,
-    /// What the client draws: a character class word for a player, an item model for a drop.
+    /// What the client draws: a character class word for a player or an NPC, an item model for a drop.
     pub model_id: u32,
     /// `1` for a living body, `4` for a dropped item.
     pub agent_type: u8,
@@ -105,32 +135,98 @@ pub struct CreateAgent {
     pub direction: (f32, f32),
     /// Walking speed the client uses until a `0x002B` says otherwise.
     pub speed_base: f32,
-    /// The team the body belongs to; 0 for a neutral body.
+    /// The team the body belongs to: this server's token for a player, the client's four-character code
+    /// for an NPC (`'nonc'` in `pre-searing-load-3.jsonl` seq 233), 0 for a ground item.
     pub player_team_token: u32,
+    /// The reference's `h000B`. For a living agent the live server sends 5 for a player, 9 for a person
+    /// NPC and 8 for an animal NPC (`pre-searing-load-3.jsonl` seq 221, 233, 517;
+    /// `ASURA/crates/asura-protocol/src/game/mod.rs:1451-1454`).
+    pub h000b: u8,
+    /// The reference's `h001E`. 1 for every NPC in the 148 capture and for this server's own players
+    /// (`ASURA/crates/asura-protocol/src/game/mod.rs:1455-1457`).
+    pub h001e: u8,
+    /// The reference's `h0023`. 1.0 for most bodies; the live server sends 0.32 and 0.167 for some NPCs
+    /// (seq 267, 517). Unnamed (`ASURA/crates/asura-protocol/src/game/mod.rs:1458-1460`).
+    pub h0023: f32,
+    /// The reference's `h0027`: [`AGENT_H0027_LIVING`] for every living agent
+    /// (`ASURA/crates/asura-protocol/src/game/mod.rs:1461-1463`).
+    pub h0027: u32,
+}
+
+/// The create's dword at body offset `0x27` for every living agent, players and NPCs alike
+/// (`pre-searing-load-3.jsonl`, all 42 creates; `ASURA/crates/asura-protocol/src/game/mod.rs:1466`).
+pub const AGENT_H0027_LIVING: u32 = 0x4140_0000;
+
+impl CreateAgent {
+    /// What every living create shares, to finish with struct-update syntax: the type, `h001E` 1,
+    /// `h0023` 1.0 and the living `h0027`, with a player's `h000B` (5). The rest is zero and is the
+    /// caller's to state (`ASURA/crates/asura-protocol/src/game/mod.rs:1468-1486`).
+    pub const LIVING: CreateAgent = CreateAgent {
+        agent_id: 0,
+        model_id: 0,
+        agent_type: AGENT_TYPE_LIVING,
+        position: (0.0, 0.0),
+        plane: 0,
+        direction: (1.0, 0.0),
+        speed_base: 0.0,
+        player_team_token: 0,
+        h000b: 5,
+        h001e: 1,
+        h0023: 1.0,
+        h0027: AGENT_H0027_LIVING,
+    };
+}
+
+/// A dropped item's ground agent: `WORLD_CREATE_AGENT` with the item's **id** where a living agent
+/// carries its model, type 4, no speed and no team.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1554-1579`, `item_agent`: the fields are the live
+/// server's (`items-live-20261108-173913.jsonl` seq 43: agent 13, item 609, type 4, `h000B = 0`,
+/// `h0027 = 0x34000000`, direction `(1, 0)`).
+pub fn item_agent(
+    agent_id: u32,
+    item_id: u32,
+    position: (f32, f32),
+    plane: u16,
+    direction: (f32, f32),
+) -> Vec<u8> {
+    world_create_agent(&CreateAgent {
+        agent_id,
+        model_id: item_id,
+        agent_type: AGENT_TYPE_ITEM,
+        position,
+        plane,
+        direction,
+        speed_base: 0.0,
+        player_team_token: 0,
+        h000b: 0,
+        h001e: 1,
+        h0023: 1.0,
+        h0027: 0x3400_0000,
+    })
 }
 
 /// `0x0020`: one agent created, 99 bytes fixed - the frame that puts a body in a map.
-///
-/// The field order and the five constants are the reference's own (`GameSrv_BuildCreateAgentMsg` as
-/// ASURA transcribes it): the byte after the type is 5, the byte after the direction is 1, the float
-/// after the speed is 1.0, and the dword after it is `0x41400000` - "12.0 reinterpreted", as the
-/// reference writes it. The two `f32::INFINITY` pairs are what it sends for the unmodelled vectors.
-/// They are carried as measured rather than reasoned about.
+/// `f32::INFINITY` pairs are what the reference sends for the unmodelled vectors of a body that is not
+/// walking; a body created mid-walk carries its destination there in the live stream (seq 517, 584),
+/// which this builder does not model. `h003B` goes out as 0: the live load carries a non-zero value
+/// there for every body (seq 233: `0x25DE3604`) and 0 for a body created after the load (seq 885,
+/// 1012, 1346); what it is is not established.
 pub fn world_create_agent(agent: &CreateAgent) -> Vec<u8> {
     let mut body = Vec::with_capacity(97);
     body.extend_from_slice(&agent.agent_id.to_le_bytes());
     body.extend_from_slice(&agent.model_id.to_le_bytes());
     body.push(agent.agent_type);
-    body.push(5); // h000B
+    body.push(agent.h000b);
     body.extend_from_slice(&agent.position.0.to_le_bytes());
     body.extend_from_slice(&agent.position.1.to_le_bytes());
     body.extend_from_slice(&agent.plane.to_le_bytes());
     body.extend_from_slice(&agent.direction.0.to_le_bytes());
     body.extend_from_slice(&agent.direction.1.to_le_bytes());
-    body.push(1); // h001E
+    body.push(agent.h001e);
     body.extend_from_slice(&agent.speed_base.to_le_bytes());
-    body.extend_from_slice(&1.0f32.to_le_bytes()); // h0023
-    body.extend_from_slice(&0x4140_0000u32.to_le_bytes()); // h0027
+    body.extend_from_slice(&agent.h0023.to_le_bytes());
+    body.extend_from_slice(&agent.h0027.to_le_bytes());
     body.extend_from_slice(&agent.player_team_token.to_le_bytes());
     for _ in 0..5 {
         body.extend_from_slice(&0u32.to_le_bytes()); // h002F..h003F
@@ -410,6 +506,118 @@ pub fn agent_update_position(agent: u32, position: (f32, f32), plane: u16) -> (u
     (AGENT_UPDATE_POSITION, frame(AGENT_UPDATE_POSITION, &body))
 }
 
+/// A `u16` count and that many UTF-16 code units, cut at `capacity`
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs:604-612`, `Builder::units`).
+fn units(out: &mut Vec<u8>, units: &[u16], capacity: usize) {
+    let units = &units[..units.len().min(capacity)];
+    out.extend_from_slice(&(units.len() as u16).to_le_bytes());
+    for unit in units {
+        out.extend_from_slice(&unit.to_le_bytes());
+    }
+}
+
+/// The fields of one `GAME_SMSG_NPC_UPDATE_PROPERTIES` (`0x0056`), in wire order: the client's table
+/// gives six dwords, two bytes and a `String16` of capacity 8. Named from the 14 live records of
+/// `pre-searing-load-3.jsonl` (seq 229, 237, 246, ...). The two dwords at body offsets `0x0A` and
+/// `0x12` are 0 in every record and are not named.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1596-1624`, `NpcProperties`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NpcProperties<'a> {
+    /// The client's NPC table index.
+    pub definition_index: u32,
+    /// The model file.
+    pub file_id: u32,
+    /// Body offset `0x0A`; 0 in every capture.
+    pub h000a: u32,
+    /// The visual word; its top byte is the scale in percent.
+    pub visual: u32,
+    /// Body offset `0x12`; 0 in every capture.
+    pub h0012: u32,
+    /// The flags word.
+    pub flags: u32,
+    /// The primary profession.
+    pub primary: u8,
+    /// The level.
+    pub level: u8,
+    /// The encoded name, at most 8 units.
+    pub name: &'a [u16],
+}
+
+/// `0x0056`: one NPC definition, sent once per connection in front of the first agent that uses it
+/// (seq 229 before agent 0x29; seq 265 is the second body of definition `0x5C8` and has none).
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1626-1640`, `npc_update_properties`.
+pub fn npc_update_properties(npc: &NpcProperties<'_>) -> Vec<u8> {
+    let mut body = Vec::with_capacity(26 + 2 + npc.name.len().min(8) * 2);
+    body.extend_from_slice(&npc.definition_index.to_le_bytes());
+    body.extend_from_slice(&npc.file_id.to_le_bytes());
+    body.extend_from_slice(&npc.h000a.to_le_bytes());
+    body.extend_from_slice(&npc.visual.to_le_bytes());
+    body.extend_from_slice(&npc.h0012.to_le_bytes());
+    body.extend_from_slice(&npc.flags.to_le_bytes());
+    body.push(npc.primary);
+    body.push(npc.level);
+    units(&mut body, npc.name, 8);
+    frame(NPC_UPDATE_PROPERTIES, &body)
+}
+
+/// `0x0057`: a definition's model files, right after its `0x0056`; a definition with none sends no
+/// `0x0057` (seq 294). The table's layout: a dword and an `Array32` of capacity 8.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1642-1650`, `npc_update_model`.
+pub fn npc_update_model(definition_index: u32, files: &[u32]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(4 + 2 + files.len().min(8) * 4);
+    body.extend_from_slice(&definition_index.to_le_bytes());
+    body.extend_from_slice(&dwords(&files[..files.len().min(8)]));
+    frame(NPC_UPDATE_MODEL, &body)
+}
+
+/// `0x009B`: one NPC agent's own name, ahead of its effects and create (seq 231). Two bodies of one
+/// definition carry different names (seq 239, 265).
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1652-1659`, `agent_update_npc_name`.
+pub fn agent_update_npc_name(agent: u32, name: &[u16]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(4 + 2 + name.len().min(32) * 2);
+    body.extend_from_slice(&agent.to_le_bytes());
+    units(&mut body, name, 32);
+    frame(AGENT_UPDATE_NPC_NAME, &body)
+}
+
+/// `0x009A`: an agent's scale word, ahead of its create for the animal NPCs (seq 514: `0x1B000000`,
+/// the definition's own visual word).
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1661-1668`, `agent_update_scale`.
+pub fn agent_update_scale(agent: u32, scale: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(8);
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&scale.to_le_bytes());
+    frame(AGENT_UPDATE_SCALE, &body)
+}
+
+/// `0x006D`: the items an NPC holds, right after its create, for every NPC (seq 236: `{0x29, 2, 3}`,
+/// the two item records sent just before; seq 251: `{0x2B, 0, 0}` for an unarmed body).
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1670-1679`, `npc_update_weapons`.
+pub fn npc_update_weapons(agent: u32, lead: u32, offhand: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(12);
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&lead.to_le_bytes());
+    body.extend_from_slice(&offhand.to_le_bytes());
+    frame(NPC_UPDATE_WEAPONS, &body)
+}
+
+/// `0x0027`: 10 bytes, the agent and the speed it walks at. cmonmeow sends this before a leg
+/// (`movement_base_speed_2022`, `gw_agent_wire.h:35-38`).
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:2274-2281`, `agent_update_speed_base`.
+pub fn agent_update_speed_base(agent: u32, speed: f32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(8);
+    body.extend_from_slice(&agent.to_le_bytes());
+    body.extend_from_slice(&speed.to_le_bytes());
+    frame(AGENT_UPDATE_SPEED_BASE, &body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,6 +717,7 @@ mod tests {
             direction: (0.0, 1.0),
             speed_base: 288.0,
             player_team_token: 2,
+            ..CreateAgent::LIVING
         };
         let frame = world_create_agent(&agent);
         assert_eq!(frame.len(), 99, "the table's own size");
@@ -546,5 +755,123 @@ mod tests {
         assert_eq!(&frame[83..85], &0u16.to_le_bytes());
         assert_eq!(&frame[85..89], &0u32.to_le_bytes());
         assert_eq!(&frame[97..99], &0u16.to_le_bytes());
+    }
+
+    /// The NPC entry messages of `recordings/client/feature/maps/pre-searing-load-3.jsonl`, each record's
+    /// struct fields narrowed to the client table's widths.
+    ///
+    /// `ASURA/crates/asura-protocol/src/game/mod.rs:2895-2993`,
+    /// `the_npc_messages_are_the_captured_bytes`, unchanged in meaning.
+    #[test]
+    fn the_npc_messages_are_the_captured_bytes() {
+        // Seq 229: definition 0x5B3, file 0x1C603, visual 0x64000000, flags 0x20C, warrior, level 2,
+        // a four-unit name.
+        let name = [0x0F4B, 0x8B51, 0xE2DF, 0x498E];
+        assert_eq!(
+            npc_update_properties(&NpcProperties {
+                definition_index: 0x5B3,
+                file_id: 0x1_C603,
+                h000a: 0,
+                visual: 0x6400_0000,
+                h0012: 0,
+                flags: 0x20C,
+                primary: 1,
+                level: 2,
+                name: &name,
+            }),
+            vec![
+                0x56, 0x00, 0xb3, 0x05, 0x00, 0x00, 0x03, 0xc6, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x02, 0x00, 0x00, 0x01, 0x02,
+                0x04, 0x00, 0x4b, 0x0f, 0x51, 0x8b, 0xdf, 0xe2, 0x8e, 0x49,
+            ]
+        );
+        // Seq 230: one model file.
+        assert_eq!(
+            npc_update_model(0x5B3, &[0x1_FB99]),
+            vec![
+                0x57, 0x00, 0xb3, 0x05, 0x00, 0x00, 0x01, 0x00, 0x99, 0xfb, 0x01, 0x00
+            ]
+        );
+        // Seq 231: agent 0x29's name.
+        assert_eq!(
+            agent_update_npc_name(0x29, &[0x3382, 0x95BE, 0xE31B, 0x6F31]),
+            vec![
+                0x9b, 0x00, 0x29, 0x00, 0x00, 0x00, 0x04, 0x00, 0x82, 0x33, 0xbe, 0x95, 0x1b, 0xe3,
+                0x31, 0x6f,
+            ]
+        );
+        // Seq 514 and seq 251.
+        assert_eq!(
+            agent_update_scale(0xF5, 0x1B00_0000),
+            vec![0x9a, 0x00, 0xf5, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1b]
+        );
+        assert_eq!(
+            npc_update_weapons(0x2B, 0, 0),
+            vec![0x6d, 0x00, 0x2b, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
+        // Seq 233: agent 0x29's create, every field as captured except `h003B`, which this server
+        // sends as 0 (see `world_create_agent`).
+        let create = world_create_agent(&CreateAgent {
+            agent_id: 0x29,
+            model_id: CHAR_CLASS_NPC_BASE | 0x5B3,
+            agent_type: AGENT_TYPE_LIVING,
+            position: (f32::from_bits(0x4637_0C00), f32::from_bits(0x455B_D000)),
+            plane: 26,
+            direction: (f32::from_bits(0xBF76_14EA), f32::from_bits(0x3E8D_22A7)),
+            speed_base: 250.0,
+            player_team_token: 0x6E6F_6E63,
+            h000b: 9,
+            h001e: 1,
+            h0023: 1.0,
+            h0027: 0x4140_0000,
+        });
+        let mut expected = vec![0x20, 0x00];
+        for dword in [0x29u32, 0x2000_05B3] {
+            expected.extend_from_slice(&dword.to_le_bytes());
+        }
+        expected.extend_from_slice(&[1, 9]);
+        for dword in [0x4637_0C00u32, 0x455B_D000] {
+            expected.extend_from_slice(&dword.to_le_bytes());
+        }
+        expected.extend_from_slice(&26u16.to_le_bytes());
+        for dword in [0xBF76_14EAu32, 0x3E8D_22A7] {
+            expected.extend_from_slice(&dword.to_le_bytes());
+        }
+        expected.push(1);
+        for dword in [
+            0x437A_0000u32,
+            0x3F80_0000,
+            0x4140_0000,
+            0x6E6F_6E63,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ] {
+            expected.extend_from_slice(&dword.to_le_bytes());
+        }
+        for dword in [0x7F80_0000u32, 0x7F80_0000] {
+            expected.extend_from_slice(&dword.to_le_bytes());
+        }
+        expected.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
+        for dword in [0x7F80_0000u32, 0x7F80_0000] {
+            expected.extend_from_slice(&dword.to_le_bytes());
+        }
+        expected.extend_from_slice(&[0, 0]);
+        assert_eq!(create, expected);
+        assert_eq!(create.len(), 99);
+    }
+
+    /// `0x0027` is the table's 10 bytes (`ASURA/crates/asura-world/src/npc/frames.rs:121-134`).
+    #[test]
+    fn a_speed_base_is_the_agent_and_the_speed() {
+        let frame = agent_update_speed_base(9, 220.0);
+        assert_eq!(frame.len(), 10);
+        assert_eq!(&frame[..2], &[0x27, 0x00]);
+        assert_eq!(&frame[2..6], &9u32.to_le_bytes());
+        assert_eq!(&frame[6..10], &220f32.to_le_bytes());
     }
 }

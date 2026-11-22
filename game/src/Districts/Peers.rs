@@ -348,6 +348,7 @@ pub fn introduction(
             direction: peer.standing.direction,
             speed_base: speed,
             player_team_token: team_token,
+            ..agent_packets::CreateAgent::LIVING
         },
     ));
     for item in &peer.wearing {

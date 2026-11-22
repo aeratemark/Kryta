@@ -1,0 +1,13 @@
+-- The catalogue definition an owned item was made from, by the pack's own key.
+--
+-- ASURA's `item_catalogue::for_item` looks an owned row up by this id first and falls back to
+-- the row's wire identity (file id, item type, model) only for a row written before the column
+-- existed (`ASURA/crates/asura-world/src/item_catalogue.rs:272-291`). The column is nullable for the
+-- same reason: every row a server wrote before this file still reads, and still resolves.
+--
+-- A definition's key is the `id` in `config/World/Vanilla/items.json` (for example `skale_fin`). It is
+-- content, not a foreign key: the world's catalogue and the character database are separate
+-- databases, and a row names its definition the way it names its template. The empty string is a row
+-- that names none - every row written before this file, and the creation seed, whose items the
+-- catalogue resolves by wire fields.
+ALTER TABLE "item_instance" ADD COLUMN IF NOT EXISTS "definition_id" TEXT NOT NULL DEFAULT '';

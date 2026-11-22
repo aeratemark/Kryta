@@ -312,6 +312,9 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
         std::path::Path::new(&world_pack).join(game::characters::experience::EXPERIENCE_FILE),
         &log,
     )?;
+    // The item catalogue: the pack's `items.json` and `upgrades.json`, read the way the experience curve
+    // is (`game/DataStores/ItemCatalogue.rs`, ported from ASURA's `item_catalogue.rs`).
+    world.load_item_catalogue(&world_pack, &log)?;
     // How many players a party may hold, per map: the pack's own file, read the way the titles are
     // (`game/Parties/mod.rs`, ported from ASURA's `party_sizes.json`).
     world.load_party_sizes(
@@ -479,6 +482,11 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
         log.out(LogLevel::Info, "server.worldserver", note);
     }
     world.set_settings(world_settings);
+    // The NPC types, placements and routes (`npcs/definitions.json` and each map folder's
+    // `npcs.json`), read after the settings, whose `CompassRange` is the sight rule. One bad row
+    // refuses the start, naming the row, rather than a town with half its people
+    // (`game/Agents/NpcFile.rs`; `ASURA/crates/asura-world/src/main.rs:403-412`).
+    world.load_npcs(&world_pack, &log)?;
     log.out(
         LogLevel::Info,
         "server.worldserver",
@@ -501,6 +509,9 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     }
     let graphs = load_path_graphs(&graph_dump, &hostable, &log)?;
     world.set_graphs(graphs);
+    // Every NPC position must stand on its map's walkable surface, now that the surfaces are loaded
+    // (`ASURA/crates/asura-world/src/main.rs:479-485`).
+    world.check_npc_ground(&log)?;
 
     let (bags, items, sets) = world.load_creation(
         &inventory_file,

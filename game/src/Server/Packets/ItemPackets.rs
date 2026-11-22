@@ -150,11 +150,41 @@ pub fn inventory_create_bag(
     frame(INVENTORY_CREATE_BAG, body)
 }
 
+/// `0x0139`: what a stack holds after a drop or a merge.
+pub const ITEM_UPDATE_QUANTITY: u16 = 0x0139;
+
+/// `0x0159`: the item a client picked up and the agent that picked it up. The game table leaves the
+/// row unnamed; ASURA names it from the pickup capture
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs:961-967`, `ITEM_PICKED_UP`).
+pub const ITEM_PICKED_UP: u16 = 0x0159;
+
+/// `0x0162`: an item the client already knows, updated in place - a partial drop's ground record.
+pub const ITEM_UPDATE: u16 = 0x0162;
+
+/// `0x014B`: where an item moved during a session. The load block uses `0x013E` instead; the two carry
+/// the same five fields (`ASURA/crates/asura-protocol/src/game/mod.rs:984-1000`).
+pub const ITEM_CHANGE_LOCATION: u16 = 0x014B;
+
+/// `0x006F`: one visual equipment slot on one agent.
+pub const UPDATE_AGENT_VISUAL_EQUIPMENT_SLOT: u16 = 0x006F;
+
 /// `0x0161`: one item, with everything a client needs to draw it.
 ///
 /// **Not a fixed size**: the fixed part is 33 bytes after the header, then two counted fields - the
 /// name as `u16` units and the modifiers as a **one-byte** count of dwords.
 pub fn create_named_item(item: &NamedItem) -> Vec<u8> {
+    named_item_frame(CREATE_NAMED_ITEM, item)
+}
+
+/// `0x0162`: the same fields as [`create_named_item`], against an item id the client has already
+/// seen (`ASURA/crates/asura-protocol/src/game/mod.rs:926-951`).
+pub fn item_update(item: &NamedItem) -> Vec<u8> {
+    named_item_frame(ITEM_UPDATE, item)
+}
+
+/// One item body, shared by the create and update headers so the two layouts cannot drift
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs:934-951`).
+fn named_item_frame(header: u16, item: &NamedItem) -> Vec<u8> {
     let mut body = Vec::with_capacity(31 + 2 + item.name.len() * 2 + 1 + item.modifiers.len() * 4);
     u32s(&mut body, item.id);
     u32s(&mut body, item.file_id);
@@ -169,7 +199,59 @@ pub fn create_named_item(item: &NamedItem) -> Vec<u8> {
     u32s(&mut body, item.quantity);
     units(&mut body, &item.name, 64);
     nested_dwords(&mut body, &item.modifiers);
-    frame(CREATE_NAMED_ITEM, body)
+    frame(header, body)
+}
+
+/// `0x0139`: one stack's new quantity.
+pub fn item_update_quantity(item_id: u32, quantity: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(8);
+    u32s(&mut body, item_id);
+    u32s(&mut body, quantity);
+    frame(ITEM_UPDATE_QUANTITY, body)
+}
+
+/// `0x0159`: the item and the agent that picked it up.
+pub fn item_picked_up(item_id: u32, agent_id: u16) -> Vec<u8> {
+    let mut body = Vec::with_capacity(6);
+    u32s(&mut body, item_id);
+    u16s(&mut body, agent_id);
+    frame(ITEM_PICKED_UP, body)
+}
+
+/// `0x014B`: where an item moved during a session.
+pub fn item_change_location(stream: u16, item_id: u32, bag_id: u16, slot: u8) -> Vec<u8> {
+    let mut body = Vec::with_capacity(9);
+    u16s(&mut body, stream);
+    u32s(&mut body, item_id);
+    u16s(&mut body, bag_id);
+    u8s(&mut body, slot);
+    frame(ITEM_CHANGE_LOCATION, body)
+}
+
+/// `0x006F`: one visual slot on one agent, or zero to clear it.
+///
+/// `ASURA/crates/asura-protocol/src/game/mod.rs:1749-1758`, `update_agent_visual_equipment_slot`.
+pub fn update_agent_visual_equipment_slot(agent_id: u32, slot: u8, item_id: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(12);
+    u32s(&mut body, agent_id);
+    u32s(&mut body, u32::from(slot));
+    u32s(&mut body, item_id);
+    frame(UPDATE_AGENT_VISUAL_EQUIPMENT_SLOT, body)
+}
+
+/// The visual slot a piece in equipped-bag `slot` is drawn in.
+///
+/// The equipped bag's order is weapon, off-hand, body, legs, head, boots, gloves, costume body, costume
+/// head; the visual message's is weapon, off-hand, body, boots, legs, gloves, head
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs:1761-1778`, `visual_equipment_slot`).
+pub fn visual_equipment_slot(equipped_slot: u8) -> u8 {
+    match equipped_slot {
+        3 => 4,
+        4 => 6,
+        5 => 3,
+        6 => 5,
+        other => other,
+    }
 }
 
 /// `0x013E`: where an item sits, which is what puts it in a bag slot.

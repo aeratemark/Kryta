@@ -229,6 +229,7 @@ impl Player {
                 direction,
                 speed_base: settings.agent_speed,
                 player_team_token: PLAYER_TEAM_TOKEN,
+                ..agent_packets::CreateAgent::LIVING
             },
         ));
         frames.push(agent_packets::agent_update_morale(agent, MORALE_FULL));

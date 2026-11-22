@@ -629,7 +629,7 @@ impl WorldSession {
         // position - a travel does not preserve where a character was, only a disconnect does.
         self.place_for_travel(destination, landing, sheet);
 
-        let agent = self.player_id();
+        let agent = self.agent_id();
         let player = self.player_id();
         let is_explorable = self
             .settings

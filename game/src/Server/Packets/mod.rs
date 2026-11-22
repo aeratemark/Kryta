@@ -18,6 +18,8 @@ pub mod instance_packets;
 pub mod item_packets;
 #[path = "MiscPackets.rs"]
 pub mod misc_packets;
+#[path = "NpcPackets.rs"]
+pub mod npc_packets;
 #[path = "PartyPackets.rs"]
 pub mod party_packets;
 #[path = "TitlePackets.rs"]

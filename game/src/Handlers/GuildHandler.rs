@@ -180,7 +180,7 @@ impl WorldSession {
             );
             return;
         }
-        let frames = wire::registration_window(self.player_id());
+        let frames = wire::registration_window(self.agent_id());
         self.send(io, peer, crypt, &frames, "the guild registration window")
             .await;
     }
@@ -285,7 +285,7 @@ impl WorldSession {
         let Some(badge) = self.badge_of(Some(&membership)) else {
             return;
         };
-        let agent = self.player_id();
+        let agent = self.agent_id();
         let date = wire::guild_date(membership.member.joined_at);
 
         let mut frames = vec![
@@ -608,12 +608,13 @@ impl WorldSession {
                 sheet.name, membership.guild.name
             ),
         );
-        let agent = self.player_id();
+        let agent = self.agent_id();
+        let player = self.player_id();
         let cleared = guilds::guild_property(agent, 0);
         if let Ok(mut peers) = self.peers.lock() {
-            peers.wear_guild(agent, None);
+            peers.wear_guild(player, None);
             peers.broadcast(
-                agent,
+                player,
                 self.map_id(),
                 self.district(),
                 std::slice::from_ref(&cleared),

@@ -28,12 +28,22 @@ pub mod titles;
 #[path = "Experience.rs"]
 pub mod experience;
 
+#[path = "Inventory.rs"]
+pub mod inventory;
+
+#[path = "ItemOps.rs"]
+pub mod item_ops;
+
 pub use equipping::{NotWorn, equip_place};
 pub use sheet::CharacterSheet;
 
+pub use inventory::{
+    BagInfo, BagKind, Change, Entry, InvModel, ItemId, ItemKind, Op, Refusal, Wearer,
+};
+
 pub use repository::{
     BACKPACK_MODEL, DatabaseCharacters, EQUIPPED_ITEMS_MODEL, HeldItem, LAST_CARRYING_MODEL,
-    MoveOutcome, Refused,
+    MoveOutcome, Refused, RowChange,
 };
 
 use std::fmt;

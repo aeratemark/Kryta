@@ -10,10 +10,21 @@
 //! The three numbers it runs by are the working implementation's too: `POSITION_UPDATE_TOLERANCE`
 //! (`agent.rs:59`), `POSITION_UPDATE_MAX_ELAPSED_MS` (`agent.rs:63`) and the correction ceiling, which
 //! is its setting `config/Server/movement.json` (`max_allowed_correction`).
+//!
+//! Beside it, an NPC's content - its definition, its placement on a map and the routes it may walk -
+//! is `NpcContent` (`ASURA/crates/asura-world/src/npc/content.rs`), read from the pack by
+//! `Maps/NpcPack.rs` (`npc/file.rs`) and re-exported here as `NpcFile`. An NPC body is this same
+//! `Agent`; what a client is told about it is the NPC message family
+//! (`Server/Packets/NpcPackets.rs`).
 
 #[path = "Entry.rs"]
 pub mod entry;
 pub use entry::{Entering, Landing, entry_point};
+
+#[path = "NpcContent.rs"]
+pub mod npc_content;
+#[path = "NpcFile.rs"]
+pub mod npc_file;
 
 #[path = "Player.rs"]
 pub mod player;

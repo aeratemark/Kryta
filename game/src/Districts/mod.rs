@@ -19,9 +19,16 @@
 #[path = "Instances.rs"]
 pub mod instances;
 
+#[path = "Npcs.rs"]
+pub mod npcs;
+
+#[path = "Ground.rs"]
+pub mod ground;
+
 #[path = "Peers.rs"]
 pub mod peers;
 
+pub use ground::{GroundDistricts, GroundItem};
 pub use instances::{DatabaseInstances, InstanceRow};
 pub use peers::{PeerView, Peers, Standing, farewell, introduction};
 

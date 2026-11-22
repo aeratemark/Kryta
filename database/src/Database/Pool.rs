@@ -54,6 +54,14 @@ enum Operation {
         params: Vec<Param>,
         reply: SyncSender<Result<Vec<postgres::Row>, String>>,
     },
+    /// Run several statements as one transaction: every one of them, or none.
+    ///
+    /// Reference: the reference's `Transaction`-guarded write, which an item operation uses to apply
+    /// all of its row changes together (`ASURA/crates/asura-db/src/inventory.rs`, `apply_changes`).
+    Transaction {
+        statements: Vec<(String, Vec<Param>)>,
+        reply: SyncSender<Result<(), String>>,
+    },
 }
 
 /// The pool for one logical database.
@@ -169,6 +177,35 @@ impl DatabaseWorkerPool {
                                 }
                                 let _ = reply.send(result);
                             }
+                            // The reference's one transaction over several statements: a statement
+                            // that fails rolls back every one before it, so a half-applied item
+                            // operation cannot exist.
+                            Operation::Transaction { statements, reply } => {
+                                let mut result = connection.batch_execute("BEGIN");
+                                if result.is_ok() {
+                                    for (sql, params) in &statements {
+                                        let borrowed: Vec<&(dyn postgres::types::ToSql + Sync)> =
+                                            params.iter().map(Param::as_sql).collect();
+                                        if let Err(error) = connection.query_with(sql, &borrowed) {
+                                            log.out(
+                                                common::logging::LogLevel::Error,
+                                                "sql.sql",
+                                                format!("{error}: {sql}"),
+                                            );
+                                            result = Err(error);
+                                            break;
+                                        }
+                                    }
+                                }
+                                let result = match result {
+                                    Ok(()) => connection.batch_execute("COMMIT"),
+                                    Err(error) => {
+                                        let _ = connection.batch_execute("ROLLBACK");
+                                        Err(error)
+                                    }
+                                };
+                                let _ = reply.send(result);
+                            }
                         }
                     }
                 })
@@ -252,6 +289,29 @@ impl DatabaseWorkerPool {
         let operation = Operation::Query {
             sql: sql.into(),
             params,
+            reply: sender,
+        };
+        if let Some(queue) = self.queue.as_ref()
+            && queue.send(operation).is_err()
+        {
+            // Nothing was sent and the sender is gone: the receiver answers `RecvError`, which the
+            // caller reports as a pool that is shutting down.
+        }
+        receiver
+    }
+
+    /// Hand several statements to a worker as one transaction, and answer when it commits or rolls
+    /// back.
+    ///
+    /// Reference: `DatabaseWorkerPool`'s transaction over a prepared write. The statements run in the
+    /// order they are given, on one connection; the first failure rolls every earlier one back.
+    pub fn transaction_reply(
+        &self,
+        statements: Vec<(String, Vec<Param>)>,
+    ) -> Receiver<Result<(), String>> {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let operation = Operation::Transaction {
+            statements,
             reply: sender,
         };
         if let Some(queue) = self.queue.as_ref()

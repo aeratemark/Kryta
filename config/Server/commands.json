@@ -53,6 +53,14 @@
       "doc": "a server line with the character's total experience and level (ASURA chat.rs:297-302; preforged's /xp). ASURA's /xp also sets with an argument; one name is one row here, so setting is /.exp"
     },
     {
+      "command": "item",
+      "operation": "chat.grant_item",
+      "parameters": [
+        "name"
+      ],
+      "doc": "ASURA's test command: give one live-verified catalogue definition in the first free carrying slot, by name or id, optionally followed by a quantity (`/item skale fin 5`). A definition the client's item probe has not shown is refused (ASURA item.rs:867-1004)"
+    },
+    {
       "command": "server info",
       "operation": "world.status",
       "parameters": [],

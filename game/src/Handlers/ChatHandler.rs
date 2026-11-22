@@ -182,6 +182,10 @@ impl WorldSession {
                         self.answer_experience(io, peer, crypt, sheet, argument.as_deref())
                             .await;
                     }
+                    crate::chat::operations::Outcome::GrantItem { argument } => {
+                        self.answer_grant_item(io, peer, crypt, sheet, &argument)
+                            .await;
+                    }
                 }
             }
             other => {

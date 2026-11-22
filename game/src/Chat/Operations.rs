@@ -180,6 +180,13 @@ pub enum Outcome {
         /// The total typed, or `None` for the reading form.
         argument: Option<String>,
     },
+    /// `/item <name or id> [quantity]`: ASURA's test command, which gives one live-verified
+    /// definition (`ASURA/crates/asura-world/src/item.rs:867-1004`). The session holds the
+    /// character's rows and the connection the frames go out on.
+    GrantItem {
+        /// What was typed after the command: a name or id, and optionally a quantity.
+        argument: String,
+    },
 }
 
 impl Outcome {
@@ -207,7 +214,8 @@ impl Outcome {
             | Outcome::Transfer { .. }
             | Outcome::Resign
             | Outcome::Guild { .. }
-            | Outcome::Experience { .. } => Err(Refusal::new(
+            | Outcome::Experience { .. }
+            | Outcome::GrantItem { .. } => Err(Refusal::new(
                 REFUSED,
                 "this operation needs a player session: it answers with frames a client performs",
             )),
@@ -484,6 +492,19 @@ pub fn chat_experience_read(
     Ok(Outcome::Experience { argument: None })
 }
 
+/// `/item <name or id> [quantity]`: ASURA's test command (`item.rs:867-1004`). The whole rest of the
+/// line is one argument: a name may contain spaces, and the last token is the quantity when it is
+/// all digits.
+pub fn chat_grant_item(
+    invocation: &Invocation,
+    _world: &crate::world::World,
+    _agent: Option<&crate::agents::Agent>,
+) -> Result<Outcome, Refusal> {
+    Ok(Outcome::GrantItem {
+        argument: invocation.arguments.get(0).unwrap_or_default().to_string(),
+    })
+}
+
 /// Register the operations the chat surface's own rows name (`config/Server/commands.json`).
 ///
 /// They live here, beside the world's own, so a program names them once and every surface - chat,
@@ -544,6 +565,14 @@ pub fn register_chat(registry: &mut Registry) -> Result<(), String> {
             arguments: &[],
         },
         chat_experience_read,
+    )?;
+    registry.register(
+        Registration {
+            name: "chat.grant_item",
+            help: "give one live-verified item definition, by name or id, optionally with a quantity",
+            arguments: &["item"],
+        },
+        chat_grant_item,
     )?;
     Ok(())
 }

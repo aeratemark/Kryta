@@ -99,15 +99,15 @@ ON CONFLICT (\"name\") DO NOTHING RETURNING 1";
 const INSERT_HELD_ITEM: &str = "INSERT INTO \"item_instance\" (\"character_uuid\", \"template_id\", \
 \"file_id\", \"dye_tint\", \"dye_colors\", \"item_id\", \"bag_id\", \"slot\", \"quantity\", \
 \"profession\", \"item_type\", \"model_id\", \"materials\", \"unk1\", \"flags\", \"value\", \
-\"name\", \"modifiers\") \
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) \
+\"name\", \"modifiers\", \"definition_id\") \
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) \
 RETURNING 1";
 
 const SELECT_HELD_ITEMS: &str = "SELECT \"file_id\"::bigint, \"dye_tint\"::bigint, \
 \"dye_colors\"::bigint, \"item_id\"::bigint, \"bag_id\"::bigint, \"slot\"::bigint, \
 \"quantity\"::bigint, \"profession\"::bigint, \"template_id\"::bigint, \"item_type\"::bigint, \
 \"model_id\"::bigint, \"materials\"::bigint, \"unk1\"::bigint, \"flags\"::bigint, \
-\"value\"::bigint, \"name\", \"modifiers\" FROM \"item_instance\" \
+\"value\"::bigint, \"name\", \"modifiers\", \"definition_id\" FROM \"item_instance\" \
 WHERE \"character_uuid\" = $1 ORDER BY \"bag_id\", \"slot\"";
 
 /// One item a character holds: the whole item, and where it sits.
@@ -147,6 +147,44 @@ pub struct HeldItem {
     pub name: Vec<u16>,
     /// The modifier list, as dwords.
     pub modifiers: Vec<u32>,
+    /// The catalogue definition this row was made from, by its own key; empty for a row that names
+    /// none (a row written before the column, or the creation seed).
+    pub definition_id: String,
+}
+
+/// One row write an item operation amounts to.
+///
+/// `ASURA/crates/asura-world/src/item.rs:313`, `row_changes`: a move is a placement, a stack change is
+/// a quantity, a destroy or a whole-stack take is a delete, and a new item is a full row. A worn
+/// change is not a row write at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RowChange {
+    /// The item now sits at this bag and slot.
+    Place {
+        /// The item's runtime id.
+        item_id: u32,
+        /// The bag it moved into.
+        bag_id: u16,
+        /// The slot it moved into.
+        slot: u8,
+    },
+    /// The stack now holds this many.
+    Quantity {
+        /// The item's runtime id.
+        item_id: u32,
+        /// What the stack holds after the change.
+        quantity: u32,
+    },
+    /// The row is gone.
+    Delete {
+        /// The item's runtime id.
+        item_id: u32,
+    },
+    /// A new row, already placed.
+    Insert {
+        /// The whole row.
+        item: HeldItem,
+    },
 }
 
 /// The character database, as a program uses it.
@@ -760,6 +798,7 @@ impl DatabaseCharacters {
                         Param::Integer(i64::from(item.value)),
                         Param::Text(units_text(&item.name)),
                         Param::Text(dwords_text(&item.modifiers)),
+                        Param::Text(String::new()),
                     ],
                 ),
                 Err(_) => {
@@ -834,9 +873,143 @@ impl DatabaseCharacters {
                     value: column(14)? as u32,
                     name: units(&text(15)?),
                     modifiers: dwords(&text(16)?),
+                    definition_id: text(17)?,
                 })
             })
             .collect()
+    }
+
+    /// Report a character's inventory that does not hold together, naming the character and the row
+    /// (`ASURA/crates/asura-world/src/item.rs:367-375` prints the same thing). The operation is refused
+    /// rather than run against a model the rules cannot trust.
+    pub fn report_inventory_error(&self, uuid: &str, error: &str) {
+        self.log.out(
+            LogLevel::Error,
+            "server.characters",
+            format!("{uuid}'s inventory does not hold together ({error}); the operation is refused"),
+        );
+    }
+
+    /// One operation's row changes, written in one transaction, in the order the rules produced them.
+    ///
+    /// `ASURA/crates/asura-db/src/inventory.rs:apply_changes` hands the whole list to one transaction;
+    /// this is that, through the pool's transaction operation. A failure rolls every earlier statement
+    /// back, so the client's answer and the rows cannot disagree about whether an item moved.
+    pub fn apply_item_changes(&self, uuid: &str, changes: &[RowChange]) -> Result<(), String> {
+        let mut statements = Vec::with_capacity(changes.len());
+        for change in changes {
+            match change {
+                RowChange::Place {
+                    item_id,
+                    bag_id,
+                    slot,
+                } => statements.push((
+                    "UPDATE \"item_instance\" SET \"bag_id\" = $1, \"slot\" = $2 \
+                     WHERE \"character_uuid\" = $3 AND \"item_id\" = $4"
+                        .to_string(),
+                    vec![
+                        Param::Integer(i64::from(*bag_id)),
+                        Param::Integer(i64::from(*slot)),
+                        Param::Text(uuid.to_string()),
+                        Param::Integer(i64::from(*item_id)),
+                    ],
+                )),
+                RowChange::Quantity { item_id, quantity } => statements.push((
+                    "UPDATE \"item_instance\" SET \"quantity\" = $1 \
+                     WHERE \"character_uuid\" = $2 AND \"item_id\" = $3"
+                        .to_string(),
+                    vec![
+                        Param::Integer(i64::from(*quantity)),
+                        Param::Text(uuid.to_string()),
+                        Param::Integer(i64::from(*item_id)),
+                    ],
+                )),
+                RowChange::Delete { item_id } => statements.push((
+                    "DELETE FROM \"item_instance\" \
+                     WHERE \"character_uuid\" = $1 AND \"item_id\" = $2"
+                        .to_string(),
+                    vec![
+                        Param::Text(uuid.to_string()),
+                        Param::Integer(i64::from(*item_id)),
+                    ],
+                )),
+                RowChange::Insert { item } => statements.push((
+                    INSERT_HELD_ITEM.to_string(),
+                    vec![
+                        Param::Text(uuid.to_string()),
+                        Param::Integer(item.template_id),
+                        Param::Integer(i64::from(item.file_id)),
+                        Param::Integer(i64::from(item.dye_tint)),
+                        Param::Integer(i64::from(item.dye_colors)),
+                        Param::Integer(i64::from(item.item_id)),
+                        Param::Integer(i64::from(item.bag_id)),
+                        Param::Integer(i64::from(item.slot)),
+                        Param::Integer(i64::from(item.quantity)),
+                        Param::Integer(i64::from(item.profession)),
+                        Param::Integer(i64::from(item.item_type)),
+                        Param::Integer(i64::from(item.model_id)),
+                        Param::Integer(i64::from(item.materials)),
+                        Param::Integer(i64::from(item.unk1)),
+                        Param::Integer(i64::from(item.flags)),
+                        Param::Integer(i64::from(item.value)),
+                        Param::Text(units_text(&item.name)),
+                        Param::Text(dwords_text(&item.modifiers)),
+                        Param::Text(item.definition_id.clone()),
+                    ],
+                )),
+            }
+        }
+        if statements.is_empty() {
+            return Ok(());
+        }
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.transaction_reply(statements),
+            Err(_) => return Err("the character database pool is poisoned".to_string()),
+        };
+        match reply.recv() {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    format!("Cannot write an item operation of {uuid}: {error}"),
+                );
+                Err(error)
+            }
+            Err(_) => {
+                Err("the character database answered no query: it is shutting down".to_string())
+            }
+        }
+    }
+
+    /// The id a new item is given: the database's own counter.
+    ///
+    /// ASURA allocates from a sequence (`item_id_seq`, `asura-db/src/inventory.rs:1028-1032`), and so
+    /// does this tree now. A ground item from a partial drop takes an id before any row exists, so a
+    /// per-character `max + 1` could give two drops the same id, or give one item an id another
+    /// character already holds; the sequence is what prevents both.
+    pub fn allocate_item_id(&self) -> Result<u32, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply("SELECT nextval('item_id_seq')::bigint", Vec::new()),
+            Err(_) => return Err("the character database pool is poisoned".to_string()),
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => rows
+                .first()
+                .map(|row| row.get::<usize, i64>(0) as u32)
+                .ok_or_else(|| "the item id query answered no row".to_string()),
+            Ok(Err(error)) => {
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    format!("Cannot allocate an item id: {error}"),
+                );
+                Err(error)
+            }
+            Err(_) => {
+                Err("the character database answered no query: it is shutting down".to_string())
+            }
+        }
     }
 
     /// Move one of a character's items to a bag slot, with the rules a client can be held to.

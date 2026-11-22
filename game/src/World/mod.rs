@@ -188,10 +188,24 @@ pub struct World {
     /// start-up. `None` in a world that has not read it; a change of experience is then refused, as
     /// ASURA refuses it (`ASURA/crates/asura-world/src/player.rs:477-481`).
     experience: Option<crate::characters::experience::Curve>,
+    /// The pack's item catalogue (`items.json` and `upgrades.json`,
+    /// `game/DataStores/ItemCatalogue.rs`), read once at start-up where ASURA reads it on first use
+    /// (`ASURA/crates/asura-world/src/item_catalogue.rs:391-409`). `None` in a world that has not read it.
+    item_catalogue: Option<crate::data_stores::item_catalogue::Catalogue>,
     /// The guild settings (`config/Server/guilds.json`, `game/Guilds/mod.rs`), read once at start-up.
     /// `None` in a world that has not read them; every guild request is then refused, as ASURA refuses
     /// them (`ASURA/crates/asura-world/src/guild.rs:86-95`).
     guilds: Option<crate::guilds::Settings>,
+    /// The pack's NPC content: definitions, placements and routes (`game/Agents/NpcContent.rs`), read
+    /// once at start-up. Empty in a world that has not read it. Nothing about an NPC is in the
+    /// database (`ASURA/crates/asura-world/src/npc/mod.rs:13-15`).
+    npcs: Arc<crate::agents::npc_content::NpcContent>,
+    /// Every running copy's NPC bodies and agent ids (`game/Districts/Npcs.rs`): a copy's bodies are
+    /// created the first time it hands out an agent id, which is before any player stands in it.
+    npc_districts: Mutex<crate::districts::npcs::NpcDistricts>,
+    /// Every copy's ground items (`game/Districts/Ground.rs`): a dropped item belongs to the copy
+    /// that holds it, not to the bag it came from (`ASURA/crates/asura-world/src/instance.rs:149-151`).
+    ground: Mutex<crate::districts::GroundDistricts>,
     /// How long it has been since the copies were last swept: the world's own slower timer, the
     /// reference's `WorldUpdateTimer` arrangement - the program's loop says how much time passed and
     /// this decides whether a thing that does not run every tick is due (`World.cpp:1131`).
@@ -324,6 +338,37 @@ impl World {
         self.experience.as_ref()
     }
 
+    /// Read the pack's item catalogue: `<pack>/items.json`, and `<pack>/upgrades.json` when the pack has
+    /// one (`ASURA/crates/asura-world/src/item_catalogue.rs:367-384`, `load`). ASURA reads it on first
+    /// use and logs the counts (`:391-409`, `current`); here it is read before the listener opens, and a
+    /// missing or malformed `items.json` refuses the start (`AGENTS.md`, rule 7).
+    pub fn load_item_catalogue(
+        &mut self,
+        pack: impl AsRef<std::path::Path>,
+        log: &Log,
+    ) -> Result<(), String> {
+        let pack = pack.as_ref();
+        let catalogue = crate::data_stores::item_catalogue::load(pack)
+            .inspect_err(|error| log.out(LogLevel::Error, "server.worldserver", error))?;
+        log.out(
+            LogLevel::Info,
+            "server.worldserver",
+            format!(
+                "{} item definition(s) and {} upgrade(s) from {}.",
+                catalogue.definitions().len(),
+                catalogue.upgrades().count(),
+                pack.display()
+            ),
+        );
+        self.item_catalogue = Some(catalogue);
+        Ok(())
+    }
+
+    /// The item catalogue in force, when the world read one.
+    pub fn item_catalogue(&self) -> Option<&crate::data_stores::item_catalogue::Catalogue> {
+        self.item_catalogue.as_ref()
+    }
+
     /// Read the guild settings (`config/Server/guilds.json`, copied from ASURA's file of the same name).
     /// A missing or malformed file refuses the start (`AGENTS.md`, rule 7).
     pub fn load_guilds(
@@ -355,6 +400,170 @@ impl World {
         self.guilds.as_ref()
     }
 
+    /// Read the pack's NPC content: `npcs/definitions.json` and every map folder's `npcs.json`
+    /// (`game/Agents/NpcFile.rs`). One bad row refuses the start, naming the row, rather than a town
+    /// with half its people (`ASURA/crates/asura-world/src/npc/mod.rs:90-115`,
+    /// `ASURA/crates/asura-world/src/main.rs:403-412`). The compass range is this world's
+    /// `World.CompassRange` (R34), not a second copy in the pack.
+    pub fn load_npcs(
+        &mut self,
+        pack: impl AsRef<std::path::Path>,
+        log: &Log,
+    ) -> Result<(), String> {
+        let pack = pack.as_ref();
+        let sight = crate::agents::npc_content::SightRules {
+            compass_range: self.settings.compass_range,
+        };
+        let content = crate::agents::npc_file::load(pack, sight).map_err(|problems| {
+            let error = format!(
+                "{} NPC problem(s) in {}:\n  {}\nrefusing to start with NPC content that does not check",
+                problems.len(),
+                pack.display(),
+                problems.join("\n  ")
+            );
+            log.out(LogLevel::Error, "server.worldserver", &error);
+            error
+        })?;
+        log.out(
+            LogLevel::Info,
+            "server.worldserver",
+            format!(
+                "NPCs: {} from {}.",
+                crate::agents::npc_file::summary(&content),
+                pack.display()
+            ),
+        );
+        self.npcs = Arc::new(content);
+        Ok(())
+    }
+
+    /// Check every NPC position against the graphs this world installed: a placement that moves, or a
+    /// route point, off the walkable surface refuses the start; a standing one, or a map without a
+    /// graph, is noted and passes (`ASURA/crates/asura-world/src/npc/mod.rs:117-135`,
+    /// `ASURA/crates/asura-world/src/main.rs:479-485`). Call it after [`Self::set_graphs`].
+    pub fn check_npc_ground(&self, log: &Log) -> Result<(), String> {
+        let (problems, notes) =
+            crate::agents::npc_content::check_ground(&self.npcs, |map_id, (x, y), plane| {
+                self.graphs
+                    .on_ground(map_id, crate::terrain::pathfind::Pos { x, y, plane })
+            });
+        for note in notes {
+            log.out(LogLevel::Info, "server.worldserver", format!("NPC: {note}"));
+        }
+        if problems.is_empty() {
+            return Ok(());
+        }
+        let error = format!(
+            "{} NPC position(s) off the walkable surface:\n  {}\nrefusing to start with NPCs off the walkable surface",
+            problems.len(),
+            problems.join("\n  ")
+        );
+        log.out(LogLevel::Error, "server.worldserver", &error);
+        Err(error)
+    }
+
+    /// The pack's NPC content, as read at start-up.
+    pub fn npcs(&self) -> &Arc<crate::agents::npc_content::NpcContent> {
+        &self.npcs
+    }
+
+    /// A joining player's agent id in its copy: the lowest id no NPC body and no other player of that
+    /// copy holds, the copy's bodies created first if this is its first agent
+    /// (`ASURA/crates/asura-world/src/instance.rs:178-205`, `:307-316`).
+    pub fn allocate_agent(&self, map_id: u32, district: u32) -> u32 {
+        match self.npc_districts.lock() {
+            Ok(mut copies) => copies.allocate(map_id, district, &self.npcs),
+            Err(_) => 1,
+        }
+    }
+
+    /// A player left its copy: its agent id is free and what it was told about the NPCs is forgotten
+    /// (`ASURA/crates/asura-world/src/instance.rs:422-424`).
+    pub fn release_agent(&self, map_id: u32, district: u32, player_id: u32, agent_id: u32) {
+        if let Ok(mut copies) = self.npc_districts.lock() {
+            copies.release(map_id, district, player_id, agent_id);
+        }
+    }
+
+    /// The NPC bodies in range of a loading client, as frames by agent id: the NPC half of the load's
+    /// agent array (`ASURA/crates/asura-world/src/instance.rs:450-460`).
+    pub fn npc_arrival(
+        &self,
+        map_id: u32,
+        district: u32,
+        player_id: u32,
+        position: (f32, f32),
+    ) -> Vec<(u32, Vec<Vec<u8>>)> {
+        match self.npc_districts.lock() {
+            Ok(mut copies) => copies.arrival(map_id, district, &self.npcs, player_id, position),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// One client's NPC sight sweep for a tick: removes for bodies that left its range, entries for
+    /// bodies that came into it (`ASURA/crates/asura-world/src/npc/table.rs:871-873`).
+    pub fn npc_sweep(
+        &self,
+        map_id: u32,
+        district: u32,
+        player_id: u32,
+        position: (f32, f32),
+    ) -> Vec<Vec<u8>> {
+        match self.npc_districts.lock() {
+            Ok(mut copies) => copies.sweep(map_id, district, player_id, position),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Put one dropped item on the ground of a copy (`ASURA/crates/asura-world/src/instance.rs:490-493`).
+    pub fn put_ground_item(&self, map_id: u32, district: u32, item: crate::districts::GroundItem) {
+        if let Ok(mut ground) = self.ground.lock() {
+            ground.put(map_id, district, item);
+        }
+    }
+
+    /// Take a ground item off a copy, so a pickup can claim it before it awaits
+    /// (`ASURA/crates/asura-world/src/instance.rs:500-503`).
+    pub fn take_ground_item(
+        &self,
+        map_id: u32,
+        district: u32,
+        agent_id: u32,
+    ) -> Option<crate::districts::GroundItem> {
+        self.ground
+            .lock()
+            .ok()
+            .and_then(|mut ground| ground.take(map_id, district, agent_id))
+    }
+
+    /// The ground items a client entering a copy is told about, as the frames of their record and
+    /// agent (`ASURA/crates/asura-world/src/player.rs:855-862`).
+    pub fn ground_arrival(&self, map_id: u32, district: u32) -> Vec<Vec<u8>> {
+        match self.ground.lock() {
+            Ok(ground) => ground
+                .items(map_id, district)
+                .iter()
+                .flat_map(crate::districts::ground::ground_frames)
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// An agent id for a ground item: the copy's lowest free id, shared with players and bodies
+    /// (`ASURA/crates/asura-world/src/instance.rs:428-448`).
+    pub fn allocate_ground_agent(&self, map_id: u32, district: u32) -> u32 {
+        match self.npc_districts.lock() {
+            Ok(mut copies) => copies.allocate_other(map_id, district, &self.npcs),
+            Err(_) => 1,
+        }
+    }
+
+    /// A ground item was picked up: its agent id is free again.
+    pub fn release_ground_agent(&self, map_id: u32, district: u32, agent_id: u32) {
+        if let Ok(mut copies) = self.npc_districts.lock() {
+            copies.release_other(map_id, district, agent_id);
+        }
+    }
     /// Read the pack's party sizes (`party_sizes.json`, ported from ASURA's pack file of the same name):
     /// `{"maps": {"<map id>": {"value": <size>, "doc": ...}}}`. A missing or malformed file refuses the
     /// start, as every reader of this tree's content does (`AGENTS.md`, rule 7); ASURA logs it and lets no
@@ -493,7 +702,11 @@ impl World {
             party_sizes: std::collections::HashMap::new(),
             scripts: Arc::new(Mutex::new(crate::scripting::ScriptMgr::new())),
             experience: None,
+            item_catalogue: None,
             guilds: None,
+            npcs: Arc::new(crate::agents::npc_content::NpcContent::default()),
+            npc_districts: Mutex::new(crate::districts::npcs::NpcDistricts::new()),
+            ground: Mutex::new(crate::districts::GroundDistricts::new()),
             sweep_elapsed: Mutex::new(std::time::Duration::ZERO),
             stop: std::sync::atomic::AtomicU8::new(NO_STOP),
         }
@@ -733,10 +946,25 @@ impl World {
             return Vec::new();
         }
         let hold = u64::from(self.settings.explorable_disconnect_hold);
-        match self.districts.lock() {
+        let closed = match self.districts.lock() {
             Ok(mut districts) => districts.sweep(now_unix(), hold),
             Err(_) => Vec::new(),
+        };
+        // A disposed copy's NPC bodies go with it, as an instance drops its table
+        // (`ASURA/crates/asura-world/src/instance.rs:146-165`).
+        if let Ok(mut copies) = self.npc_districts.lock() {
+            for (map_id, district) in &closed {
+                copies.close(*map_id, *district);
+            }
         }
+        // And its ground items, which belong to the instance too
+        // (`ASURA/crates/asura-world/src/instance.rs:149-151`).
+        if let Ok(mut ground) = self.ground.lock() {
+            for (map_id, district) in &closed {
+                ground.close(*map_id, *district);
+            }
+        }
+        closed
     }
 
     /// Give the copies their table and their log: what a program does once the world database is

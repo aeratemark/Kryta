@@ -108,8 +108,13 @@ pub(crate) struct PortalStep {
 
 /// `GAME_CMSG_ITEM_MOVE` (`0x8072`): a drag in the inventory - the item, the bag and the slot.
 const CLIENT_ITEM_MOVE: u16 = 0x8072;
-/// `GAME_CMSG_ITEM_DESTROY` (`0x8069`): the item to destroy.
+/// `GAME_CMSG_DROP_ITEM` (`0x802C`): an item and a count.
 const CLIENT_DROP_ITEM: u16 = 0x802C;
+/// `GAME_CMSG_ITEM_DESTROY` (`0x8069`): the item dragged to the trash.
+const CLIENT_ITEM_DESTROY: u16 = 0x8069;
+/// `GAME_CMSG_INTERACT_ITEM` (`0x803F`): a ground item's agent and a byte.
+const CLIENT_INTERACT_ITEM: u16 = 0x803F;
+/// `GAME_CMSG_UNEQUIP_ITEM` (`0x804F`): a worn slot and the bag slot the piece goes to.
 const CLIENT_UNEQUIP_ITEM: u16 = 0x804F;
 const CLIENT_PING_REPLY: u16 = 0x8009;
 const CLIENT_HEARTBEAT: u16 = 0x800C;
@@ -234,6 +239,13 @@ pub struct WorldSession {
     /// the same body to every client. `None` until a real map is loaded - the creation instance has no
     /// population to be told apart in.
     id: std::sync::Mutex<Option<u32>>,
+    /// The agent this connection's body is in its copy of the map: the copy's own number, not the
+    /// player's. The copy hands it out - the lowest id no NPC body and no other player of the copy
+    /// holds - so NPCs and players share one id space per copy, as the live client does
+    /// (`pre-searing-load-3.jsonl` seq 221: player 0x35's agent is 40; `World::allocate_agent`,
+    /// `ASURA/crates/asura-world/src/instance.rs:307-316`). `None` until a real map is loaded, when
+    /// the agent is the player id, as the creation instance's own body is.
+    agent_id: std::sync::Mutex<Option<u32>>,
     /// How many times this connection has sent a message this world does not answer, per header.
     ///
     /// A client retries an ask it got no answer to, so a line per arrival is one line per retry, per
@@ -281,6 +293,7 @@ impl WorldSession {
             districts: world.districts(),
             entered: std::sync::Mutex::new(None),
             agent: std::sync::Mutex::new(None),
+            agent_id: std::sync::Mutex::new(None),
             creation: Some(world.creation().clone()),
             templates: world.templates().to_vec(),
             master: None,
@@ -422,14 +435,6 @@ impl WorldSession {
     /// The item templates this world read at start-up: what an item's kind and slot come from.
     pub(crate) fn item_templates(&self) -> &[crate::data_stores::ItemDefinition] {
         &self.templates
-    }
-
-    /// The bag a character wears things in, when the content names one (`BagType_Equipped`).
-    pub(crate) fn equipped_bag(&self) -> Option<crate::creation::Bag> {
-        self.creation
-            .as_ref()
-            .and_then(crate::creation::equipped_bag)
-            .copied()
     }
 
     pub(crate) fn bags(&self) -> Vec<crate::creation::Bag> {
@@ -805,6 +810,8 @@ impl WorldSession {
             // was 3): its health and energy then updated a body the client was not controlling, and
             // its own bars stayed empty. The first connection only worked because its id was 1.
             self.draw_player_id(sheet.uuid);
+            // And the agent, in the copy just entered, for the same reason: `0x019A` names it.
+            self.draw_agent_id();
             // `0x019A`'s explorable byte is the map's own kind, not a constant: 0 for a town or
             // outpost and 1 for an explorable (`ASURA/crates/asura-world/src/map.rs:76-86`,
             // `load_info_explorable`). Sending 1 for Ascalon City makes the client treat the town as
@@ -815,7 +822,7 @@ impl WorldSession {
                 instance_packets::instance_player_data_start(),
                 instance_packets::instance_load_player_name(&sheet.name),
                 instance_packets::instance_load_info(
-                    self.player_id(),
+                    self.agent_id(),
                     map.id as u16,
                     is_explorable,
                     district,
@@ -1211,6 +1218,30 @@ impl WorldSession {
         }
     }
 
+    /// The agent this connection drives: its copy's number for it once drawn, the player id before.
+    pub(crate) fn agent_id(&self) -> u32 {
+        match self.agent_id.lock() {
+            Ok(agent) => agent.unwrap_or_else(|| self.player_id()),
+            Err(_) => self.player_id(),
+        }
+    }
+
+    /// Draw this connection's agent id in the copy it entered, once. Not in a creation instance, whose
+    /// body keeps the player's own id (`CREATION_AGENT`).
+    fn draw_agent_id(&self) {
+        let Some((map_id, district)) = self.entered.lock().ok().and_then(|entered| *entered) else {
+            return;
+        };
+        if self.world.map(map_id).is_none_or(|map| map.is_creation()) {
+            return;
+        }
+        if let Ok(mut agent) = self.agent_id.lock()
+            && agent.is_none()
+        {
+            *agent = Some(self.world.allocate_agent(map_id, district));
+        }
+    }
+
     /// Draw this character's id, once. A connection that already has one keeps it, and a travel to
     /// another map draws the id the character already has (`Peers::allocate_for`).
     fn draw_player_id(&self, character: [u8; 16]) {
@@ -1301,7 +1332,7 @@ impl WorldSession {
         // The character as the load is told it: the two ids it is named by, where it stands, what it
         // wears. Everything here is decided once, before the first ask, because the entry position,
         // the block and the player record all have to name the same place.
-        let agent = self.player_id();
+        let agent = self.agent_id();
         let player = self.player_id();
         let position = entry.map(|point| (point.0, point.1)).unwrap_or((0.0, 0.0));
         let plane = entry.map(|point| point.2).unwrap_or(0);
@@ -1445,7 +1476,7 @@ impl WorldSession {
                                 );
                                 if let Ok(mut agent) = self.agent.lock() {
                                     *agent = Some(crate::agents::Agent::new(
-                                        self.player_id(),
+                                        self.agent_id(),
                                         (point.0, point.1),
                                         point.2,
                                         // A doorway crossing hands its arrival's facing over, and
@@ -1680,18 +1711,50 @@ impl WorldSession {
                         // reference's own order (`ASURA/crates/asura-world/src/player.rs:784-822`).
                         // Before it, the client created those players before it had been told its own
                         // team token (`0x00F2`, inside the block), so it treated them as hostile.
-                        for (index, peer) in others.iter().enumerate() {
-                            let peer_party = other_parties
-                                .get(index)
-                                .copied()
-                                .unwrap_or((peer.player_id, 1));
-                            frames.extend(crate::districts::introduction(
-                                peer,
-                                peer_party,
-                                self.settings.agent_speed,
-                                PLAYER_TEAM_TOKEN,
-                            ));
+                        //
+                        // The agent array: every other player and every NPC within this client's
+                        // range, in agent-id order. A live load interleaves the two that way
+                        // (`recordings/client/feature/maps/pre-searing-load-3.jsonl` seq 210-298:
+                        // player 0x28, NPCs 0x29-0x3C, player 0x3E, NPC 0x3F, ...), each NPC with its
+                        // definition in front of it the first time the client needs it
+                        // (`ASURA/crates/asura-world/src/player.rs:784-818`). Not in a creation
+                        // instance, which has no NPCs. The quest marker ASURA appends to an NPC's
+                        // burst arrives with the quest subject.
+                        let mut agents: Vec<(u32, Vec<Vec<u8>>)> = others
+                            .iter()
+                            .enumerate()
+                            .map(|(index, peer)| {
+                                let peer_party = other_parties
+                                    .get(index)
+                                    .copied()
+                                    .unwrap_or((peer.player_id, 1));
+                                (
+                                    peer.agent_id,
+                                    crate::districts::introduction(
+                                        peer,
+                                        peer_party,
+                                        self.settings.agent_speed,
+                                        PLAYER_TEAM_TOKEN,
+                                    ),
+                                )
+                            })
+                            .collect();
+                        let npcs_in_range = if map.is_creation() {
+                            Vec::new()
+                        } else {
+                            self.world
+                                .npc_arrival(map.id, self.district(), player, position)
+                        };
+                        let npc_count = npcs_in_range.len();
+                        agents.extend(npcs_in_range);
+                        agents.sort_by_key(|(agent_id, _)| *agent_id);
+                        for (_, agent_frames) in agents {
+                            frames.extend(agent_frames);
                         }
+                        // Items already on the ground in this copy, for a client that has just entered
+                        // it: the record the client draws and its agent
+                        // (`ASURA/crates/asura-world/src/player.rs:855-862`).
+                        frames.extend(self.world.ground_arrival(map.id, self.district()));
                         // The party members it was just introduced to are in the map
                         // (`ASURA/crates/asura-world/src/player.rs:823-830`, `in_map_notices`).
                         if let Some(party) = &party {
@@ -1711,7 +1774,7 @@ impl WorldSession {
                         self.say(
                             LogLevel::Debug,
                             format!(
-                                "Gameplay connection from {peer}: map {} is loaded - the character '{}' is in it ({count} message(s), {} other player(s) introduced).",
+                                "Gameplay connection from {peer}: map {} is loaded - the character '{}' is in it as agent {agent} ({count} message(s), {} other player(s) and {npc_count} NPC(s) introduced).",
                                 map.id,
                                 sheet.name,
                                 others.len()
@@ -1901,21 +1964,31 @@ impl WorldSession {
                             .await;
                     }
                     // The client destroys one of its items: the row goes, and the item is told gone
-                    // with `0x014D`.
-                    // The client drops `count` of an item (`GAME_CMSG_DROP_ITEM`, `0x802C`: the item as a
-                    // dword and the count as a byte). The working implementation's `drop_item`
-                    // (`ASURA/crates/asura-world/src/item.rs:187`) takes them off the stack and puts
-                    // **nothing on the wire**: both messages a drop could send crashed a live client -
-                    // `ITEM_REMOVE` with the stack re-created cloned the item, and the ground agent
-                    // (`0x0020`, `AgentType_Item`) crashed with that message as the log's last line -
-                    // and neither appears in any capture (`item.rs:236-246`). So the stack is the state
-                    // and silence is the answer.
-                    CLIENT_DROP_ITEM => self.answer_drop_item(peer, &message, sheet),
-                    // `GAME_CMSG_UNEQUIP_ITEM` (`0x804F`): the working implementation answers it by
-                    // saying what it cannot do - the message carries no item id and no capture shows
-                    // what it means, and dragging the item out of the equipped bag works instead
-                    // (`ASURA/crates/asura-world/src/item.rs:555`).
-                    CLIENT_UNEQUIP_ITEM => self.answer_unequip_item(peer),
+                    // with `0x014D` (`ASURA/crates/asura-world/src/item.rs:830-858`).
+                    CLIENT_ITEM_DESTROY => {
+                        self.answer_destroy_item(io, peer, &message, crypt, sheet)
+                            .await;
+                    }
+                    // The client drops `count` of an item (`GAME_CMSG_DROP_ITEM`, `0x802C`): the rules
+                    // take it off the stack and the drop's ground record and agent go out
+                    // (`ASURA/crates/asura-world/src/item.rs:483-578`).
+                    CLIENT_DROP_ITEM => {
+                        self.answer_drop_item(io, peer, &message, crypt, sheet)
+                            .await;
+                    }
+                    // The client interacts with an agent (`0x803F`): a ground item is picked up; every
+                    // other target is ignored, as the reference's own unfinished handler does
+                    // (`ASURA/crates/asura-world/src/item.rs:593-694`).
+                    CLIENT_INTERACT_ITEM => {
+                        self.answer_interact_item(io, peer, &message, crypt, sheet)
+                            .await;
+                    }
+                    // `GAME_CMSG_UNEQUIP_ITEM` (`0x804F`): the worn slot and where the piece goes
+                    // (`ASURA/crates/asura-world/src/item.rs:784-822`).
+                    CLIENT_UNEQUIP_ITEM => {
+                        self.answer_unequip_item(io, peer, &message, crypt, sheet)
+                            .await;
+                    }
                     // The client wears one of its items: the slot its kind is worn in, in the equipped
                     // bag, with whatever was worn there taken off to the first free carrying slot - and
                     // the agent's worn items sent again, which is the one thing the client cannot work
@@ -1967,6 +2040,23 @@ impl WorldSession {
                         )];
                         if let Some(walk) = walk {
                             frames.push(walk);
+                        }
+                        // The NPCs that came into or left this client's compass range since the last
+                        // tick (`ASURA/crates/asura-world/src/npc/table.rs:871-873`). Bodies do not
+                        // walk yet (stage N4), so only this client's own movement changes its view.
+                        let standing = self
+                            .agent
+                            .lock()
+                            .ok()
+                            .and_then(|agent| agent.as_ref().map(|agent| agent.position));
+                        let copy = self.entered.lock().ok().and_then(|entered| *entered);
+                        if let (Some(position), Some((map_id, district))) = (standing, copy) {
+                            frames.extend(self.world.npc_sweep(
+                                map_id,
+                                district,
+                                self.player_id(),
+                                position,
+                            ));
                         }
                         // The tick is periodic, so its report is routine: one line per connection per
                         // `World.SimulationTickMs` at `Info` was the whole of a flowing log.
@@ -2390,6 +2480,14 @@ impl WorldSession {
         // removed, in that order (`ASURA/crates/asura-world/src/instance.rs:466-473`, `farewell`). A
         // travel's old connection must not remove the registry slot its own new connection already
         // filled, so the removal is by channel.
+        // Its agent id is the copy's again, and the copy forgets what it told this client about its
+        // NPCs (`ASURA/crates/asura-world/src/instance.rs:422-424`).
+        if let Some((map_id, district)) = entered
+            && let Some(agent) = self.agent_id.lock().ok().and_then(|agent| *agent)
+        {
+            self.world
+                .release_agent(map_id, district, self.player_id(), agent);
+        }
         let session = self.session_token.lock().ok().and_then(|token| *token);
         if let Ok(mut peers) = self.peers.lock() {
             let left = match session {
@@ -2506,6 +2604,12 @@ mod tests {
 
     /// The world a test serves: world 2, the character-creation instance and one outpost.
     fn world() -> World {
+        world_with(map_kind::OUTPOST)
+    }
+
+    /// The same world with map 148's kind stated: a test that has to drop an item states
+    /// `EXPLORABLE`, because a drop is never offered in an outpost (`docs/game-rules.md` E51).
+    fn world_with(kind: u8) -> World {
         let mut world = World::new(2);
         world.set_maps(
             vec![
@@ -2519,7 +2623,7 @@ mod tests {
                 },
                 MapEntry {
                     id: 148,
-                    kind: Some(map_kind::OUTPOST),
+                    kind: Some(kind),
                     file_id: 113_021,
                     name: "Ascalon City (pre-Searing)".to_string(),
                     instance_value: Some(0xBB14_F539),
@@ -2778,6 +2882,20 @@ mod tests {
         terminal: u16,
     ) -> Vec<(u16, Vec<u8>)> {
         read_frames_until_n(client, reading, terminal, 1)
+    }
+
+    /// One frame of a known length, descrambled. The drop and pickup frames have sizes the
+    /// operation decides (`0x0139`, a variable `0x0162`, the 99-byte agent, the chat line), so the
+    /// test reads each by its own size rather than by a terminal header.
+    fn read_frame(
+        client: &mut std::net::TcpStream,
+        reading: &mut common::cryptography::Arc4,
+        len: usize,
+    ) -> Vec<u8> {
+        let mut frame = vec![0u8; len];
+        client.read_exact(&mut frame).expect("a frame of its size");
+        reading.apply(&mut frame);
+        frame
     }
 
     /// The same, but waiting for the `times`-th `terminal`: a load's manifest carries two ends.
@@ -3767,7 +3885,34 @@ Logger.root = 6,Console
         // The character the connection names: its row, and the items a confirm would have written.
         let character = [0xBBu8; 16];
         let character_text = crate::characters::uuid_text(&character);
-        let prepared_world = world();
+        let mut prepared_world = world_with(map_kind::EXPLORABLE);
+        // The command surface and the operations it names, as the program builds them: `/item` is
+        // exercised through the real chat path below. The map is an explorable so a drop is allowed
+        // (`docs/game-rules.md` E51); the rest of the test is the same load either way.
+        let mut operations = crate::chat::operations::Registry::new();
+        crate::chat::operations::register_chat(&mut operations).expect("the chat operations register");
+        // The shipped table also names the console rows. Their real handlers live in the world
+        // program; this test only needs every row to bind, so one harmless handler stands in.
+        for name in ["world.status", "world.exit", "world.restart"] {
+            operations
+                .register(
+                    crate::chat::operations::Registration {
+                        name,
+                        help: "a console row this test does not run",
+                        arguments: &[],
+                    },
+                    crate::chat::operations::world_status,
+                )
+                .expect("the console operation registers");
+        }
+        prepared_world.set_operations(std::sync::Arc::new(operations));
+        prepared_world
+            .load_commands("../config/Server/commands.json", &log)
+            .expect("the command table reads");
+        // The catalogue `/item` resolves its definition from, read as the program reads it.
+        prepared_world
+            .load_item_catalogue("../config/World/Vanilla", &log)
+            .expect("the item catalogue reads");
         let starting = prepared_world.creation().inventory(0, 1);
         {
             let mut pool = characters.lock().unwrap();
@@ -3864,7 +4009,7 @@ Logger.root = 6,Console
             instance_packets::instance_load_head(),
             instance_packets::instance_player_data_start(),
             instance_packets::instance_load_player_name("Travelled One"),
-            instance_packets::instance_load_info(1, 148, 0, 3, 2, 0),
+            instance_packets::instance_load_info(1, 148, 1, 3, 2, 0),
         ];
         expected.extend(grid);
         expected.extend(table.frames());
@@ -3881,13 +4026,9 @@ Logger.root = 6,Console
             "the travel's map, district and language, not the version message's"
         );
 
-        // R12: the character had no unlock rows, so the load wrote the world's first outpost for
-        // it before entering - the same starting unlock a confirm writes.
-        let unlocked =
-            crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
-                .unlocked_maps(&character_text)
-                .expect("the character's unlocks");
-        assert_eq!(unlocked, vec![148], "the starting unlock the load wrote");
+        // R12's unlock is written when the players ask is answered, not here: see
+        // `an_arrival_unlocks_the_map_it_reaches`, which asks for them and checks the row. This test
+        // does not ask, so the row is not written yet at this point.
 
         // 4. The ping pair, then the character's own items - the rows the confirm wrote, drawn the
         // same way the creation set would be - and then where it stands on map 148's own file.
@@ -3936,48 +4077,74 @@ Logger.root = 6,Console
             &113_021u32.to_le_bytes(),
             "the outpost's file, so the record decided the map"
         );
-        assert_eq!(
-            &spawn[26..32],
-            &[0x1E, 0x00, 0xF4, 0x01, 0x00, 0x00],
-            "the first tick"
-        );
+        // One frame and nothing else: the first tick comes from the ticker, not from this answer
+        // (`ASURA/crates/asura-world/src/map.rs:13-20`).
 
         // 4c. A drag in the inventory: the item's row moves, and the client is told the placement.
+        // The item is a carried one - a bag's own item is part of its bag and has no slot, so a drag
+        // of it is refused (`ASURA/crates/asura-world/src/inventory_model.rs:167-179`). The
+        // destination is the backpack, the one carrying bag a character has.
+        let backpack = crate::creation::bags(world.creation())
+            .iter()
+            .find(|bag| bag.model == crate::characters::BACKPACK_MODEL)
+            .copied()
+            .expect("the content has a backpack");
+        let assoc: Vec<u32> = crate::creation::bags(world.creation())
+            .iter()
+            .map(|bag| bag.assoc_item)
+            .collect();
+        let movable = starting
+            .items
+            .iter()
+            .find(|item| item.bag_id == Some(backpack.id) && !assoc.contains(&item.id))
+            .expect("the set carries an item in the backpack");
+        let free = (0..backpack.slots)
+            .find(|slot| {
+                !starting
+                    .items
+                    .iter()
+                    .any(|item| item.bag_id == Some(backpack.id) && item.slot == Some(*slot))
+            })
+            .expect("the backpack has a free slot");
         let mut ask = vec![0x72, 0x80];
-        ask.extend_from_slice(&1u32.to_le_bytes());
-        ask.extend_from_slice(&3u16.to_le_bytes());
-        ask.push(7);
+        ask.extend_from_slice(&movable.id.to_le_bytes());
+        ask.extend_from_slice(&backpack.id.to_le_bytes());
+        ask.push(free);
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
         let mut moved = vec![0u8; 11];
         client.read_exact(&mut moved).unwrap();
         reading.apply(&mut moved);
-        assert_eq!(&moved[..2], &[0x3E, 0x01], "the placement");
+        assert_eq!(&moved[..2], &[0x4B, 0x01], "the placement");
         assert_eq!(
             &moved[2..4],
             &item_packets::ITEM_STREAM.to_le_bytes(),
             "the stream"
         );
-        assert_eq!(&moved[4..8], &1u32.to_le_bytes(), "the item");
-        assert_eq!(&moved[8..10], &3u16.to_le_bytes(), "the bag");
-        assert_eq!(moved[10], 7, "the slot");
+        assert_eq!(&moved[4..8], &movable.id.to_le_bytes(), "the item");
+        assert_eq!(
+            &moved[8..10],
+            &backpack.id.to_le_bytes(),
+            "the bag"
+        );
+        assert_eq!(moved[10], free, "the slot");
         let held = crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
             .items_of(&character_text)
             .expect("the item rows are readable");
         let moved_row = held
             .iter()
-            .find(|row| row.item_id == 1)
+            .find(|row| row.item_id == movable.id)
             .expect("the item is one of the character's");
         assert_eq!(
             (moved_row.bag_id, moved_row.slot),
-            (3, 7),
+            (backpack.id, free),
             "the row moved with it"
         );
 
         // 4d. An equip: the item goes to the slot its kind is worn in, in the equipped bag, and whatever
         // was worn there comes off to the first free carrying slot
-        // (`ASURA/crates/asura-world/src/item.rs:314-436`). An item already in its own worn slot is
-        // `MoveOutcome::Unchanged` and answers nothing, so the one picked is somewhere else.
+        // (`ASURA/crates/asura-world/src/item.rs:749-774`). An item already in its own worn slot is a
+        // no-op and answers nothing, so the one picked is somewhere else.
         let equipped_bag = crate::creation::equipped_bag(world.creation())
             .expect("the setting names the equipped bag");
         // The starting set's wearable items are already worn, so the sequence is the player's own: take
@@ -3989,17 +4156,11 @@ Logger.root = 6,Console
             .find(|item| crate::creation::worn_slot(worn_table, item.item_type).is_some())
             .expect("the set carries something wearable");
         let worn_slot = crate::creation::worn_slot(worn_table, worn.item_type).unwrap();
-        let backpack = crate::creation::bags(world.creation())
-            .iter()
-            .find(|bag| bag.model == crate::characters::BACKPACK_MODEL)
-            .copied()
-            .expect("the content has a backpack");
         let free = (0..backpack.slots)
             .find(|slot| {
-                !starting
-                    .items
+                !held
                     .iter()
-                    .any(|item| item.bag_id == Some(backpack.id) && item.slot == Some(*slot))
+                    .any(|row| row.bag_id == backpack.id && row.slot == *slot)
             })
             .expect("the backpack has a free slot");
         let mut take_off = vec![0u8; 9];
@@ -4012,7 +4173,7 @@ Logger.root = 6,Console
         let mut off = vec![0u8; 11];
         client.read_exact(&mut off).unwrap();
         reading.apply(&mut off);
-        assert_eq!(&off[..2], &[0x3E, 0x01], "the drag's placement");
+        assert_eq!(&off[..2], &[0x4B, 0x01], "the drag's placement");
         assert_eq!(&off[8..10], &backpack.id.to_le_bytes(), "into the backpack");
         // Taking it off changes what the agent is drawn wearing, so that is sent again too.
         let mut off_drawn = vec![0u8; 2 + 4 + 9 * 4];
@@ -4036,13 +4197,13 @@ Logger.root = 6,Console
             let mut off = vec![0u8; 11];
             client.read_exact(&mut off).unwrap();
             reading.apply(&mut off);
-            assert_eq!(&off[..2], &[0x3E, 0x01], "the eviction's placement");
+            assert_eq!(&off[..2], &[0x4B, 0x01], "the eviction's placement");
             assert_eq!(&off[4..8], &occupant.to_le_bytes(), "the item taken off");
         }
         let mut placed = vec![0u8; 11];
         client.read_exact(&mut placed).unwrap();
         reading.apply(&mut placed);
-        assert_eq!(&placed[..2], &[0x3E, 0x01], "the placement");
+        assert_eq!(&placed[..2], &[0x4B, 0x01], "the placement");
         assert_eq!(&placed[4..8], &worn.id.to_le_bytes(), "the item");
         assert_eq!(
             &placed[8..10],
@@ -4050,58 +4211,280 @@ Logger.root = 6,Console
             "the equipped bag"
         );
         assert_eq!(placed[10], worn_slot, "the slot its kind is worn in");
-        // And what the agent is drawn wearing is sent again.
-        let mut drawn = vec![0u8; 2 + 4 + 9 * 4];
+        // And the single visual slot the new piece is drawn in (`0x006F`), not the bulk form: an
+        // equip's answer is `placement_frames(..., own_visual = true)`
+        // (`ASURA/crates/asura-world/src/item.rs:749-774`).
+        let mut drawn = vec![0u8; 14];
         client.read_exact(&mut drawn).unwrap();
         reading.apply(&mut drawn);
-        assert_eq!(&drawn[..2], &[0x6E, 0x00], "the agent's worn items");
+        assert_eq!(&drawn[..2], &[0x6F, 0x00], "the one visual slot");
+        assert_eq!(
+            &drawn[6..10],
+            &u32::from(item_packets::visual_equipment_slot(worn_slot)).to_le_bytes(),
+            "the visual slot, which is not the bag slot"
+        );
+        assert_eq!(&drawn[10..14], &worn.id.to_le_bytes(), "the piece");
 
-        // 4e. A drop (`0x802C`, the item and a count byte): the stack is the state and **nothing goes
-        // back**, which is what the working implementation does and what its notes on the two
-        // candidates say each cost a live client (`ASURA/crates/asura-world/src/item.rs:187-246`).
-        let dropped = starting
+        // 4d2. An unequip (`0x804F`): the worn slot to empty and where the piece goes. The live
+        // server answers the move and clears that one visual slot (`items-live-20261108-174014.jsonl`
+        // seq 22-25; `ASURA/crates/asura-world/src/item.rs:784-822`).
+        let mut off_ask = vec![0x4F, 0x80];
+        off_ask.push(worn_slot);
+        off_ask.extend_from_slice(&backpack.id.to_le_bytes());
+        off_ask.push(free);
+        sending.apply(&mut off_ask);
+        client.write_all(&off_ask).unwrap();
+        let mut off_move = vec![0u8; 11];
+        client.read_exact(&mut off_move).unwrap();
+        reading.apply(&mut off_move);
+        assert_eq!(&off_move[..2], &[0x4B, 0x01], "the unequip's move");
+        assert_eq!(&off_move[4..8], &worn.id.to_le_bytes(), "the piece");
+        assert_eq!(&off_move[8..10], &backpack.id.to_le_bytes(), "into the backpack");
+        assert_eq!(off_move[10], free, "into the free slot");
+        let mut off_clear = vec![0u8; 14];
+        client.read_exact(&mut off_clear).unwrap();
+        reading.apply(&mut off_clear);
+        assert_eq!(&off_clear[..2], &[0x6F, 0x00], "the visual slot");
+        assert_eq!(
+            &off_clear[6..10],
+            &u32::from(item_packets::visual_equipment_slot(worn_slot)).to_le_bytes(),
+            "the slot cleared"
+        );
+        assert_eq!(&off_clear[10..14], &0u32.to_le_bytes(), "nothing worn there now");
+
+        // 4d3. A destroy (`0x8069`): the row goes and the client is told `ITEM_REMOVE` with the same
+        // id (`ASURA/crates/asura-world/src/item.rs:830-858`).
+        let mut destroy = vec![0x69, 0x80];
+        destroy.extend_from_slice(&movable.id.to_le_bytes());
+        sending.apply(&mut destroy);
+        client.write_all(&destroy).unwrap();
+        let mut gone = vec![0u8; 8];
+        client.read_exact(&mut gone).unwrap();
+        reading.apply(&mut gone);
+        assert_eq!(&gone[..2], &[0x4D, 0x01], "the item removed");
+        assert_eq!(
+            &gone[2..4],
+            &item_packets::ITEM_STREAM.to_le_bytes(),
+            "the stream"
+        );
+        assert_eq!(&gone[4..8], &movable.id.to_le_bytes(), "the item");
+        assert!(
+            crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
+                .items_of(&character_text)
+                .expect("the item rows are readable")
+                .iter()
+                .all(|row| row.item_id != movable.id),
+            "the destroyed row is gone"
+        );
+
+        // 4d4. `/item birthday_cupcake 2` (`0x8064`, the command channel plus the text): ASURA's test
+        // command gives one live-verified definition through the rules and answers with the measured
+        // pair `CREATE_NAMED_ITEM` and `ITEM_CHANGE_LOCATION` (`item.rs:867-966`). The cupcake's name
+        // and modifiers are empty, so its create is 36 bytes.
+        let units: Vec<u16> = "/item birthday_cupcake 2".encode_utf16().collect();
+        let mut grant = vec![0x64, 0x80];
+        grant.extend_from_slice(&1u32.to_le_bytes()); // the agent the client names
+        grant.extend_from_slice(&(units.len() as u16).to_le_bytes());
+        for unit in &units {
+            grant.extend_from_slice(&unit.to_le_bytes());
+        }
+        sending.apply(&mut grant);
+        client.write_all(&grant).unwrap();
+        let mut created = vec![0u8; 36];
+        client.read_exact(&mut created).unwrap();
+        reading.apply(&mut created);
+        assert_eq!(&created[..2], &[0x61, 0x01], "the new item's create");
+        let granted_id = u32::from_le_bytes([created[2], created[3], created[4], created[5]]);
+        let mut seat = vec![0u8; 11];
+        client.read_exact(&mut seat).unwrap();
+        reading.apply(&mut seat);
+        assert_eq!(&seat[..2], &[0x4B, 0x01], "where it went");
+        assert_eq!(&seat[4..8], &granted_id.to_le_bytes(), "the granted item");
+        let granted = crate::characters::DatabaseCharacters::new(
+            Arc::clone(&characters),
+            log.clone(),
+        )
+        .items_of(&character_text)
+        .expect("the item rows are readable")
+        .into_iter()
+        .find(|row| row.item_id == granted_id)
+        .expect("the granted row is written");
+        assert_eq!(granted.definition_id, "birthday_cupcake");
+        assert_eq!(granted.quantity, 2);
+
+        // 4e. A drop (`0x802C`, the item and a count byte), then a pickup (`0x803F`): part of a
+        // stack answers `0x0139` + `0x0162` + the ground agent and the drop line, and the pickup
+        // merges back with `0x0139` (`ASURA/crates/asura-world/src/item.rs:483-694`).
+        let stacked = starting
             .items
             .iter()
-            .find(|item| item.id != worn.id && item.id != 1 && item.quantity > 1)
+            .find(|item| {
+                item.id != worn.id && item.id != 1 && item.id != movable.id && item.quantity > 1
+            })
             .expect("the set carries a stack of more than one")
-            .id;
+            .clone();
         let before =
             crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
                 .items_of(&character_text)
                 .expect("the item rows are readable")
                 .iter()
-                .find(|row| row.item_id == dropped)
+                .find(|row| row.item_id == stacked.id)
                 .map(|row| row.quantity)
                 .expect("the stack is one of the character's");
+        let stacked_update =
+            2 + 31 + 2 + stacked.name.len() * 2 + 1 + stacked.modifiers.len() * 4;
+        let stacked_core = 2 + 2 + (4 + stacked.name.len()).min(122) * 2;
         let mut ask = vec![0x2C, 0x80];
-        ask.extend_from_slice(&dropped.to_le_bytes());
+        ask.extend_from_slice(&stacked.id.to_le_bytes());
         ask.push(1);
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
-        // **No answer**: the next thing the connection says is the answer to what is asked next -
-        // here the entry position, which is `0x0196` and the first tick. A drop puts nothing on the
-        // wire at all (`ASURA/crates/asura-world/src/item.rs:236-246`).
-        let mut ask = vec![0x88, 0x80];
-        sending.apply(&mut ask);
-        client.write_all(&ask).unwrap();
-        let mut next = vec![0u8; 32];
-        client.read_exact(&mut next).unwrap();
-        reading.apply(&mut next);
+        // The stack's remaining count.
+        let remaining = read_frame(&mut client, &mut reading, 10);
+        assert_eq!(&remaining[..2], &[0x39, 0x01], "the stack's new quantity");
+        assert_eq!(&remaining[2..6], &stacked.id.to_le_bytes(), "the stack");
         assert_eq!(
-            &next[..2],
-            &[0x96, 0x01],
-            "the drop is answered with nothing, so the entry position is next; got {}",
-            shared::network::socket::hex(&next)
+            &remaining[6..10],
+            &(before - 1).to_le_bytes(),
+            "one taken off"
         );
+        // The ground record, under an id of its own.
+        let ground_record = read_frame(&mut client, &mut reading, stacked_update);
+        assert_eq!(&ground_record[..2], &[0x62, 0x01], "the ground item update");
+        let ground_id = u32::from_le_bytes([
+            ground_record[2],
+            ground_record[3],
+            ground_record[4],
+            ground_record[5],
+        ]);
+        assert_ne!(ground_id, stacked.id, "the ground part has its own id");
+        // Its agent.
+        let ground_agent = read_frame(&mut client, &mut reading, 99);
+        assert_eq!(&ground_agent[..2], &[0x20, 0x00], "the ground agent");
+        assert_eq!(
+            &ground_agent[6..10],
+            &ground_id.to_le_bytes(),
+            "its model is the item"
+        );
+        let agent = u32::from_le_bytes([
+            ground_agent[2],
+            ground_agent[3],
+            ground_agent[4],
+            ground_agent[5],
+        ]);
+        // The drop line: the coded prefix and the item's name, then the server tag.
+        let line = read_frame(&mut client, &mut reading, stacked_core);
+        assert_eq!(&line[..2], &[0x5D, 0x00], "the drop line");
+        assert_eq!(
+            &line[4..12],
+            &[0xF2, 0x07, 0xB4, 0xAC, 0x04, 0xA7, 0x4B, 0x31],
+            "the drop prefix"
+        );
+        let tag = read_frame(&mut client, &mut reading, 5);
+        assert_eq!(&tag[..2], &[0x5E, 0x00], "the server tag");
+        // The stack's row still exists, one lighter.
         let after =
             crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
                 .items_of(&character_text)
                 .expect("the item rows are readable")
                 .iter()
-                .find(|row| row.item_id == dropped)
+                .find(|row| row.item_id == stacked.id)
                 .map(|row| row.quantity)
                 .expect("the stack is still there");
         assert_eq!(after, before - 1, "one was taken off the stack");
+
+        // The pickup: the action hold and its target, the pickup line, ITEM_PICKED_UP, the stack's
+        // restored count, the agent removed and the hold cleared.
+        let mut pick = vec![0x3F, 0x80];
+        pick.extend_from_slice(&agent.to_le_bytes());
+        pick.push(0);
+        sending.apply(&mut pick);
+        client.write_all(&pick).unwrap();
+        let hold = read_frame(&mut client, &mut reading, 14);
+        assert_eq!(&hold[..2], &[0x9F, 0x00], "the action property");
+        assert_eq!(&hold[2..6], &8u32.to_le_bytes(), "AGENT_PROPERTY_ACTION");
+        assert_eq!(&hold[10..14], &1u32.to_le_bytes(), "the action is held");
+        let target = read_frame(&mut client, &mut reading, 14);
+        assert_eq!(&target[2..6], &39u32.to_le_bytes(), "AGENT_PROPERTY_TARGET");
+        assert_eq!(&target[10..14], &agent.to_le_bytes(), "the ground agent");
+        let line = read_frame(&mut client, &mut reading, stacked_core);
+        assert_eq!(&line[..2], &[0x5D, 0x00], "the pickup line");
+        assert_eq!(
+            &line[4..12],
+            &[0xFC, 0x07, 0xC5, 0x59, 0xA2, 0xE7, 0x05, 0xE3],
+            "the pickup prefix"
+        );
+        let tag = read_frame(&mut client, &mut reading, 5);
+        assert_eq!(&tag[..2], &[0x5E, 0x00], "the server tag");
+        let picked = read_frame(&mut client, &mut reading, 8);
+        assert_eq!(&picked[..2], &[0x59, 0x01], "ITEM_PICKED_UP");
+        assert_eq!(&picked[2..6], &ground_id.to_le_bytes(), "the ground part");
+        let restored = read_frame(&mut client, &mut reading, 10);
+        assert_eq!(&restored[..2], &[0x39, 0x01], "the stack restored");
+        assert_eq!(&restored[2..6], &stacked.id.to_le_bytes(), "the stack");
+        assert_eq!(&restored[6..10], &before.to_le_bytes(), "back to its old count");
+        let gone = read_frame(&mut client, &mut reading, 6);
+        assert_eq!(&gone[..2], &[0x21, 0x00], "the ground agent removed");
+        assert_eq!(&gone[2..6], &agent.to_le_bytes(), "the ground agent");
+        let clear = read_frame(&mut client, &mut reading, 14);
+        assert_eq!(&clear[2..6], &8u32.to_le_bytes(), "AGENT_PROPERTY_ACTION");
+        assert_eq!(&clear[10..14], &0u32.to_le_bytes(), "the hold cleared");
+
+        // A whole item: the row goes with `0x014D` and the agent keeps its id, and the pickup writes
+        // it back under that same id with `0x013E` (`item.rs:530-543`, `:687-693`). The stack is the
+        // cupcake `/item` just granted, which sits in the backpack.
+        let whole_id = granted_id;
+        let whole_quantity = 2u32;
+        let whole_core = 2 + 2 + 4 * 2;
+        let mut ask = vec![0x2C, 0x80];
+        ask.extend_from_slice(&whole_id.to_le_bytes());
+        ask.push(whole_quantity as u8);
+        sending.apply(&mut ask);
+        client.write_all(&ask).unwrap();
+        let removed = read_frame(&mut client, &mut reading, 8);
+        assert_eq!(&removed[..2], &[0x4D, 0x01], "the whole stack removed");
+        assert_eq!(&removed[4..8], &whole_id.to_le_bytes(), "the item");
+        let ground_agent = read_frame(&mut client, &mut reading, 99);
+        assert_eq!(
+            &ground_agent[6..10],
+            &whole_id.to_le_bytes(),
+            "its model is the item"
+        );
+        let agent = u32::from_le_bytes([
+            ground_agent[2],
+            ground_agent[3],
+            ground_agent[4],
+            ground_agent[5],
+        ]);
+        let line = read_frame(&mut client, &mut reading, whole_core);
+        assert_eq!(&line[..2], &[0x5D, 0x00], "the drop line");
+        let tag = read_frame(&mut client, &mut reading, 5);
+        assert_eq!(&tag[..2], &[0x5E, 0x00], "the server tag");
+
+        let mut pick = vec![0x3F, 0x80];
+        pick.extend_from_slice(&agent.to_le_bytes());
+        pick.push(0);
+        sending.apply(&mut pick);
+        client.write_all(&pick).unwrap();
+        let _hold = read_frame(&mut client, &mut reading, 14);
+        let _target = read_frame(&mut client, &mut reading, 14);
+        let line = read_frame(&mut client, &mut reading, whole_core);
+        assert_eq!(&line[..2], &[0x5D, 0x00], "the pickup line");
+        let _tag = read_frame(&mut client, &mut reading, 5);
+        let _picked = read_frame(&mut client, &mut reading, 8);
+        let placed = read_frame(&mut client, &mut reading, 11);
+        assert_eq!(&placed[..2], &[0x3E, 0x01], "the item put back in a bag");
+        assert_eq!(&placed[4..8], &whole_id.to_le_bytes(), "under its own id");
+        let _gone = read_frame(&mut client, &mut reading, 6);
+        let _clear = read_frame(&mut client, &mut reading, 14);
+        assert!(
+            crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
+                .items_of(&character_text)
+                .expect("the item rows are readable")
+                .iter()
+                .any(|row| row.item_id == whole_id && row.quantity == whole_quantity),
+            "the picked-up row is back"
+        );
 
         // 5. The record is claimed once: a second claim finds nothing.
         let claimed = crate::maps::DatabaseTravels::new(Arc::clone(&login), log.clone())

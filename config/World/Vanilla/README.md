@@ -10,6 +10,10 @@ Vanilla/
   vanilla-title-wire.json   captured vanilla title packet records
   experience.json     the experience curve and the skill points a level grants (ASURA's own file;
                       game/Characters/Experience.rs)
+  items.json          the static item definitions an owned item may name (ASURA's own file;
+                      game/DataStores/ItemCatalogue.rs)
+  upgrades.json       the insignias, runes and weapon mods a definition's words may carry (ASURA's
+                      own file; optional, read with items.json)
   maps/               one folder per map, by campaign, area, kind and id:
                         <campaign>/<area>/<kind>/<map id>/basic.json    the map's own record
                         <campaign>/<area>/<kind>/<map id>/spawns.json   where a character may stand
@@ -33,6 +37,10 @@ Vanilla/
   regenerates them from ASURA's generated equipment table, which came from the reference's own
   `GetDefaultEquipments`. `worn_slots.json` is written by hand, because its order is a measurement and
   its two numberings must agree with a capture (`docs/game-rules.md` E234).
+- `items.json` and `upgrades.json` are ASURA's files, copied unchanged. A definition with `live: true`
+  is one whose exact wire identity the client's own item probe showed; the rest come from the
+  reference's seed and ASURA's curated rows. The world reads both at start-up and refuses the whole
+  file on any bad definition (`World::load_item_catalogue`).
 - A file that would describe something the world does not read yet is not here. `character_spawn.json`
   (the outpost each campaign's new character starts in, `docs/game-rules.md` E232) arrives with the
   stage that reads it, not before.

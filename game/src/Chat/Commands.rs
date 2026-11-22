@@ -366,12 +366,12 @@ mod tests {
         let records = document
             .records("commands")
             .expect("commands is a record list");
-        assert_eq!(records.len(), 10);
+        assert_eq!(records.len(), 11);
 
         let registry = registry();
         let table = Table::load("../config/Server/commands.json", &Log::new(), &registry)
             .expect("the shipped table reads");
-        assert_eq!(table.len(), 10);
+        assert_eq!(table.len(), 11);
 
         let tp = table.command("tp").expect("/tp is answered");
         assert_eq!(tp.operation, "chat.transfer");
@@ -394,6 +394,7 @@ mod tests {
             table.command("xp").unwrap().operation,
             "chat.experience_read"
         );
+        assert_eq!(table.command("item").unwrap().operation, "chat.grant_item");
         assert!(table.command("say").is_none());
 
         // The console rows: the reference's own console names, bound the same way.

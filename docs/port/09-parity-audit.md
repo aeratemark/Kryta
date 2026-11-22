@@ -94,15 +94,15 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x800C` | `GAME_CMSG_HEARTBEAT` | `dispatch.rs:122`, discarded | discarded | ported |
 | `0x800D` | `GAME_CMSG_PING_REQUEST` | `connection.rs:579-587`, `handle_ping_request` | `0x000D` and `World.PingValue` | ported |
 | `0x8028` | `GAME_CMSG_CANCEL_MOVEMENT` | `agent.rs:1062` | `answer_cancel_movement` | ported |
-| `0x802C` | `GAME_CMSG_DROP_ITEM` (7 bytes) | `item.rs:187`, `handle_drop_item` | `CLIENT_DROP_ITEM`: the stack is taken and nothing is sent | ported |
-| `0x8030` | `GAME_CMSG_EQUIP_ITEM` | `item.rs:314`, `equip_item` | `answer_equip_item` | ported |
+| `0x802C` | `GAME_CMSG_DROP_ITEM` (7 bytes) | `item.rs:187`, `handle_drop_item` | `CLIENT_DROP_ITEM`: the stack is taken and nothing is sent | **ported thin**: the current ASURA's ground record/agent and the rules' `Op::Take` are not carried (7h) |
+| `0x8030` | `GAME_CMSG_EQUIP_ITEM` | `item.rs:314`, `equip_item` | `answer_equip_item`, through `Op::Equip` | ported: `0x014B` and the worn slot's `0x006F` |
 | `0x803D` | `GAME_CMSG_POSITION_UPDATE` (26) | `agent.rs:887`, then `dispatch.rs:44-54` | `answer_position_update`, then `cross_portal` | ported (the doorway its step crosses is judged since round 18) |
 | `0x803E` | `GAME_CMSG_MOVE_TO_COORD` (14) | `agent.rs:710` | `answer_move_to_coord` | ported |
 | `0x8047` | `GAME_CMSG_LAST_POS_BEFORE_MOVE_CANCELED` | `agent.rs:1117`, then `dispatch.rs:60-68` | `answer_last_position`, then `cross_portal` | ported (a taken correction crosses a doorway like a step) |
-| `0x804F` | `GAME_CMSG_UNEQUIP_ITEM` (6) | `item.rs:555`, `handle_unequip_item` | `CLIENT_UNEQUIP_ITEM`: ASURA's answer, a log line and nothing on the wire | ported |
+| `0x804F` | `GAME_CMSG_UNEQUIP_ITEM` (6) | `item.rs:555`, `handle_unequip_item` | `answer_unequip_item`, through `Op::Unequip` | ported: `0x014B` and the cleared `0x006F` (the current ASURA's `item.rs:784`) |
 | `0x8060` | `GAME_CMSG_CHAR_CREATION_CHANGE_PROF` (4) | `creation.rs:275` | handled | ported: the body is `chapter, profession`, chapter `0` for a PvP character and `1`-`3` for Prophecies, Factions, Nightfall (`docs/game-rules.md` E226); the client sends it on entry, on every campaign change and on every profession change, and follows each one with seven `0x8084` |
 | `0x8064` | `GAME_CMSG_SEND_CHAT_MESSAGE` (286) | `chat.rs:193`, `handle_chat_message` | `answer_chat_message` | ported |
-| `0x8072` | `GAME_CMSG_ITEM_MOVE` (9) | `item.rs:255`, `move_item` | `answer_item_move` | ported |
+| `0x8072` | `GAME_CMSG_ITEM_MOVE` (9) | `item.rs:255`, `move_item` | `answer_item_move`, through `Op::Move` | ported: `0x014B` per change, the bulk `0x006E` when a drag changes what is worn, and a refusal answers where the item really is (the current ASURA's `item.rs:704`) |
 | `0x8088` | `GAME_CMSG_INSTANCE_LOAD_REQUEST_SPAWN` | `agent.rs:1219`, `map.rs:13-20` | `load_map`, the entry position | ported: one `0x0196` frame, which is `spawn_block` whole (the answer used to append a first `0x001E` of its own; the ticker sends the ticks) |
 | `0x8089` | `GAME_CMSG_CHAR_CREATION_REQUEST_PLAYER` (2) | `creation.rs:190` | handled | ported |
 | `0x808A` | `GAME_CMSG_CHAR_CREATION_REQUEST_ARMORS` (2) | `creation.rs:259` | handled | ported |
@@ -142,7 +142,8 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x001D` | PvP skills | `pvp_update_unlocked_skills` | same | ported |
 | `0x001E` | simulation tick | `world_simulation_tick(delta_ms)` | same | ported (ours until 2026-11-12: a counter) |
 | `0x001F` | load time | `world_update_load_time` | same | ported |
-| `0x0020` | create agent (99) | `world_create_agent`, `CreateAgent` | same | ported |
+| `0x0020` | create agent (99) | `world_create_agent`, `CreateAgent`, `CreateAgent::LIVING` (`game/mod.rs:1426-1555`) | same; `h000b`, `h001e`, `h0023`, `h0027` are the caller's (a player's are `LIVING`'s, unchanged bytes); an NPC's model word is `CHAR_CLASS_NPC_BASE` over its definition index | ported (the four per-body fields were constants until 2026-11-22) |
+| `0x0027` | agent update speed base (10) | `agent_update_speed_base` (`game/mod.rs:2274-2281`) | `agent_packets::agent_update_speed_base`; sent by the NPC `Pace` message, which nothing emits until a body has a `walk_speed` | ported (the builder; see 7g on `walk_speed`) |
 | `0x0021` | remove agent | `world_remove_agent` (`game/mod.rs:2181-2186`, ASURA `071735e`: six bytes) | `agent_packets::world_remove_agent` | ported (eight bytes, the struct layer, until 2026-11-22) |
 | `0x0022` | controlled agent | `world_update_controlled_agent` | same | ported |
 | `0x0025` | agent update direction (15) | `agent_update_direction` / `_live` | `agent_packets::agent_update_direction`, both forms | ported |
@@ -155,17 +156,22 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x003A` | attributes (202) | `agent_update_attributes` | same | ported |
 | `0x003C` | player flags | `player_update_flags` | same | ported |
 | `0x0048` | display cape | `agent_display_cape` | same | ported |
+| `0x0056` | NPC update properties (38 for a 4-unit name) | `npc_update_properties`, `NpcProperties` (`game/mod.rs:1596-1640`) | `agent_packets::npc_update_properties`, byte-tested against seq 229 | ported; not yet sent (7g, N3) |
+| `0x0057` | NPC update model | `npc_update_model` (`game/mod.rs:1642-1650`) | `agent_packets::npc_update_model`, byte-tested against seq 230 | ported; not yet sent (7g, N3) |
 | `0x0059` | player create (91) | `player_create` | same | ported |
 | `0x005A` | player destroy | `player_destroy` (`game/mod.rs:2173-2179`, ASURA `071735e`: six bytes) | `character_packets::player_destroy` | ported (eight bytes, the struct layer, until 2026-11-22) |
 | `0x005D` | chat: the body, one fragment | `chat_message_core` | `chat_packets::chat_message_core` over `all_chat_body`, fragmented at 121 | ported: the body is a **coded string** (`0x0108 0x0107 text 0x0001`, `GmText.c:43-57` and `Rurik/studies/chat/FINDINGS.md:263`) and long text is fragmented, not truncated. ASURA's table and this tree before 0012 wrote bare text capped at 122, which is what left `/maps` past one frame |
 | `0x005E` | chat: the server speaking | `chat_message_server` | `chat_packets::chat_message_server(player, channel)` | ported: `[u16 player, u8 channel]`, **5 bytes** (`msgdefs.info` `GAME_SMSG_0094`; bytes `5e00 0100 06`, `FINDINGS.md:264`). ASURA wrote two dwords; **it is sent now** (`answer_line`, `Channel_Global`) as `GmChat.c:116-143` sends it, and the owner's live client read `/maps`'s answer off the screen - the first authored text rendered on this channel in either server |
 | `0x0061` | chat: which player spoke | `chat_message_local` | `chat_packets::chat_message_local(player, channel)` | ported: `[u16 player, u8 channel]`, **5 bytes** (`msgdefs.info` `GAME_SMSG_0097`; bytes `6100 0100 03`). ASURA wrote two dwords |
+| `0x006D` | NPC update weapons | `npc_update_weapons` (`game/mod.rs:1670-1679`) | `agent_packets::npc_update_weapons`, byte-tested against seq 251 | ported; not yet sent (7g, N3) |
 | `0x006E` | visual equipment | `update_agent_visual_equipment` | same | ported |
 | `0x0070` | hard mode | `hard_mode_unlocked` | same, and the byte is the character's campaign completion (`prophecies_finished`, `factions_finished`, `nightfall_finished`), not a map or a hardcoded 1 | ported |
 | `0x008A` | cartography data (262) | `cartography_data` | `instance_packets::cartography_data` | ported |
 | `0x008B` | map init start (14) | `map_init_start` | `instance_packets::map_init_start` | ported |
 | `0x0094` | unlocked lists (662) | `map_update_unlocked_list` | same | ported |
 | `0x0099` | map update current | `map_update_current` and its redirect form | both forms | ported |
+| `0x009A` | agent update scale | `agent_update_scale` (`game/mod.rs:1661-1668`) | `agent_packets::agent_update_scale`, byte-tested against seq 514 | ported; not yet sent (7g, N3) |
+| `0x009B` | agent update NPC name | `agent_update_npc_name` (`game/mod.rs:1652-1659`) | `agent_packets::agent_update_npc_name`, byte-tested against seq 231 | ported; not yet sent (7g, N3) |
 | `0x009C` | morale | `agent_update_morale` | same | ported |
 | `0x009F` | agent property, int | `agent_property_update_int` | same | ported |
 | `0x00A2` | agent property, float | `agent_property_update_float` | same | ported |
@@ -575,6 +581,112 @@ the spawn that clears a refused init (`dispatch.rs:32`); and the titles' explora
 same grid. The order for the round: the grid and its stream (1-600, with the tests), then the schema and
 its read and write, then `0x008C` and the walker wired into the movement handler and the travel halt.
 
+## 7g. The NPC subject: stages N1 and N2 of `docs/asura-port-plan.md`
+
+**Opened (2026-11-22, the local ASURA repository as it stands on disk):** `crates/asura-world/src/npc/`,
+nine files - `table.rs` 1,255 lines, `behavior.rs` 840, `content.rs` 832, `fight.rs` 663, `file.rs` 486,
+`burst.rs` 439, `lua.rs` 481, `mod.rs` 169, `frames.rs` 135 - and the NPC builders of
+`crates/asura-protocol/src/game/mod.rs`. **Carried this round:** `burst.rs` 1-439, `frames.rs` 1-135,
+`content.rs` 1-832, `file.rs` 1-486 (whole, each with its tests), `mod.rs` 90-135 (the start-up read
+and the ground check) and `pathfind.rs` 1682-1686 (`on_ground`). **Left:** `table.rs`, `behavior.rs`,
+`lua.rs`, `fight.rs`, `mod.rs` 1-89 (`NpcWorld`, the behaviour source), and the pack content itself.
+
+| ASURA | this tree | verdict |
+|---|---|---|
+| `game/mod.rs` 1426-1555, 1581-1679, 2274-2281: `CreateAgent` (+ `h000b`, `h001e`, `h0023`, `h0027`, `LIVING`), `CHAR_CLASS_NPC_BASE`, `NpcProperties`, `npc_update_properties`, `npc_update_model`, `agent_update_npc_name`, `agent_update_scale`, `npc_update_weapons`, `agent_update_speed_base`; the test `the_npc_messages_are_the_captured_bytes` | `game/Server/Packets/AgentPackets.rs` | ported, with the capture-byte test; the two player creates (`Agents/Player.rs`, `Districts/Peers.rs`) finish with `..CreateAgent::LIVING` and send the same 99 bytes as before |
+| `npc/burst.rs` (the measured entry order, `held_item_id`, `entry`, `entry_with_status`, `BURROW_TRANSITION`, `burrow_recreate`) and `npc/frames.rs` (`Msg` to frame) | `game/Server/Packets/NpcPackets.rs` - the reference's `NPCPackets` family | ported whole with their 8 tests (seq 246-252, 265, 294, 573-580, the armed body, the foe's 42/34, the pace pair) |
+| `npc/content.rs` (`FourCc`, `NpcDefinition`, `NpcCombat`, `NpcAttack`, `Aggression`, `Property`, `NpcPlacement`, `Route`, `MapNpcs`, `SightRules`, `NpcContent::assemble`, `check_ground`) | `game/Agents/NpcContent.rs` | **ported thin:** everything but `content.rs:448-453`, the `damage_type` check against the skill model's damage kinds, which waits for the skills subject. The nested `if let`s are let-chains (clippy, edition 2024); same logic |
+| `npc/file.rs` (the pack's `npcs/definitions.json` and each map folder's `npcs.json`, every refusal) | `game/Maps/NpcPack.rs`, re-exported at `game/Agents/NpcFile.rs` | ported, this tree's arrangement: rows are read from `serde_json::Value` with ASURA's unknown-key refusal kept (this tree's four commentary names are walked past); **`npcs/sight.json` is not read** - the compass range is `World.CompassRange` (R34, the same 10,000), handed to `load`. The reader lives beside `Maps/Pack.rs` because it reads the disk at start-up, which `worldserver/tests/content_is_held.rs` forbids inside a connection-serving folder |
+| `npc/mod.rs` 90-135 (`current`, `check_ground`), `main.rs` 403-412 and 479-485 | `World::load_npcs` (after the settings), `World::check_npc_ground` (after `set_graphs`), `worldserver/src/main.rs` | ported: a bad row refuses the start naming the row; a moving body or route point off the surface refuses it; a standing one or a graphless map is a note |
+| `pathfind.rs` 1682-1686 `on_ground` | `PathGraphs::on_ground`, `game/Terrain/Pathfind.rs` | ported |
+| `npc/table.rs` (per-instance table, ids before players, sight churn, dormancy, the tick) and the NPC half of `instance.rs` (`with_npcs` 178-225, `join`'s agent id 307-316, `npc_arrival` 450-460, `leave` 424) | `game/Districts/Npcs.rs` (`NpcTable`, `NpcDistricts`), `World::allocate_agent`/`release_agent`/`npc_arrival`/`npc_sweep`, the load's agent array and the session tick in `WorldSession.rs` | **ported thin (N3, 2026-11-22):** a copy's bodies are seeded from agent id 2 the first time it hands out an agent; a player's agent is the copy's lowest free id, **separate from its player id** (retail: `pre-searing-load-3.jsonl` seq 221, player 0x35 is agent 40); the load's agent array is other players and NPCs in range sorted by agent id (`player.rs:784-818`); each tick sweeps the client's compass range. Not here: behaviour trees (N4), the burrow cycle, the fight, `/npc`, the walk half of `tick`, quest markers. Every place that named the player id where an agent was meant now names the agent: `0x019A`, the load's `0x0020`, the travel's `0x00F1`/`0x0028`, `0x006E`, the guild badge and property 30, the registrar window. Client proof pending |
+| `npc/behavior.rs`, `PackBehaviors` | `game/Behaviour/` | missing - stage N4 |
+| `npc/lua.rs` | `game/Scripting/` | missing - needs the Lua runtime |
+| `npc/fight.rs` | `game/Combat/` | missing - after skills |
+
+**The pack content is carried.** `config/World/Vanilla/npcs/definitions.json` holds ASURA's 114
+definitions from preforged's gw-npcs catalogue (35 with a combat block), and eleven map folders carry
+377 placements and 2 routes; the start-up line reports `114 NPC definition(s), 377 placement(s) and 2
+route(s) on 11 map(s)`. The `speed` field is documented in ASURA as "cmonmeow's NPC value" (220) for
+catalogue rows - an authored number, not a measurement - and the map 148 patrol is authored too, as
+its own file says. Each file under `config/` is classified in `04-configuration.md`.
+
+**Not carried, as the plan says:** `walk_speed` (`0x0027` + `0x002B` before a leg; it caused `007` on
+client 39167) - the builder and the `Pace` message are ported, nothing emits them; `h003B` goes out as 0
+where the live load varies.
+
+## 7h. The item catalogue and inventory rules, from the local ASURA tree
+
+**Opened:** `ASURA/crates/asura-world/src/inventory_model.rs` (917 lines), `item_catalogue.rs` (636),
+`item_modifier.rs` (536) and, for the second round, `item.rs` (1,298), read from `D:\ASURA-main` on
+2026-11-22, with the pack's `items.json` (546 definitions) and `upgrades.json`. **Carried:** all three
+rules files and both pack files, then `item.rs`'s five-step core, its four row-writing handlers and
+its `/item` test command.
+None of these exists at `ca9f532`, so the counts in 6 do not include them. The rule is
+`docs/asura-port-plan.md`, row 6.
+
+| ASURA | this tree | verdict |
+|---|---|---|
+| `inventory_model.rs:16-572` - `ItemKind`, `Hands`, `equip_slot`, `BagKind`, `BagInfo`, `Entry`, `Wearer`, `Op`, `Change`, `Refusal`, `InvModel` (`new`, the lookups, `first_free_carrying`, `apply`/`plan`, `do_move`, `do_equip`, `do_take`, the relocation helpers) | `game/Characters/Inventory.rs` | ported whole, each item citing its line; `game/Characters/ItemOps.rs` builds the model from the rows and applies one operation per client message |
+| `inventory_model.rs:574-917` - the 22 tests | the same file | ported unchanged; 22 pass |
+| `item_modifier.rs` - `ModifierWord` (both views, `skipped`, `decode`), `Modifier`, the tooltip lines, `ModifierEffect`, `fitted_upgrades`, `decode_all`, the 12 tests | `game/DataStores/ItemModifier.rs` | ported whole; 12 pass |
+| `item_catalogue.rs:24-365` - the constants, `ItemDefinition`, `Upgrade`, `stack_limit`/`can_equip_in`/`accepts_quantity`, `Catalogue` (`from_json`, `with_upgrades_json`, the lookups, `by_wire`), `validate` | `game/DataStores/ItemCatalogue.rs` | ported; the reader is `serde_json::Value` with each object's keys stated and any other key refused, where ASURA derives `deny_unknown_fields` - same fields, same defaults, same refusals |
+| `item_catalogue.rs:367-384` - `load` | the same file, called once by `World::load_item_catalogue` before the listener opens | ported; ASURA's `current()` (`:391-409`) reads lazily on first use and `path()` (`:386-389`) asks its spawn module - neither is carried, because a request path reads no file here (`worldserver/tests/content_is_held.rs`) and a missing `items.json` stops the program (rule 7) |
+| `item_catalogue.rs:278-291` - `for_item(&t_item row)` | `Catalogue::for_item(definition_id, file_id, item_type, model_id)` | ported: the stored definition id is read first, and a row written before the column falls back to its wire fields. The column is `data/sql/base/db_characters/0010-item-definition-id.sql` (schema only; `''` for a row that names none) |
+| `item_catalogue.rs:418-636` - the 10 tests | the same file | ported; `every_reference_seed_item_names_a_definition` and `a_row_with_an_id_resolves...` read `config/World/Vanilla/creation/inventory.json` where ASURA reads `asura_db::inventory::seed::ITEMS` (the same nine reference rows: every one resolves, with its profession). One test of this tree's own reader beside them; 11 pass |
+| `config/World/Vanilla/items.json`, `upgrades.json` | the same paths, copied unchanged | ported as data, classified in `04-configuration.md`; `live: true` (497 of 546) is the field that marks a definition the client's item probe showed |
+
+**The rules are wired now, and all six client item operations run through them.** The second round of the
+`item.rs` re-diff carried the ground items and the two operations that need them:
+
+| `item.rs` lines | what | this tree | verdict |
+|---|---|---|---|
+| 237-468 | the five-step order: `model_of`, `entry_of`, `row_changes`, `commit`, `commit_ops`, `reload`, `snap_back` | `game/Characters/ItemOps.rs`, with six tests | ported; `apply_item_changes` writes one operation's rows in one transaction (`database/src/Database/Pool.rs`, `transaction_reply`, the reference's `apply_changes`) |
+| 483-578 | `drop_item` | `Handlers/ItemHandler.rs`, `answer_drop_item`, through `Op::Take` | ported: a whole stack answers `0x014D`, part of one answers `0x0139` + `0x0162`, both then the item agent (`0x0020`), the drop line and the ground record for the rest of the instance |
+| 593-694 | `interact_item`, `pick_up` | `Handlers/ItemHandler.rs`, `answer_interact_item` and `pick_up`, through `Op::Merge` then `Op::Insert` | ported: the action hold and target (properties 8 and 39), the pickup line, `0x0159`, the stack's `0x0139` or the item's `0x013E`, `0x0021`, and the hold cleared |
+| 704-822 | `move_item`, `equip_item`, `unequip_item` | `Handlers/ItemHandler.rs`, through `Op::Move`/`Op::Equip`/`Op::Unequip` | ported: `0x014B` per change, `0x006F` per worn slot, the bulk `0x006E` for this client on a drag, and a refusal answers where the item really is |
+| 830-858 | `destroy_item` | `Handlers/ItemHandler.rs`, through `Op::Destroy` | ported; the `0x8069` dispatch arm was missing before |
+| 867-1035 | `grant_definition` (`/item`), `clear_carrying`, `instantiate`, `equipment_frame`, `DROP_OFFSET` | `/item` in `Handlers/ItemHandler.rs` through `Op::Insert` and `Commands/Operations.rs` + `config/Server/commands.json`; `instantiate`, `item_of_row`, `equipment_frame` and `DROP_OFFSET` in `ItemOps.rs`/`ItemHandler.rs` | **ported thin**: `/item` is carried (`0x0161` + `0x015A` + `0x014B`); `clear_carrying` is not |
+| 1041-1278 | the seven dispatch handlers | all seven arms: `0x8091`, `0x802C`, `0x8069`, `0x803F`, `0x8072`, `0x8030`, `0x804F` | ported |
+
+**Ground items have a home.** `game/Districts/Ground.rs` is `instance.rs:117-151` and `:428-510`:
+`GroundItem` (agent, item, the source stack, where it lies), the per-copy registry, `put`/`take`/`items`
+and `close`, and `ground_frames`. `World` owns it (`put_ground_item`, `take_ground_item`,
+`ground_arrival`, `allocate_ground_agent`, `release_ground_agent`), reuses the NPC table's lowest-free
+agent id so an item cannot collide with a player or a body, and drops a copy's ground items when the
+copy is disposed. A client entering the copy is told about them after the agent array
+(`player.rs:855-862`). A partial drop's id comes from `item_id_seq`
+(`data/sql/base/db_characters/0011-item-id-sequence.sql`), the sequence ASURA's own allocator uses;
+`/item` draws from it too.
+
+**One rule the ASURA server does not state, and this one does.** An item is never droppable in an
+outpost: the client itself refuses to offer the drop outside an explorable, and destroying a bag is
+allowed in outposts where dropping is not (`docs/game-rules.md` E51). ASURA's `drop_item` has no map
+check because no client sends the message there. This tree refuses it on the server too - a silent
+refusal, since no message acknowledges a drop (`E47`) - and `drop_allowed` is unit-tested for an
+explorable, an outpost, the creation instance and no map kind.
+
+**Proved against the databases, not only unit tests.** `a_travel_record_decides_the_map_and_the_district`
+now drives a real connection through the rules: a drag answers `0x014B` and moves the row, an equip moves
+the piece into its worn slot and answers `0x006F`, an unequip moves it back and clears the slot, a destroy
+answers `0x014D` and the row is gone, `/item birthday_cupcake 2` gives two of a live definition
+(`0x0161` then `0x014B`, the row written with its `definition_id`), a partial drop answers `0x0139`,
+`0x0162` and its agent, the pickup merges it back and answers the stack's `0x0139`, then a whole-stack
+drop answers `0x014D` and its agent and the pickup restores the row under the same id with `0x013E`.
+The test's map is an explorable, because a drop is refused in an outpost; the refusal itself is the
+`drop_allowed` unit test. The test is `#[ignore]` because it needs the login and character databases.
+
+**The next round, in this order:**
+
+1. **`/item clear`** (`item.rs:968-1004`): `clear_carrying`, which destroys everything in the carrying
+   bags through the same rules and transaction.
+2. **The load block's diff** (`item.rs:22-236`): `items_block`, `Purse`, `items_block_with_stream` and
+   `inventory_block` against `game/Agents/Player.rs`'s items answer, which already draws the same stream
+   from rows.
+3. **The ground item's reservation** (`309`, `E48`) and gold drops (`E49`), neither of which ASURA
+   carries: stops, not gaps.
+
+
 ## 8. The order this audit imposes
 
 1. **(done)** The map's path graph: `map_data.rs` (the blob's own parse), `graph_dump.rs`,
@@ -614,7 +726,7 @@ because the reference's structure is this tree's authority for how a thing is ar
 | `player.rs` | 540 | `game/Agents/Player.rs` (the load's three answers' frames), the session's unlocked bitmap and peer join | ported: `PlayerBlock`, `player_block`'s frame order, `unlock_bitmap`, `handle_request_players` |
 | `connection.rs` | 587 | `game/Server/WorldSession.rs`, `WorldSocketMgr` | this tree's arrangement: one session per connection, the ping interval and value as settings |
 | `travel.rs` | 534 | `answer_party_travel`, `begin_transfer`, `cross_portal`, `answer_teleport_command`, `answer_travel_init` - `game/Handlers/TravelHandler.rs` | ported; the seat reservation is named in 7.4 |
-| `item.rs` | 561 | `answer_item_move`, `answer_equip_item`, `CLIENT_DROP_ITEM`, `CLIENT_UNEQUIP_ITEM` - `game/Handlers/ItemHandler.rs` | ported |
+| `item.rs` | 561 at `ca9f532`; 1,298 today | `game/Handlers/ItemHandler.rs`, `game/Characters/{Inventory,ItemOps}.rs`, `game/Districts/Ground.rs` | **ported thin today**: the rules model, the five-step core, every client operation (move, equip, unequip, destroy, drop, pickup) and `/item`; `/item clear` and the load block's own diff remain (7h) |
 | `instance.rs` | 528 | `game/Districts/` (`Districts`, `Peers`, `Instances`) | this tree's arrangement: a copy of a map is a district, and the population is `Peers` |
 | `creation.rs` | 519 | `confirm_creation`, `answer_creation_*` in `game/Handlers/CharacterHandler.rs` | ported |
 | `portals.rs` | 503 | `game/Maps/Portals.rs` | ported whole; the data is `map_arch` and `map_arrival` |

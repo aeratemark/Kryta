@@ -95,6 +95,7 @@ mod tests {
             profession: 0,
             name: Vec::new(),
             modifiers: Vec::new(),
+            definition_id: String::new(),
         }
     }
 
