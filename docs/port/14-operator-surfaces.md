@@ -512,8 +512,13 @@ unlocks. Slot capacity is not represented by the current account model and is no
 initialization uses several database writes and cleans up on failure; cleanup failure is reported.
 Session coordination and account/player APIs remain outstanding: panel writes do not coordinate with
 online players. Account deletion retains player rows; their policy needs an explicit decision before
-changing it. Titles are not recorded by this server yet, and the player page says so (the title
-messages are evidenced at E23 and E156-E158, but no table or handler exists).
+changing it. Metrics are not recorded by this server yet; the player page lists the metric catalog
+with every value at zero. The player page and world read names, rank thresholds
+and display test points from the configured `WorldPack`'s `titles.json`. The
+catalog defines `Hog Jumper` for the `jumps` metric at 1/10,000. The standard
+client receives the short rank name `Jump`. The fixed-text probe displayed
+the full name and description in-game. The title messages are evidenced at E23 and
+E156-E158; no metric source or database row exists yet.
 
 World content is the world pack (`docs/decisions/0014-the-world-content-is-a-pack.md`), so the content
 page reads the pack through the same reader the world uses and shows what the world will serve; editing

@@ -5,16 +5,18 @@
 #
 # What it writes: the DH keys the handshake uses (tools/client/keys.txt, which are the same prime and
 # server private value as `shared/src/Cryptography/Handshake.rs`), the `CreateMutexA` patch that lets a
-# second client start, and the mutex name. Hostnames are left alone unless --detach asks for them.
+# second client start, the mutex name, and the build 39167 custom-title lookups.
+# Hostnames are left alone unless --detach asks for them.
 #
-# Where this came from: ported from ASURA's client-patcher/patch-gw.py, unchanged in what it patches -
-# the offsets are found by pattern, not hardcoded, so a new client build either matches or is refused.
-# Only the paths in the documentation and the help text are this tree's. `tools/client/hosts-redirect.py`
-# is its other half, for the builds that repoint hostnames.
+# The connection changes follow ASURA's client-patcher/patch-gw.py. Kryta's
+# build-specific title hooks are documented in docs/port/19-title-research.md.
 import os
 import sys
 import struct
 import argparse
+from pathlib import Path
+import subprocess
+import tempfile
 
 try:
     import pefile
@@ -23,6 +25,30 @@ except ImportError:
         'patch-gw.py needs the pefile module: install it with `pip install pefile` '
         '(or `pip3 install pefile` on Linux)'
     )
+
+from title_patch import DLL_NAME, build_runtime, patch_titles, validate_runtime
+
+
+def replace_file(path, data):
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + ".", delete=False) as temp:
+        temporary = Path(temp.name)
+        try:
+            temp.write(data)
+            temp.close()
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def retire_probes(directory):
+    names = ("Gw.custom.titleonly.exe", "Gw.custom.title-probe.exe",
+             "Gw.custom.title-hover.exe", "Gw.custom.hog-jumper.exe")
+    probes = [directory / name for name in names if (directory / name).is_file()]
+    if probes:
+        archive = Path(tempfile.mkdtemp(prefix="retired-title-probes-", dir=directory))
+        for probe in probes:
+            probe.rename(archive / probe.name)
+        print(f"[+] Archived old title probes in {archive}")
 
 def reverse_endian(data):
     return data[::-1]
@@ -47,6 +73,10 @@ def main(args):
         name, ext = os.path.splitext(input_path)
         out_path = name + '.custom' + ext
 
+    if Path(input_path).resolve() == Path(out_path).resolve():
+        raise ValueError("the output must be separate from the stock Gw.exe")
+    if args.retire_title_probes and Path(out_path).name.lower() != "gw.custom.exe":
+        raise ValueError("retire title probes when installing Gw.custom.exe")
     print('[+] Input:', input_path)
     print('[+] Output:', out_path)
     print('[+] Key\'s file:', args.keys_file)
@@ -211,17 +241,28 @@ def main(args):
     for (idx, host) in host_patches:
         data_mut = patch(data_mut, idx, REPLACEMENT + b'\x00' * (len(host) - len(REPLACEMENT)))
 
-    data = bytes(data_mut)
-    with open(out_path, 'wb') as f:
-        f.write(data)
+    image = patch_titles(data, bytes(data_mut), args.title_url)
+    runtime = Path(args.title_runtime).read_bytes() if args.title_runtime else build_runtime()
+    validate_runtime(runtime)
+    target = Path(out_path)
+    replace_file(target.with_name(DLL_NAME), runtime)
+    replace_file(target, image)
+    if args.retire_title_probes:
+        retire_probes(target.parent)
 
     print("[+] Patched executable written here '%s'" % out_path)
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Patch Gw executable with custom DHL keys', add_help=True)
+    parser = argparse.ArgumentParser(description='Build the Kryta Gw.custom.exe client', add_help=True)
     parser.add_argument('input')
     parser.add_argument('keys_file')
     parser.add_argument('--output', metavar='output', type=str, help='The output file', required=False)
+    parser.add_argument('--title-url', default='',
+                        help='Catalog URL override. The default uses the -portal host at port 6601.')
+    parser.add_argument('--title-runtime', type=Path,
+                        help='Use a prebuilt x86 KrytaTitles.dll instead of compiling with Visual Studio')
+    parser.add_argument('--retire-title-probes', action='store_true',
+                        help='Archive the old title test executables beside Gw.custom.exe')
     parser.add_argument('--detach', action='store_true',
                         help='Repoint all seven baked-in ArenaNet hostnames, the DNS base entry '
                              'included. Needs tools/client/hosts-redirect.py enable '
@@ -236,4 +277,7 @@ if __name__ == '__main__':
                         help='Repoint all hostnames except those starting with PREFIX. Repeatable.')
 
     args = parser.parse_args()
-    main(args)
+    try:
+        main(args)
+    except (OSError, ValueError, KeyError, pefile.PEFormatError, subprocess.CalledProcessError) as error:
+        parser.exit(1, f"{error}\n")

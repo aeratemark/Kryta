@@ -44,6 +44,10 @@
     "Bind": {
       "value": "127.0.0.1:6601",
       "doc": "Where those endpoints answer. The client was launched with -portal 127.0.0.1 and speaks to localhost:6601."
+    },
+    "TitleWorldConfig": {
+      "value": "worldserver/worldserver.json",
+      "doc": "World program configuration whose WorldPack supplies the custom title catalog. An empty value disables the Kryta text endpoint."
     }
   },
 

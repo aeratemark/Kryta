@@ -97,7 +97,7 @@ screen's conversation", is the frames.
 | R55 quests | not started | |
 | the chat and social wire | the channel rule and the commands in; guilds, friends and alliance not started | `game/Chat/` holds the reference's three commands and `/maps`' table, and the connection answers `0x8064` with ASURA's pair (`0x005D`, `0x0061`) - `ASURA/crates/asura-world/src/chat.rs`, and `worldserver/tests/end_to_end.rs` speaks a line and types the commands against the program; `game/Guilds/` is a stub |
 | guilds, friends, alliance | not started | `game/Guilds/` is a stub |
-| titles and character slots | not started | |
+| titles and character slots | partial - the test display sends 33 captured rank-zero rows and 12 captured earned states. Metrics report zero. Character slots have not started | `titles.json` lists the vanilla IDs and custom definitions. `vanilla-title-wire.json` holds captured metadata for the stock packets. The patched client fetches the custom text from Kryta. [Title research](19-title-research.md) |
 
 ## Every number
 

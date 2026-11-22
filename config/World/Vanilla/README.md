@@ -4,6 +4,8 @@ The faithful base pack: the client's own vocabulary and the values a faithful wo
 
 ```text
 Vanilla/
+  titles.json         vanilla title IDs and editable custom titles
+  vanilla-title-wire.json   captured vanilla title packet records
   maps/               one folder per map, by campaign, area, kind and id:
                         <campaign>/<area>/<kind>/<map id>/basic.json    the map's own record
                         <campaign>/<area>/<kind>/<map id>/spawns.json   where a character may stand
@@ -33,3 +35,25 @@ Vanilla/
 
 Every file carries a `note` and an `information` block saying what a row means and where the numbers
 came from, so a reader does not have to open the code to know what they are looking at.
+
+`titles.json` lists vanilla title IDs. Kryta reads their captured rank
+references, thresholds, and stock text references from `vanilla-title-wire.json`.
+Vanilla records without explicit points use one test point at rank zero.
+Records with points and a current threshold replay a captured display state.
+The `custom_tracks` list defines custom names, descriptions, metric keys,
+short wire names, and thresholds. Hog Jumper uses ID 48 and Embiggener uses ID 49.
+The test does not write character progress. The portal publishes only custom
+text and its lookup keys, and the official client retrieves it at runtime.
+Edit this file and restart Kryta to change the text without rebuilding the client.
+
+To create another custom title, add a row under `custom_tracks`. Use a
+unique ID of 48 or higher and two rank IDs that do not appear in
+`vanilla-title-wire.json`'s `ranks` array or another custom row. Set `name` and `description`
+to the text players should see, `short_name` and `next_short_name` to stock
+wire fallbacks of at most four characters, and `metric` to the server metric
+key. `points`, `current_minimum`, and `next_minimum` describe the display
+test state. Set `selected` to 1 on at most one row for the initial
+displayed title. Reload the character after restarting the stack.
+Both the auth and world services validate the title files before listening.
+If a title record is invalid, its startup error appears in `Auth.log` or
+`Server.log`.

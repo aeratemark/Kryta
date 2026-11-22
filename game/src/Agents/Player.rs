@@ -104,6 +104,7 @@ impl Player {
         settings: &crate::world::world_config::WorldConfig,
         load_ms: u32,
         unlocked: &[u32],
+        titles: &crate::characters::titles::VanillaTitles,
     ) -> Vec<Vec<u8>> {
         let agent = self.agent;
         let player = self.player;
@@ -159,22 +160,23 @@ impl Player {
             self.unlocked_professions,
         ));
         frames.push(character_packets::skillbar_update(
-            agent,
-            &[0u32; 8],
-            &[0u32; 8],
-            1,
+            agent, &[0u32; 8], &[0u32; 8], 1,
         ));
         frames.push(character_packets::update_unlocked_skills(&[]));
         frames.push(character_packets::character_update_factions(&progress));
-        frames.push(misc_packets::char_visibility_flags(0xFFFF_FFFF, 0xFFFF_FFFF));
+        frames.push(misc_packets::char_visibility_flags(
+            0xFFFF_FFFF,
+            0xFFFF_FFFF,
+        ));
         frames.push(misc_packets::player_update_flags(player as u16, 0, 7));
+        // ASURA crates/asura-protocol/src/packets.rs:771-774 defines the packets
+        // without a title sender. Build 39167 Northlands, seq 534-582:
+        // definitions follow 0x00E9, 0x00EF and 0x003C, before load finish.
+        frames.extend(crate::characters::titles::load_frames(titles));
         frames.push(agent_packets::agent_update_attributes(agent, &[0u32; 42]));
         frames.push(misc_packets::world_update_load_time(load_ms));
         frames.push(instance_packets::player_create(
-            player,
-            agent,
-            appearance,
-            &self.name,
+            player, agent, appearance, &self.name,
         ));
         frames.push(character_packets::player_update_profession(
             agent,
@@ -228,12 +230,18 @@ impl Player {
             player as u16,
             1,
         ));
-        frames.push(party_packets::party_member_stream_end(party_packets::PARTY_ID));
+        frames.push(party_packets::party_member_stream_end(
+            party_packets::PARTY_ID,
+        ));
         frames.push(character_packets::character_update_party(
             party_packets::PARTY_ID,
             1,
         ));
         frames.push(instance_packets::instance_load_finish());
+        frames.push(crate::server::packets::title_packets::rank_display(
+            player as u16,
+            titles.initial_display_rank(),
+        ));
         frames
     }
 }

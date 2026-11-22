@@ -471,9 +471,27 @@ fn run(args: &[String]) -> Result<(), String> {
             format!("Portal: {count} account(s) in the login database, binding {portal_bind}."),
         );
 
-        let portal = std::sync::Arc::new(game::portal::Portal::new(
+        let mut portal = game::portal::Portal::new(
             crate::server::DatabaseAccounts::new(std::sync::Arc::clone(&login), log.clone()),
-        ));
+        );
+        let (title_world_config, notes) = config
+            .value_string("Portal.TitleWorldConfig", "worldserver/worldserver.json")
+            .map_err(|error| error.to_string())?;
+        for note in notes {
+            report(&note);
+        }
+        if !title_world_config.is_empty() {
+            let world = Config::load_json(&title_world_config, false, Policy::default())
+                .map_err(|error| error.to_string())?;
+            let (pack, _) = world.value_string("WorldPack", "config/World/Vanilla")
+                .map_err(|error| error.to_string())?;
+            let path = std::path::Path::new(&pack).join("titles.json");
+            let titles = game::characters::titles::VanillaTitles::load(&path)
+                .inspect_err(|error| log.out(LogLevel::Error, "server.authserver", error))?;
+            portal = portal.with_custom_titles(titles.custom_catalog());
+            log.out(LogLevel::Info, "server.authserver", format!("Portal: custom title catalog from {}.", path.display()));
+        }
+        let portal = std::sync::Arc::new(portal);
         let factory: SessionFactory = {
             let portal = std::sync::Arc::clone(&portal);
             let log = Some(log.clone());

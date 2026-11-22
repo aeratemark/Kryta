@@ -150,32 +150,26 @@ fn start(service: &Service, lines: Sender<ServiceLine>) -> Result<Child, String>
     let exe = exe_of(&service.program);
     let mut child = Command::new(&exe)
         .args(&service.args)
-        // The only reason a service prints its handshake: this variable says a supervisor is reading
-        // it. Nothing a service says reaches the operator's screen; the screen is the stack's own.
+        // This variable makes the service print its readiness handshake to the piped stdout.
         .env("KRYTA_STACK", "1")
         .stdin(if service.stdin { Stdio::inherit() } else { Stdio::null() })
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        // A fatal error must reach the terminal even if the child and supervisor exit immediately.
+        .stderr(Stdio::inherit())
         .spawn()
         .map_err(|error| format!("cannot start {}: {error}", service.name))?;
     let name = service.name.clone();
     let stdout = child.stdout.take().expect("the program's stdout is piped");
-    let stderr = child.stderr.take().expect("the program's stderr is piped");
-    let streams: [(Box<dyn std::io::Read + Send>, bool); 2] = [(Box::new(stdout), false), (Box::new(stderr), true)];
-    for (stream, is_error) in streams {
-        let lines = lines.clone();
-        let name = name.clone();
-        std::thread::spawn(move || {
-            for line in BufReader::new(stream).lines() {
-                let Ok(line) = line else {
-                    return;
-                };
-                if lines.send((name.clone(), is_error, line)).is_err() {
-                    return;
-                }
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else {
+                return;
+            };
+            if lines.send((name.clone(), line)).is_err() {
+                return;
             }
-        });
-    }
+        }
+    });
     Ok(child)
 }
 
@@ -320,8 +314,8 @@ fn stop_process(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-/// One line a service printed, what printed it, and whether it was its standard error.
-type ServiceLine = (String, bool, String);
+/// One standard output line and the service that printed it.
+type ServiceLine = (String, String);
 
 /// The last lines a service printed, kept so a failure can be read without a `--logs` run.
 ///
@@ -349,11 +343,9 @@ fn report(name: &str, line: &str) {
 
 /// Show a service's line if it should be shown, and keep it for a failure's tail either way.
 ///
-/// The rule is the whole point of this file's console: a service's standard error is always printed,
-/// and its standard output only with `--logs`. A stack with a thousand connections must not print its
-/// log to the terminal; the log is on disk, and the terminal is for the stack's own lifecycle.
-fn show(tails: &mut Tails, logs: bool, name: &str, is_error: bool, line: &str) {
-    if is_error || logs {
+/// Standard output is shown with `--logs`. Standard error goes directly to the terminal.
+fn show(tails: &mut Tails, logs: bool, name: &str, line: &str) {
+    if logs {
         report(name, line);
     }
     keep(tails, name, line);
@@ -361,9 +353,7 @@ fn show(tails: &mut Tails, logs: bool, name: &str, is_error: bool, line: &str) {
 
 /// Print a service's kept tail, after the line that says why it is being printed.
 ///
-/// With the console appenders off (the shipped default) the tail holds only the handshake and any
-/// complaint a service printed directly, so the failure report names where the record is instead of
-/// pretending the screen is the log.
+/// The tail holds stdout only. The service's stderr already reached the terminal.
 fn dump_tail(tails: &mut Tails, name: &str) {
     match tails.remove(name) {
         Some(tail) if !tail.is_empty() => {
@@ -410,8 +400,8 @@ fn wait_ready(
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         match lines.recv_timeout(remaining.min(Duration::from_millis(200))) {
-            Ok((name, is_error, line)) => {
-                show(tails, logs, &name, is_error, &line);
+            Ok((name, line)) => {
+                show(tails, logs, &name, &line);
                 if line.contains("READY: listening on")
                     && let Some(index) = services.iter().position(|service| service.name == name)
                 {
@@ -484,8 +474,8 @@ fn restart(
     let deadline = Instant::now() + READY_TIMEOUT;
     while Instant::now() < deadline {
         match received.recv_timeout(Duration::from_millis(200)) {
-            Ok((name, is_error, line)) => {
-                show(tails, logs, &name, is_error, &line);
+            Ok((name, line)) => {
+                show(tails, logs, &name, &line);
                 if name == service.name && line.contains("READY: listening on") {
                     state_word(state, &service.name, &format!("up on {}", service.port));
                     return Ok(());
@@ -655,8 +645,8 @@ fn main() -> std::process::ExitCode {
     if check_only || !all_up {
         stop_all(&mut children);
         state_all(&state, &services, "stopped");
-        for (name, is_error, line) in received.try_iter() {
-            show(&mut tails, logs, &name, is_error, &line);
+        for (name, line) in received.try_iter() {
+            show(&mut tails, logs, &name, &line);
         }
         return if all_up {
             std::process::ExitCode::SUCCESS
@@ -672,8 +662,8 @@ fn main() -> std::process::ExitCode {
     let mut restarts: BTreeMap<String, u32> = BTreeMap::new();
     let mut stopped: BTreeSet<String> = BTreeSet::new();
     loop {
-        for (name, is_error, line) in received.try_iter() {
-            show(&mut tails, logs, &name, is_error, &line);
+        for (name, line) in received.try_iter() {
+            show(&mut tails, logs, &name, &line);
         }
         for request in requests.try_iter() {
             let answer = match request.action {
@@ -779,8 +769,8 @@ fn main() -> std::process::ExitCode {
     }
 
     stop_all(&mut children);
-    for (name, is_error, line) in received.try_iter() {
-        show(&mut tails, logs, &name, is_error, &line);
+    for (name, line) in received.try_iter() {
+        show(&mut tails, logs, &name, &line);
     }
     if exit_code == 0 {
         std::process::ExitCode::SUCCESS

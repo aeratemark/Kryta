@@ -42,6 +42,8 @@ pub struct PeerView {
     pub standing: Standing,
     /// The nine item ids the body is drawn wearing, by slot.
     pub equipped: [u32; 9],
+    /// The single rank the player displays, or zero when hidden.
+    pub displayed_rank: u32,
     /// Which map this body is in.
     pub map_id: u32,
     /// Which district of it.
@@ -112,6 +114,13 @@ impl Peers {
     pub fn moved(&mut self, player_id: u32, standing: Standing) {
         if let Some(slot) = self.slots.get_mut(&player_id) {
             slot.view.standing = standing;
+        }
+    }
+
+    /// Remember a new displayed title for players who join this district later.
+    pub fn set_displayed_rank(&mut self, player_id: u32, rank: u32) {
+        if let Some(slot) = self.slots.get_mut(&player_id) {
+            slot.view.displayed_rank = rank;
         }
     }
 
@@ -199,6 +208,7 @@ mod tests {
                 direction: (0.0, 1.0),
             },
             equipped: [0u32; 9],
+            displayed_rank: 0,
             map_id,
             district,
         }

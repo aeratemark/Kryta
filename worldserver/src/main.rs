@@ -298,6 +298,7 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     }
     let pack = game::maps::pack::Pack::load(&world_pack, &log)?;
     let maps = world.load_maps(&pack, &format!("the map pack at {world_pack}"), &log)?;
+    world.load_titles(std::path::Path::new(&world_pack).join("titles.json"), &log)?;
     // The maps this world can put a client in: a record the pack states no type or no blob for is a
     // destination the client can resolve and this world cannot load, so it is not asked for a graph
     // (`ASURA/crates/asura-world/src/catalogue.rs:54-63`).

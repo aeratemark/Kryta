@@ -60,6 +60,9 @@ python tools/client/patch-gw.py "C:\Games\Guild Wars\Gw.exe" tools/client/keys.t
 Start the stack before launching the client. The patch creates a separate executable and leaves
 `Gw.exe` intact.
 
+Use `Gw.custom.exe` for regular play and vanilla title testing. The other client builds are
+listed in the [title research notes](docs/port/19-title-research.md#client-builds-on-this-machine).
+
 ## Documentation
 
 - [Configuration and database settings](docs/port/04-configuration.md)

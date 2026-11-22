@@ -262,6 +262,30 @@ pub fn detail(manage: &Manage, uuid: &str) -> Response {
         Some(value) => value.to_string(),
         None => "not stated by the row".to_string(),
     };
+    let metric_rows: String = game::characters::metrics::sheet()
+        .iter()
+        .map(|metric| {
+            format!(
+                "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                components::escape(metric.key),
+                components::escape(metric.label),
+                metric.value,
+                components::escape(metric.unit)
+            )
+        })
+        .collect();
+    let title_rows: String = match manage.world_pack_path().and_then(|pack| {
+        game::characters::titles::VanillaTitles::load(std::path::Path::new(&pack).join("titles.json"))
+    }) {
+        Ok(titles) => titles.sheet().map(|title| {
+            format!(
+                "<tr><td>{}</td><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                components::escape(title.name), components::escape(title.metric),
+                title.points, title.current_rank, title.next_minimum
+            )
+        }).collect(),
+        Err(error) => format!("<tr><td colspan=\"5\">{}</td></tr>", components::escape(&error)),
+    };
     let uuid_escaped = components::escape(uuid);
     let body = format!(
         "{crumbs}\n{owner}\
@@ -289,11 +313,17 @@ pub fn detail(manage: &Manage, uuid: &str) -> Response {
          </div></section>\n\
          <section class=\"panel\"><h2>Inventory and equipment</h2>\
          <p>The item rows the player's load draws from, with the bag and slot each sits in.</p>{inventory}</section>\n\
+         <section class=\"panel\"><h2>Metrics</h2>\
+         <p>Every metric the platform keeps. All report zero until a source writes them; this is\
+         the character sheet's inventory, not a claim that the values have been earned.</p>\
+         <table><thead><tr><th>metric</th><th>label</th><th>value</th><th>unit</th></tr></thead>\
+         <tbody>{metric_rows}</tbody></table></section>\n\
          <section class=\"panel\"><h2>Titles</h2>\
-         <p>Titles belong to the player in the game: a record per track, its points, the current\
-         and next tier, and the one the player shows. This server does not record titles yet - the\
-         title messages are evidenced (E23, E156-E158) but no table or handler exists - so there is\
-         nothing to show or edit here. Nothing is hidden or zeroed to pretend otherwise.</p></section>\n\
+         <p>All 48 client title rows, each displayed at 1 point while its metric is zero. The\
+         extra row is <code>Jump Master</code>, projected from <code>jumps</code>; its next rank\
+         is 10,000.</p>\
+         <table><thead><tr><th>title</th><th>metric</th><th>points</th><th>rank</th><th>next</th></tr></thead>\
+         <tbody>{title_rows}</tbody></table></section>\n\
          <section class=\"panel\"><h2>Unlocked maps</h2>\
          <p>Where a player may travel (R12), as the load's gate reads it.</p>{unlocks}</section>\n\
          <section class=\"panel\"><div class=\"panel-head\"><div><h2>Permanent removal</h2>\
@@ -312,6 +342,8 @@ pub fn detail(manage: &Manage, uuid: &str) -> Response {
         experience = experience_text,
         gold = gold,
         pvp = if row.pvp { "yes" } else { "no" },
+        metric_rows = metric_rows,
+        title_rows = title_rows,
         outpost = components::escape(&row.outpost),
         position = components::escape(&position_text),
         appearance = {

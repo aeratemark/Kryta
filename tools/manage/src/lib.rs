@@ -363,6 +363,10 @@ impl Manage {
     /// the manager reads it with the same reader so a page shows the maps, entry points and
     /// arrivals the world will serve, not rows nothing reads.
     pub fn world_pack(&self) -> Result<game::maps::pack::Pack, String> {
+        game::maps::pack::Pack::load(&self.world_pack_path()?, &self.log)
+    }
+
+    pub(crate) fn world_pack_path(&self) -> Result<String, String> {
         let world_config = self.world_config.as_deref().ok_or_else(|| {
             "the world program's settings file is not named in manage.json (WorldConfigFile)"
                 .to_string()
@@ -375,7 +379,7 @@ impl Manage {
         if pack_path.trim().is_empty() {
             return Err("the world program names no WorldPack".to_string());
         }
-        game::maps::pack::Pack::load(&pack_path, &self.log)
+        Ok(pack_path)
     }
 
     /// Every map name the world's pack states, keyed by id: what the pages call an outpost.

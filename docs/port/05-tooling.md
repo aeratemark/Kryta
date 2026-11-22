@@ -24,7 +24,7 @@ Two consequences:
 
 | tool | is | needs | ported from |
 |---|---|---|---|
-| `tools/client/patch-gw.py` | patches a `Gw.exe` into `Gw.custom.exe`: the handshake's DH keys, the `CreateMutexA` patch, the mutex name, and optionally the baked-in ArenaNet hostnames | `pip install pefile` | ASURA `client-patcher/patch-gw.py` |
+| `tools/client/patch-gw.py` | builds `Gw.custom.exe` with the connection patches and the build 39167 custom-title lookup, and installs `KrytaTitles.dll` beside it | `pefile`, Visual Studio x86 C++ tools, and nlohmann/json, or a prebuilt x86 runtime | ASURA `client-patcher/patch-gw.py` for the connection; [title research](19-title-research.md) for custom text |
 | `tools/client/keys.txt` | the key material the patch writes: `generator`, `prime`, `server_private`, `server_public` | - | ASURA `client-patcher/keys.txt`; the prime and `server_private` are the same values as `shared/src/Cryptography/Handshake.rs` |
 | `tools/client/hosts-redirect.py` | sends the client's seven baked-in names to this machine, or puts them back; recognises a block an earlier tool left | an elevated shell to write the hosts file | ASURA `client-patcher/hosts-redirect.py`, itself from GWPS `tools/hosts-gwps.ps1` |
 | `tools/adapt-protocol-table.py` | moved the ported message table into `game/src/Server/Protocol/Tables.rs`, once | nothing; it is the record of the move | ASURA `crates/asura-protocol/src/packets.rs` |
@@ -212,7 +212,7 @@ rather than starting nothing.
 | `/accounts/{id}` | one account: identity, EULA state, activation and removal, the players it owns, with its section tabs (Account overview, Players, and the two account-wide areas) | done - Shared storage and Account unlocks are named as not recorded by this server yet; the Players tab opens `/players?account={id}` |
 | `/players` | every player (character) the server hosts, with the account that owns it, and the creation form whose account list says who will own the player | done - a player is created from the creation record lists and the pack's campaign spawn data, then its own page opens |
 | `/players?account={id}` | the same list, filtered to one account's players | done - the account page's Players tab and the creation form's account choice both use it |
-| `/players/{uuid}` | one player: campaign, profession pair, level, stored experience, gold, PvP, last outpost, position, appearance and the professions it has unlocked; its inventory and equipment (the item rows); its titles; its unlocked maps (R12); the account that owns it (linked); rename, level (1 to 20, R48) and removal | done - the game does not record titles yet, and the page says so instead of showing none; removal deletes the row with its own items and unlocks |
+| `/players/{uuid}` | one player: campaign, profession pair, level, stored experience, gold, PvP, last outpost, position, appearance and the professions it has unlocked; its inventory and equipment (the item rows); the metric catalog, all values zero, and all 48 client title rows displayed at 1 point, including the `jumps`-derived `Jump Master`; its unlocked maps (R12); the account that owns it (linked); rename, level (1 to 20, R48) and removal | done - no metric is recorded yet, but every title row is visible for the later source to fill; removal deletes the row with its own items and unlocks |
 | `/services` | the running supervisor's state and its named stop/restart controls | done against the existing loopback channel: `SupervisorStackFile` supplies its `control_port`; the manager cannot start a missing supervisor because it has no start protocol and must not become one |
 | `/console` | browser adapter for the live operation registry | done against the existing world endpoint: lists `world.operations` (asked after the page), submits named `name=value` arguments to `/v1/operations`, and displays the world's result or refusal; it does not dispatch commands itself |
 | `/status` | the running world's own answer to `world.status`, asked of its local control endpoint | done - one operation carried by the world's own queue (`docs/port/14-operator-surfaces.md`); a world that is unavailable or refuses is drawn differently from an empty answer, and `ControlPort`/`ControlCredentialFile` in `manage.json` configure it |
@@ -273,14 +273,25 @@ accepted, or 0 for none. The auth program's answer reports it, so a client that 
 
 ```powershell
 pip install pefile                                                                    # once per machine
-python tools/client/patch-gw.py "F:\GW\GW1\Gw.exe" tools/client/keys.txt --output "F:\GW\GW1\Gw.custom.exe"
+python tools/client/patch-gw.py "F:\GW\GW1\Gw.exe" tools/client/keys.txt --retire-title-probes
 python tools/client/hosts-redirect.py status
 & 'F:\GW\GW1\Gw.custom.exe' -authsrv 127.0.0.1 -portal 127.0.0.1
 ```
 
-Proved: Kryta's patcher, run against this machine's `Gw.exe` with Kryta's `keys.txt`, produces a
-byte-identical `Gw.custom.exe` to the one that was in use (SHA-256 `4937CBF7...`), so the port changes
-nothing about the client it builds.
+The patcher expects stock build 39167 and builds `KrytaTitles.dll` with Visual
+Studio's x86 tools. It finds `nlohmann/json.hpp` in
+`Py4GW_Reforged_Native/third_party` under the user profile or in the directory
+specified by `KRYTA_TITLE_JSON_INCLUDE`. A prebuilt x86 runtime can be supplied
+with `--title-runtime`. Run `Gw.custom.exe` with the DLL beside it.
+
+The client retrieves custom text from the `-portal` host on port 6601.
+Set `--title-url` when building for a different catalog address.
+Edit the world pack's `titles.json`, restart Kryta, and reload the character
+to use the new text. `--retire-title-probes` archives the old title executables.
+Rebuild `Gw.custom.exe` from stock build 39167 once before using custom
+titles numbered 48 and above. Earlier builds of the patch assert when the
+Hero Panel looks up those rows. Later catalog edits only need the stack
+restart and character reload.
 
 The hosts block is **off by default and that is the normal state**: with the patch above the client
 dials the address on its command line, so nothing needs the block. `enable --file-server` is for a

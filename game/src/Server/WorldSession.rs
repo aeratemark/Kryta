@@ -24,8 +24,9 @@ use shared::cryptography::AuthCrypt;
 use shared::network::socket::{Session, SessionFuture, SessionIo};
 
 use crate::server::packets::{
-    agent_packets, creation_load_block, instance_packets, item_packets, misc_packets,
+    agent_packets, creation_load_block, instance_packets, item_packets, misc_packets, title_packets,
 };
+use crate::server::protocol::tables::game::{GAME_CMSG_TITLE_DISPLAY, GAME_CMSG_TITLE_HIDE};
 use crate::server::protocol::GameVersion;
 use crate::server::protocol::FrameError;
 use crate::agents::player::{PLAYER_TEAM_TOKEN, UNLOCKED_MAP_ZEROS};
@@ -1488,6 +1489,7 @@ impl WorldSession {
                             name: sheet.name.clone(),
                             standing,
                             equipped,
+                            displayed_rank: self.world.titles().initial_display_rank(),
                             map_id: map.id,
                             district: self.district(),
                         };
@@ -1508,7 +1510,24 @@ impl WorldSession {
                                 PLAYER_TEAM_TOKEN,
                             ));
                         }
-                        frames.extend(state.load_block(&self.settings, load_ms, &unlocked));
+                        frames.extend(state.load_block(
+                            &self.settings,
+                            load_ms,
+                            &unlocked,
+                            self.world.titles(),
+                        ));
+                        // Send peer selections after this load has defined the corresponding ranks.
+                        frames.extend(
+                            others
+                                .iter()
+                                .filter(|other| other.displayed_rank != 0)
+                                .map(|other| {
+                                    title_packets::rank_display(
+                                        other.player_id as u16,
+                                        other.displayed_rank,
+                                    )
+                                }),
+                        );
                         let count = frames.len();
                         self.send(io, peer, crypt, &frames, "the players and the load's last message")
                             .await;
@@ -1544,10 +1563,33 @@ impl WorldSession {
                         }
                         mine.push(misc_packets::update_agent_visual_equipment(agent, equipped));
                         mine.push(misc_packets::agent_display_cape(agent, 1));
+                        if me.displayed_rank != 0 {
+                            mine.push(title_packets::rank_display(player as u16, me.displayed_rank));
+                        }
                         if let Ok(peers) = self.peers.lock() {
                             peers.broadcast(player, map.id, self.district(), &mine);
                         }
                         loaded = true;
+                    }
+                    // ASURA crates/asura-protocol/src/packets.rs:422-423,772 supplies the layouts.
+                    // Retail login-unfiltered-9292 seq 659-661 replies with the selected rank.
+                    // Preforged packets-1360-15821281.jsonl:36252 shows rank zero for no title.
+                    GAME_CMSG_TITLE_DISPLAY | GAME_CMSG_TITLE_HIDE if loaded => {
+                        let rank = if header == GAME_CMSG_TITLE_HIDE {
+                            Some(0)
+                        } else {
+                            let title = u32::from_le_bytes(message[2..6].try_into().unwrap());
+                            self.world.titles().selectable_rank(title)
+                        };
+                        if let Some(rank) = rank {
+                            let reply = [title_packets::rank_display(player as u16, rank)];
+                            if let Ok(mut peers) = self.peers.lock() {
+                                peers.set_displayed_rank(player, rank);
+                                peers.broadcast(player, map.id, self.district(), &reply);
+                            }
+                            self.send(io, peer, crypt, &reply, "the displayed title")
+                                .await;
+                        }
                     }
                     // A drag in the inventory: where the item goes is a row, the rules are ASURA's, and
                     // the client is told the placement back. `0x8072` is the client's own `9` bytes - the
@@ -2307,7 +2349,20 @@ mod tests {
         client: &mut std::net::TcpStream,
         reading: &mut common::cryptography::Arc4,
     ) -> Vec<(u16, Vec<u8>)> {
-        read_frames_until(client, reading, instance_packets::INSTANCE_LOAD_FINISH)
+        let load = read_frames_until(client, reading, instance_packets::INSTANCE_LOAD_FINISH);
+        read_title_frames(client, reading);
+        load
+    }
+
+    fn read_title_frames(
+        client: &mut std::net::TcpStream,
+        reading: &mut common::cryptography::Arc4,
+    ) -> Vec<(u16, Vec<u8>)> {
+        read_frames_until(
+            client,
+            reading,
+            crate::server::packets::title_packets::TITLE_RANK_DISPLAY,
+        )
     }
 
     /// Read whole frames off a scrambled connection until `terminal` arrives, answering every frame.
@@ -2328,31 +2383,30 @@ mod tests {
     ) -> Vec<(u16, Vec<u8>)> {
         let mut frames = Vec::new();
         let mut pending: Vec<u8> = Vec::new();
-        let mut buffer = [0u8; 4096];
         let mut seen = 0usize;
         loop {
-            while pending.len() >= 2 {
-                match crate::server::protocol::decode_game_message(&pending, false) {
-                    Ok((frame, used)) => {
-                        let header = frame.header();
-                        let whole: Vec<u8> = pending.drain(..used).collect();
-                        frames.push((header, whole));
-                        if header == terminal {
-                            seen += 1;
-                            if seen == times {
-                                return frames;
-                            }
+            match crate::server::protocol::decode_game_message(&pending, false) {
+                Ok((frame, used)) => {
+                    let header = frame.header();
+                    assert_eq!(pending.len(), used);
+                    frames.push((header, std::mem::take(&mut pending)));
+                    if header == terminal {
+                        seen += 1;
+                        if seen == times {
+                            return frames;
                         }
                     }
-                    Err(FrameError::Incomplete { .. }) => break,
-                    Err(error) => panic!("a frame of the load did not frame: {error}"),
                 }
+                Err(FrameError::Incomplete { needed }) => {
+                    // Leave the next frame, and its ciphertext, for the next read.
+                    let present = pending.len();
+                    pending.resize(needed, 0);
+                    let incoming = &mut pending[present..];
+                    client.read_exact(incoming).expect("the load keeps arriving");
+                    reading.apply(incoming);
+                }
+                Err(error) => panic!("a frame of the load did not frame: {error}"),
             }
-            let read = client.read(&mut buffer).expect("the load keeps arriving");
-            assert!(read > 0, "the connection ended before the load did");
-            let mut plain = buffer[..read].to_vec();
-            reading.apply(&mut plain);
-            pending.extend_from_slice(&plain);
         }
     }
 
@@ -2610,7 +2664,20 @@ Logger.root = 6,Console
             common::configuration::Policy::default(),
         ))
         .expect("the test can speak");
-        let world = Arc::new(world());
+        let mut configured = world();
+        let titles_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../config/World/Vanilla/titles.json");
+        let catalog: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&titles_path).unwrap()).unwrap();
+        let mut expected_ids: Vec<_> = catalog["vanilla_ids"].as_array().unwrap().iter()
+            .map(|id| id.as_u64().unwrap() as u32)
+            .collect();
+        expected_ids.extend(
+            (48..).take(catalog["custom_tracks"].as_array().unwrap().len()),
+        );
+        expected_ids.sort_unstable();
+        configured.load_titles(titles_path, &log).unwrap();
+        let world = Arc::new(configured);
         let master = [0x5Au8; MASTER_SECRET_LEN];
         let factory = factory(log.clone(), Arc::clone(&world), master);
         let mut manager = shared::network::socket_mgr::SocketMgr::new(factory);
@@ -2761,8 +2828,63 @@ Logger.root = 6,Console
         sending.apply(&mut ask);
         client.write_all(&ask).unwrap();
 
-        let blocks = read_load_frames(&mut client, &mut reading);
+        let blocks =
+            read_frames_until(&mut client, &mut reading, instance_packets::INSTANCE_LOAD_FINISH);
+        read_title_frames(&mut client, &mut reading);
+        let title_points: Vec<_> = blocks
+            .iter()
+            .filter(|(header, _)| *header == 0x00F6)
+            .map(|(_, bytes)| {
+                let id = u32::from_le_bytes(bytes[2..6].try_into().unwrap());
+                let points = u32::from_le_bytes(bytes[10..14].try_into().unwrap());
+                (id, points)
+            })
+            .collect();
+        assert_eq!(
+            title_points.iter().map(|&(id, _)| id).collect::<Vec<_>>(),
+            expected_ids,
+            "the test load sends the configured IDs"
+        );
+        assert!(title_points.iter().all(|&(_, points)| points > 0));
+        assert!(title_points.contains(&(26, 1)), "Canthan Skill Hunter stays at one point");
+        assert!(title_points.contains(&(32, 3)), "Legendary Skill Hunter uses the captured completed state");
+        for (header, title, expected_rank) in [
+            (GAME_CMSG_TITLE_DISPLAY, Some(32u32), 246),
+            (GAME_CMSG_TITLE_DISPLAY, Some(0), 6),
+            (GAME_CMSG_TITLE_HIDE, None, 0),
+        ] {
+            let mut ask = header.to_le_bytes().to_vec();
+            if let Some(title) = title {
+                ask.extend_from_slice(&title.to_le_bytes());
+            }
+            sending.apply(&mut ask);
+            client.write_all(&ask).unwrap();
+            let reply = read_title_frames(&mut client, &mut reading);
+            assert_eq!(
+                reply.last().unwrap().1,
+                title_packets::rank_display(1, expected_rank)
+            );
+        }
+        let defender = blocks
+            .iter()
+            .find(|(header, bytes)| *header == 0x00F6 && bytes[2..6] == 21u32.to_le_bytes())
+            .expect("Defender of Ascalon is sent on the normal player load");
+        assert_eq!(defender.1[30..34], 20u32.to_le_bytes());
         let headers: Vec<u16> = blocks.iter().map(|(header, _)| *header).collect();
+        let flags = headers.iter().position(|&header| header == 0x003C).unwrap();
+        assert_eq!(headers[flags + 1], 0x00F3, "rank records follow player flags");
+        // Preforged packets-6468-5728843.jsonl:110585-110587 and
+        // Northlands seq 567-569 give the Canthan Skill Hunter and Sweet Tooth order.
+        for (track, ranks) in [(26u32, [213u32, 214u32]), (34, [273, 274])] {
+            let track_at = blocks
+                .iter()
+                .position(|(header, frame)| *header == 0x00F6 && frame[2..6] == track.to_le_bytes())
+                .unwrap();
+            for ((header, frame), rank) in blocks[track_at - 2..track_at].iter().zip(ranks) {
+                assert_eq!(*header, 0x00F3);
+                assert_eq!(frame[2..6], rank.to_le_bytes());
+            }
+        }
         // The reference's own order (`ASURA/crates/asura-world/src/player.rs`, `player_block`): the
         // PvP halves and the unlockable items, the account features, the unlocked lists and the team
         // token, the skills and the progress record, the flags, the player and the agent, the agent's
@@ -2936,7 +3058,11 @@ Logger.root = 6,Console
     #[test]
     fn two_connections_in_one_map_introduce_each_other() {
         let log = Log::new();
-        let world = Arc::new(world());
+        let mut configured = world();
+        let catalog = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../config/World/Vanilla/titles.json");
+        configured.load_titles(catalog, &log).unwrap();
+        let world = Arc::new(configured);
         let master = [0x5Au8; MASTER_SECRET_LEN];
         let factory = factory(log.clone(), Arc::clone(&world), master);
         let mut manager = shared::network::socket_mgr::SocketMgr::new(factory);
@@ -2954,7 +3080,7 @@ Logger.root = 6,Console
             "one body in the map, its own: {first:04X?}"
         );
 
-        let (second_client, _second_reading, second) =
+        let (mut second_client, mut second_reading, second) =
             load_a_player(port, master, [0xCC; 16]);
         // The second player's answer opens with the first player's introduction, then its own block.
         assert_eq!(
@@ -2996,6 +3122,16 @@ Logger.root = 6,Console
             "and the nine items its agent is drawn wearing: {headers:04X?}"
         );
         assert_eq!(headers.last(), Some(&misc_packets::AGENT_DISPLAY_CAPE));
+        let first_selection = read_title_frames(&mut second_client, &mut second_reading);
+        assert_eq!(
+            first_selection.last().unwrap().1,
+            title_packets::rank_display(1, world.titles().initial_display_rank())
+        );
+        let second_selection = read_title_frames(&mut first_client, &mut reading);
+        assert_eq!(
+            second_selection.last().unwrap().1,
+            title_packets::rank_display(2, world.titles().initial_display_rank())
+        );
 
         // The second player leaves; the first is told the player is gone and the agent with it.
         let _ = second_client.shutdown(std::net::Shutdown::Both);

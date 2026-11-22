@@ -20,6 +20,12 @@ pub mod equipping;
 #[path = "Sheet.rs"]
 pub mod sheet;
 
+#[path = "Metrics.rs"]
+pub mod metrics;
+
+#[path = "Titles.rs"]
+pub mod titles;
+
 pub use equipping::{NotWorn, equip_place};
 pub use sheet::CharacterSheet;
 

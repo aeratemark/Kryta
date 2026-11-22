@@ -149,7 +149,7 @@ added, and a field the file does not state keeps the table's value.
 | setting | is set in |
 |---|---|
 | the login listener: port, bind address, thread count, trace | `authserver.json` |
-| the portal: enabled, where it answers | `authserver.json` |
+| the portal: enabled, where it answers, the world configuration whose pack supplies custom title text (`Portal.TitleWorldConfig`) | `authserver.json` |
 | the login database: connection string, worker and synchronous connections, trace | `authserver.json` |
 | the character database: connection string, worker and synchronous connections | `authserver.json`, `worldserver.json`, under `CharacterDatabaseInfo` and `CharacterDatabase` |
 | the login database, in the world program: connection string, worker and synchronous connections | `worldserver.json`, under `LoginDatabaseInfo` and `LoginDatabase` - the world reads it for the travel record its own program cannot be told by another program |
@@ -166,6 +166,8 @@ added, and a field the file does not state keeps the table's value.
 | the world itself: every map record, the entry points where a character may stand, and the arches a step crosses - the tree is classified here as one unit, so a file inside it needs no row of its own | `worldserver.json`, `WorldPack`, naming `config/World/Vanilla`, whose `config/World/Vanilla/maps/` folder is the tree (`<campaign>/<area>/<kind>/<map id>/{basic,spawns,portals}.json`). A folder that is not its record's `map_id`, or a pack with no `maps/`, stops the program - serving half a world is worse than not serving (`docs/decisions/0014-the-world-content-is-a-pack.md`) |
 | the creation screen's content: the bags and items a client is given, and what a new character wears per campaign and profession | `worldserver.json`, `InventoryFile` and `EquipmentFile`, naming `config/World/Vanilla/creation/inventory.json` and `config/World/Vanilla/creation/equipment.json` |
 | campaign starting maps for panel character creation | `config/World/Vanilla/character_spawn.json`, copied from `ASURA/config/World/Vanilla/character_spawn.json`; a null map refuses creation |
+| vanilla title IDs and custom definitions | `config/World/Vanilla/titles.json` under the configured `WorldPack` |
+| captured vanilla title test states, rank thresholds, and encoded progress and hover references | `config/World/Vanilla/vanilla-title-wire.json`, read with the title catalog |
 | which slot of the client's equipped bag each kind of item is worn in | `worldserver.json`, `EquippedSlotsFile`, naming `config/World/Vanilla/creation/worn_slots.json`. The index is the client's own (its nine-slot equipped array, the placement inside the equipped bag, the agent's worn list), so it is content and not a table compiled in - a wrong one draws the character without the piece (`docs/game-rules.md` E234) |
 | the chat command surface: the names a player may type, what each takes, and which operation it runs | `worldserver.json`, `CommandsFile`, naming `config/Server/commands.json`. The surface is **content**, so the setting is only where the file is; the rows themselves are data (`docs/decisions/0011-the-command-surface-is-content.md`) |
 | the first administrator account: the login name the client types and the token the portal hands it | `config/Server/admin.json`, the file the login program reads at every start and uses to create the account only when the table states none; the file is the bootstrap and the row is the account (`docs/decisions/0013-the-admin-identity-is-a-file.md`) |

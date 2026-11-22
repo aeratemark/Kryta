@@ -18,6 +18,5 @@ getrandom = "0.2"
 # account repository beside this crate's other nouns reads rows the same way the programs do.
 postgres = "0.19"
 
-[dev-dependencies]
-# The framing test reads a recorded wire session, which is JSONL.
+# The custom title portal route sends the configured public catalog as JSON.
 serde_json = "1"

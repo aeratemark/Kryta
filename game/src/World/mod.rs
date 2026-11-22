@@ -120,6 +120,8 @@ pub struct World {
     operations: std::sync::Arc<crate::chat::operations::Registry>,
     /// The bags, items and profession sets a character-creation screen is built from.
     creation: crate::creation::Tables,
+    /// Captured vanilla title metadata read from this world's pack.
+    titles: crate::characters::titles::VanillaTitles,
     /// Where a character may stand on entry, per map (R13).
     spawns: Vec<crate::maps::MapSpawn>,
     /// Where a portal crossing puts a character, per destination and source map (R21).
@@ -202,6 +204,28 @@ pub fn first_outpost(maps: &[MapEntry], wanted: u32) -> Option<&MapEntry> {
 }
 
 impl World {
+    /// Read this pack's title records before opening the listener.
+    pub fn load_titles(&mut self, path: impl AsRef<std::path::Path>, log: &Log) -> Result<(), String> {
+        let path = path.as_ref();
+        self.titles = crate::characters::titles::VanillaTitles::load(path)
+            .inspect_err(|error| log.out(LogLevel::Error, "server.worldserver", error))?;
+        log.out(
+            LogLevel::Info,
+            "server.worldserver",
+            format!(
+                "Loaded {} title track(s) from {}.",
+                self.titles.track_count(),
+                path.display()
+            ),
+        );
+        Ok(())
+    }
+
+    /// Vanilla titles available to each load in this world.
+    pub fn titles(&self) -> &crate::characters::titles::VanillaTitles {
+        &self.titles
+    }
+
     /// An empty world, before its settings are read.
     pub fn new(realm: u32) -> Self {
         Self {
@@ -210,6 +234,7 @@ impl World {
             commands: crate::chat::commands::Table::empty(),
             operations: std::sync::Arc::new(crate::chat::operations::Registry::new()),
             creation: crate::creation::Tables::default(),
+            titles: crate::characters::titles::VanillaTitles::default(),
             spawns: Vec::new(),
             arrivals: Vec::new(),
             settings: world_config::WorldConfig::default(),
