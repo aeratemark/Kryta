@@ -2,6 +2,26 @@
 
 A GW private server.
 
+## Where the port stands
+
+Kryta is playable from login through character creation to walking a map and meeting other players.
+The live ledger - every row with the test or capture that proves it - is
+[docs/port/01-structure.md](docs/port/01-structure.md); this is the short version.
+
+| area | today |
+|---|---|
+| Login and accounts | file check, version and key exchange, encrypted login, EULA and player status, character list/create/delete, travel hand-off, and the client's own UI layout stored on the account and replayed at the next login |
+| World, maps and movement | 265 map records, outposts and districts, doorways and arrivals, world-map travel, pathfinding over the extracted graphs, click movement and position corrections |
+| Characters and items | starting inventory and equipment, all six item operations (move, equip, unequip, destroy, drop, pickup) through the ported inventory rules and row writes, ground items, experience and levels, titles, unlocks |
+| Party | invite, accept with its merge, decline, withdraw, leave and kick; the load's party section; travel as one with the leader's countdown; `/resign`, the party's defeat and the return to the last outpost |
+| NPCs | definitions and per-map placements read at start-up, a copy's agent table, NPC create/properties/name/model frames and the in-range agent list - the first layer; behaviour, dialogue and fights are still to come |
+| Guilds | the registration window, create, invite, leave and announcement, and the guild block in a load and an introduction |
+| Commands and operations | chat with local delivery, `/tp`, `/maps`, `/stuck`, `/resign`, `/guild`, `/.exp`, `/xp`, `/item`, and the loopback operator API and panel |
+
+Not yet: combat and skills, NPC behaviour, dialogue and quests, vendors, trade and storage, heroes and
+henchmen, party search and difficulty, and the remaining directories listed in
+[docs/port/18-kryta-code-feature-inventory.md](docs/port/18-kryta-code-feature-inventory.md).
+
 ## Requirements
 
 Windows, Rust stable with MSVC build tools, PostgreSQL, Python 3, and a Guild Wars client installation.
