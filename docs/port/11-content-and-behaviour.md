@@ -127,7 +127,11 @@ This is that contract, compared against the recovered ASURA plans and the Azerot
    Lua content it holds. What a script may not do is own a clock - hold an awaiting coroutine, a timer
    or a half-finished sequence across ticks. So the two statements that were once in tension are both
    true under a call contract: Lua declares the tree and decides the leaves it is asked about, while the
-   ticking and the per-agent state are Rust's.
+   ticking and the per-agent state are Rust's. **The NPC half is built:** `game/Behaviour/` now carries
+   ASURA's `Sequence`, `Fallback`, `Wait`, `Stand`, `Patrol` and `Burrow` with their running state and
+   tests (`docs/port/09-parity-audit.md` 7g, N4). The `Script` leaf - the point where a Lua function is
+   called once per agent per tick - and the Lua source that builds it are the part still waiting on
+   step 2 below.
 
 **What step 2 inherits from this**, and must not re-open: the runtime is selected there (lua54, statically
 linked, is what this machine builds - verified by a probe that was reverted, `mlua` with `lua54` and

@@ -67,8 +67,8 @@ screen's conversation", is the frames.
 
 | rule | state | where, and what proves it |
 |---|---|---|
-| R29, R30, R31 what is in a map before anyone arrives | blocked | live initialization captures contain agent-creation observations (`docs/port/12-research-and-control-panel.md`); the map NPC population and its spawn rows are not implemented |
-| R34 the compass range gates spawns and ticks | blocked | needs agents; the range is a setting (`World.CompassRange` 10,000) |
+| R29, R30, R31 what is in a map before anyone arrives | partial | 377 NPC placements load before any player and are seeded from agent id 2 when a copy opens (N3); `patrol` bodies walk, while the pack's Lua script behaviors stand until `game/Scripting/` and its runtime (N4). Spawn rows that appear and respawn later are not implemented (`docs/port/09-parity-audit.md` 7g; live initialization captures in `docs/port/12-research-and-control-panel.md`) |
+| R34 the compass range gates spawns and ticks | partial | the NPC table creates and removes bodies on each client's compass range and ticks a body only while some viewer is inside it (N3-N4); the range is the setting `World.CompassRange` (10,000). Other agent kinds still wait |
 | R43 aggro is a bubble | not started | needs agents |
 | R44 death and the death penalty | not started | `game/Combat/` is a stub |
 | R46 pre-Searing level convention | not started | no levelling beyond the row's `level` 1 |
