@@ -19,6 +19,8 @@ __pycache__/
 # committed; these are copied from them by the operator and never leave the machine.
 /authserver/authserver.json
 /worldserver/worldserver.json
+*.json.bak
+*.json.kryta-cs.bak
 *.pid
 
 # The reference's client archive is never committed

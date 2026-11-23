@@ -460,14 +460,9 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         };
         let (mut stream, mut reading, mut sending) = open_connection(port, version);
 
-        // The block: head, player-data start, the name, the instance's record, the exploration grid
-        // and the instance table - right after the record, which is where a live server sends them
-        // (`ASURA/crates/asura-world/src/map.rs:22-58`).
-        let grid = game::maps::cartography::Grid::empty(
-            game::maps::cartography::TYRIA.0,
-            game::maps::cartography::TYRIA.1,
-        )
-        .frames();
+        // The block: head, player-data start, the name, the instance's record and the instance table
+        // right after the record (`ASURA/crates/asura-world/src/map.rs:49-58`). No exploration grid:
+        // it goes inside the load block, after the morale, where retail sends it.
         let hosted = game::maps::DatabaseMaps::new(Arc::clone(&world_pool), Log::new())
             .load()
             .expect("the maps are readable")
@@ -487,7 +482,6 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             + instance_packets::instance_player_data_start().len()
             + instance_packets::instance_load_player_name(name).len()
             + instance_packets::instance_load_info(1, 148, 0, 1, 0, 0).len()
-            + grid.iter().map(Vec::len).sum::<usize>()
             + table_frames.iter().map(Vec::len).sum::<usize>();
         let mut block = read_exact(&mut stream, block_size);
         reading.apply(&mut block);
@@ -510,28 +504,8 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
             instance_packets::instance_load_info(1, 148, 1, 1, 0, 0).as_slice(),
             "the instance's record: map 148, the explorable byte 1 the reference hardcodes, district 1"
         );
-        // And the grid: the announcement, then one slice of the compressed bands - every band empty,
-        // which is what a character that has explored nothing has.
-        let grid_at = name_at + name_size + 16;
-        assert_eq!(
-            &block[grid_at..grid_at + 2],
-            &[0x8B, 0x00],
-            "the grid's dims"
-        );
-        assert_eq!(
-            &block[grid_at..grid_at + 14],
-            grid[0].as_slice(),
-            "64 x 128 cells and sixteen compressed bytes"
-        );
-        assert_eq!(&block[grid_at + 14..grid_at + 16], &[0x8A, 0x00], "a slice");
         // And the instance table: the destinations the client can resolve, in the batches a load uses.
-        let grid_size = grid.iter().map(Vec::len).sum::<usize>();
-        let table_at = grid_at + grid_size;
-        assert_eq!(
-            &block[grid_at + 14..table_at],
-            grid[1].as_slice(),
-            "the slice is the blob in a counted, fixed array"
-        );
+        let table_at = name_at + name_size + 16;
         assert_eq!(
             &block[table_at..],
             table_frames.concat().as_slice(),
@@ -1347,7 +1321,7 @@ fn a_second_outpost_loads_with_its_own_file_id_and_a_point_of_its_own_list() {
         assert_eq!(
             &block[table_start..table_start + 2],
             &[0xA0, 0x01],
-            "the instance table follows the grid"
+            "the instance table follows the record"
         );
         assert_eq!(block[table_start + 2], 15, "a batch holds fifteen pairs");
         // The pairs are in map-id order, so the first is the lowest record that states a value.
@@ -1698,7 +1672,7 @@ fn a_step_through_ascalon_citys_arch_crosses_to_lakeside_county() {
     let uuid_text = game::characters::uuid_text(&character);
 
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // The load of map 148, named by the version message alone: the outpost, its grid and its table.
+        // The load of map 148, named by the version message alone: the outpost and its table.
         let version = GameVersion {
             version: 39167,
             h0008: 1,

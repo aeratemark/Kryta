@@ -493,8 +493,19 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     // refuses the start, naming the row, rather than a town with half its people
     // (`game/Agents/NpcFile.rs`; `ASURA/crates/asura-world/src/main.rs:403-412`).
     world.load_npcs(&world_pack, &log)?;
-    // Which placements' trees this world can build now. The Lua script entries wait for
-    // `game/Scripting/`; they are named here and stand until then (`docs/port/09-parity-audit.md` 7g).
+    // What each NPC offers: merchants, collectors and Xunlai storage (`vendors.json`,
+    // `game/Maps/VendorPack.rs`). A file that does not check refuses the start (`AGENTS.md`, rule 7).
+    world.load_vendors(&world_pack, &log)?;
+    // What each NPC says and what its choices do: the pack's Lua runtime and dialogs
+    // (`scripts/runtime.lua`, `dialogs/*.lua`; `game/Scripting/NpcScripts.rs`, decision 0019). One file
+    // that does not load or check refuses the start, naming it (`AGENTS.md`, rule 7).
+    world.load_dialogs(&world_pack, &log)?;
+    // The skill pack (`skills.json`, `combat.json`, `attributes.json`), the skill scripts each row
+    // names (`skills/<name>.lua`) and the fight's numbers (`creatures.json`). One missing or
+    // malformed file refuses the start, naming it (`AGENTS.md`, rule 7).
+    world.load_skills(&world_pack, &log)?;
+    // Every placement's tree builds: `load_npcs` already refused the pack otherwise, with the Lua
+    // behavior source (`npcs/behaviors.lua`) in force (`docs/port/09-parity-audit.md` 7g).
     world.report_npc_behaviors(&log);
     log.out(
         LogLevel::Info,

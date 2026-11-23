@@ -80,7 +80,7 @@ impl WorldSession {
             &bags,
             self.world.item_catalogue(),
             &[op],
-            wearer(sheet),
+            self.wearer_for(sheet),
         ) {
             Ok(Ok(applied)) => {
                 self.say(
@@ -90,18 +90,13 @@ impl WorldSession {
                         applied.changes
                     ),
                 );
-                let (mut own, others) =
-                    placement_frames(&applied.changes, self.agent_id(), false);
+                let (mut own, others) = placement_frames(&applied.changes, self.agent_id(), false);
                 if applied
                     .changes
                     .iter()
                     .any(|change| matches!(change, Change::Worn { .. }))
                 {
-                    own.push(equipment_frame(
-                        self.agent_id(),
-                        &applied.rows,
-                        &bags,
-                    ));
+                    own.push(equipment_frame(self.agent_id(), &applied.rows, &bags));
                 }
                 self.deliver(io, peer, crypt, own, others, "the item's new place")
                     .await;
@@ -177,7 +172,7 @@ impl WorldSession {
             &bags,
             self.world.item_catalogue(),
             &[Op::Equip { item: item_id }],
-            wearer(sheet),
+            self.wearer_for(sheet),
         ) {
             Ok(Ok(applied)) => {
                 self.say(
@@ -266,7 +261,7 @@ impl WorldSession {
             &bags,
             self.world.item_catalogue(),
             &[op],
-            wearer(sheet),
+            self.wearer_for(sheet),
         ) {
             Ok(Ok(applied)) => {
                 self.say(
@@ -358,7 +353,7 @@ impl WorldSession {
             &bags,
             self.world.item_catalogue(),
             &[Op::Destroy { item: item_id }],
-            wearer(sheet),
+            self.wearer_for(sheet),
         ) {
             Ok(Ok(applied)) => {
                 self.say(
@@ -511,7 +506,7 @@ impl WorldSession {
             &bags,
             Some(catalogue),
             &[Op::Insert { entry }],
-            wearer(sheet),
+            self.wearer_for(sheet),
             std::slice::from_ref(&row),
         ) {
             Ok(Ok(applied)) => {
@@ -685,7 +680,7 @@ impl WorldSession {
             &bags,
             self.world.item_catalogue(),
             &[op],
-            wearer(sheet),
+            self.wearer_for(sheet),
         ) {
             Ok(Ok(applied)) => {
                 let remaining = applied
@@ -828,9 +823,9 @@ impl WorldSession {
         };
         // Claimed before any await, so two players cannot both pick it up
         // (`ASURA/crates/asura-world/src/item.rs:601-605`).
-        let Some(ground) =
-            self.world
-                .take_ground_item(self.map_id(), self.district(), agent_id)
+        let Some(ground) = self
+            .world
+            .take_ground_item(self.map_id(), self.district(), agent_id)
         else {
             self.say(
                 LogLevel::Debug,
@@ -863,7 +858,7 @@ impl WorldSession {
             &bags,
             catalogue,
             &ground,
-            wearer(sheet),
+            self.wearer_for(sheet),
         );
         match result {
             Ok(Ok(applied)) => {
@@ -891,7 +886,10 @@ impl WorldSession {
                         }
                         Change::Inserted { item, at } => {
                             own.push(item_packets::item_move_to_location(
-                                ITEM_STREAM, item, at.0, at.1,
+                                ITEM_STREAM,
+                                item,
+                                at.0,
+                                at.1,
                             ));
                         }
                         _ => {}
@@ -961,15 +959,9 @@ fn pick_up(
             into: source,
             count: ground.item.quantity,
         };
-        if let Ok(applied) = item_ops::commit(
-            characters,
-            uuid,
-            rows,
-            bags,
-            catalogue,
-            &[merge],
-            wearer,
-        )? {
+        if let Ok(applied) =
+            item_ops::commit(characters, uuid, rows, bags, catalogue, &[merge], wearer)?
+        {
             return Ok(Ok(applied));
         }
     }
@@ -1024,15 +1016,6 @@ fn drop_allowed(kind: Option<u8>) -> bool {
     kind == Some(crate::world::map_kind::EXPLORABLE)
 }
 
-/// Who is wearing the equipment: the character's primary profession, and no Xunlai window open
-/// (this tree has no storage window yet, which is what `storage_open: false` means).
-fn wearer(sheet: &CharacterSheet) -> Wearer {
-    Wearer {
-        primary_profession: sheet.profession,
-        storage_open: false,
-    }
-}
-
 /// The character's rows, or a log line and `None` when they cannot be read.
 fn item_ops_rows(
     characters: &DatabaseCharacters,
@@ -1045,7 +1028,9 @@ fn item_ops_rows(
         Err(error) => {
             session.say(
                 LogLevel::Warn,
-                format!("Gameplay connection from {peer}: the character's items cannot be read: {error}"),
+                format!(
+                    "Gameplay connection from {peer}: the character's items cannot be read: {error}"
+                ),
             );
             None
         }
@@ -1068,7 +1053,10 @@ fn placement_frames(
     for change in changes {
         match *change {
             Change::Moved { item, to, .. } => own.push(item_packets::item_change_location(
-                ITEM_STREAM, item, to.0, to.1,
+                ITEM_STREAM,
+                item,
+                to.0,
+                to.1,
             )),
             Change::Quantity { item, quantity } => {
                 own.push(item_packets::item_update_quantity(item, quantity));
@@ -1095,10 +1083,7 @@ fn placement_frames(
 /// `UPDATE_AGENT_VISUAL_EQUIPMENT` for this character: the nine ids the agent is drawn wearing, read
 /// out of the rows the operation left (`ASURA/crates/asura-world/src/item.rs:1031-1033`).
 fn equipment_frame(agent: u32, rows: &[HeldItem], bags: &[Bag]) -> Vec<u8> {
-    misc_packets::update_agent_visual_equipment(
-        agent,
-        item_ops::equipped_item_ids(rows, bags),
-    )
+    misc_packets::update_agent_visual_equipment(agent, item_ops::equipped_item_ids(rows, bags))
 }
 
 /// The frames that put a client's own copy of the item back where the rules say it is
@@ -1107,7 +1092,10 @@ fn snap_back(rows: &[HeldItem], item_id: u32) -> Vec<Vec<u8>> {
     item_ops::snap_back(rows, item_id)
         .map(|(bag, slot)| {
             vec![item_packets::item_change_location(
-                ITEM_STREAM, item_id, bag, slot,
+                ITEM_STREAM,
+                item_id,
+                bag,
+                slot,
             )]
         })
         .unwrap_or_default()
@@ -1187,12 +1175,7 @@ impl WorldSession {
         if !others.is_empty()
             && let Ok(peers) = self.peers.lock()
         {
-            peers.broadcast(
-                self.player_id(),
-                self.map_id(),
-                self.district(),
-                &others,
-            );
+            peers.broadcast(self.player_id(), self.map_id(), self.district(), &others);
         }
         if !own.is_empty() {
             self.send(io, peer, crypt, &own, what).await;
@@ -1202,7 +1185,7 @@ impl WorldSession {
 
 #[cfg(test)]
 mod tests {
-    use super::{grant_key, grant_request};    // `ASURA/crates/asura-world/src/item.rs:1284-1290`.
+    use super::{grant_key, grant_request}; // `ASURA/crates/asura-world/src/item.rs:1284-1290`.
     #[test]
     fn an_item_name_may_contain_spaces_and_an_optional_quantity() {
         assert_eq!(grant_request("skale fin"), Some(("skale fin", 1)));

@@ -20,6 +20,21 @@
 //! Reference: `ScriptMgr::SetScriptLoader`, `SetModulesLoader`, `Initialize`, `Unload`,
 //! `OnWorldUpdate`, `OnStartup`, `OnShutdown`.
 
+/// Skill scripts: the Lua host the skill engine asks what a skill does
+/// (`docs/decisions/0016-skills-are-lua-scripts.md`).
+#[path = "SkillScripts.rs"]
+pub mod skill_scripts;
+
+/// NPC behaviour scripts: the Lua source that builds a pack's behavior trees and runs their script
+/// leaves (`npcs/behaviors.lua`; `ASURA/crates/asura-world/src/npc/lua.rs`).
+#[path = "NpcBehaviors.rs"]
+pub mod npc_behaviors;
+
+/// NPC scripts: the Lua host that runs the pack's `scripts/runtime.lua` and `dialogs/*.lua` - which
+/// page a talk opens, what a choice does (`docs/decisions/0019-npc-and-quest-logic-is-lua.md`).
+#[path = "NpcScripts.rs"]
+pub mod npc_scripts;
+
 use std::collections::BTreeMap;
 use std::time::Duration;
 

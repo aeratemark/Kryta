@@ -26,6 +26,8 @@ pub struct CharacterSheet {
     pub uuid: [u8; 16],
     /// The gold it carries (R45).
     pub gold: u32,
+    /// The gold its Xunlai storage holds (`data/sql/base/db_characters/0014-storage-gold.sql`).
+    pub gold_storage: u32,
     /// The packed look the client builds the model from, or 0 when the row records none.
     pub appearance: u32,
     /// The campaigns this character has finished, as bit 0 Prophecies, bit 1 Factions, bit 2
@@ -61,6 +63,7 @@ impl CharacterSheet {
             secondary_profession: 0,
             uuid,
             gold: 0,
+            gold_storage: 0,
             appearance: 0,
             campaigns_finished: 0,
             last_outpost: 148,

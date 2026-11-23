@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use common::logging::{Log, LogLevel};
 use database::database::{DatabaseWorkerPool, Param};
 
-use crate::characters::{Character, CharacterSettings, uuid_bytes};
+use crate::characters::{ArmourPiece, Character, CharacterSettings, PIECE_SLOTS, uuid_bytes};
 use crate::creation::Inventory;
 
 /// `BagModelId_EquippedItems` (`GmInventory.h`): the bag whose slots are the nine worn items.
@@ -185,18 +185,50 @@ pub enum RowChange {
         /// The whole row.
         item: HeldItem,
     },
+    /// The carried gold goes from `from` to `to`, written only while the row still holds `from`
+    /// (`ASURA/crates/asura-db/src/inventory.rs:1090-1095`).
+    Gold {
+        /// The balance the operation was decided on.
+        from: u32,
+        /// The balance it leaves.
+        to: u32,
+    },
+    /// The gold in storage goes from `from` to `to`, checked the same way
+    /// (`ASURA/crates/asura-db/src/inventory.rs:1096-1102`).
+    StorageGold {
+        /// The balance the operation was decided on.
+        from: u32,
+        /// The balance it leaves.
+        to: u32,
+    },
 }
 
 /// The character database, as a program uses it.
 pub struct DatabaseCharacters {
     pool: Arc<Mutex<DatabaseWorkerPool>>,
     log: Log,
+    /// The bag a character wears things in, from the world's creation content: the login list's
+    /// settings block carries that bag's armour pieces. `None` is a caller that does not draw a
+    /// character list (the world's own item work), and then no pieces are read.
+    equipped_bag: Option<u16>,
 }
 
 impl DatabaseCharacters {
     /// A source that asks this pool.
     pub fn new(pool: Arc<Mutex<DatabaseWorkerPool>>, log: Log) -> Self {
-        Self { pool, log }
+        Self {
+            pool,
+            log,
+            equipped_bag: None,
+        }
+    }
+
+    /// The bag a character wears things in, when the caller knows it from the world's content
+    /// (`crate::creation::equipped_bag_id`). The login list needs it: without it every character is
+    /// sent with no armour pieces and the client draws them all naked at character select.
+    pub fn with_equipped_bag(mut self, bag: Option<u16>) -> Self {
+        self.equipped_bag = bag;
+        self
     }
 
     /// Every character of the account the portal identified, read as the list needs them.
@@ -541,7 +573,7 @@ impl DatabaseCharacters {
                  \"gold\"::bigint, \"appearance\"::bigint, \"level\"::bigint, \
                  \"unlocked_professions\"::bigint, \"prophecies_finished\", \"factions_finished\", \
                  \"nightfall_finished\", \"last_outpost\", \"experience\"::bigint, \
-                 \"skill_points\"::bigint, \"skill_points_total\"::bigint \
+                 \"skill_points\"::bigint, \"skill_points_total\"::bigint, \"gold_storage\"::bigint \
                  FROM \"characters\" WHERE \"uuid\" = $1",
                 vec![Param::Text(uuid.to_string())],
             ),
@@ -584,6 +616,7 @@ impl DatabaseCharacters {
                 experience: row.get::<usize, i64>(12).clamp(0, i64::from(u32::MAX)) as u32,
                 skill_points: row.get::<usize, i64>(13).clamp(0, i64::from(u32::MAX)) as u32,
                 skill_points_total: row.get::<usize, i64>(14).clamp(0, i64::from(u32::MAX)) as u32,
+                gold_storage: row.get::<usize, i64>(15).clamp(0, i64::from(u32::MAX)) as u32,
             })
             .unwrap_or(missing)
     }
@@ -713,7 +746,8 @@ impl DatabaseCharacters {
             ),
             Err(_) => {
                 return Err(
-                    "the character database pool is poisoned; no exploration can be read".to_string(),
+                    "the character database pool is poisoned; no exploration can be read"
+                        .to_string(),
                 );
             }
         };
@@ -961,7 +995,9 @@ impl DatabaseCharacters {
         self.log.out(
             LogLevel::Error,
             "server.characters",
-            format!("{uuid}'s inventory does not hold together ({error}); the operation is refused"),
+            format!(
+                "{uuid}'s inventory does not hold together ({error}); the operation is refused"
+            ),
         );
     }
 
@@ -1008,6 +1044,26 @@ impl DatabaseCharacters {
                         Param::Integer(i64::from(*item_id)),
                     ],
                 )),
+                // `ASURA/crates/asura-db/src/inventory.rs:1173-1197`: the column is set only where it still
+                // holds the balance the operation was decided on.
+                RowChange::Gold { from, to } | RowChange::StorageGold { from, to } => {
+                    let column = if matches!(change, RowChange::Gold { .. }) {
+                        "gold"
+                    } else {
+                        "gold_storage"
+                    };
+                    statements.push((
+                        format!(
+                            "UPDATE \"characters\" SET \"{column}\" = $1 \
+                             WHERE \"uuid\" = $2 AND \"{column}\" = $3"
+                        ),
+                        vec![
+                            Param::Integer(i64::from(*to)),
+                            Param::Text(uuid.to_string()),
+                            Param::Integer(i64::from(*from)),
+                        ],
+                    ));
+                }
                 RowChange::Insert { item } => statements.push((
                     INSERT_HELD_ITEM.to_string(),
                     vec![
@@ -1421,6 +1477,49 @@ impl DatabaseCharacters {
             .collect())
     }
 
+    /// The five armour pieces the character-list settings block carries: the equipped bag's slots
+    /// 2..=6, in the reference's order - body, legs, head, boots, gloves.
+    ///
+    /// Ported from `ASURA/crates/asura-db/src/game.rs:344-356` (`settings`) and
+    /// `asura-db/src/inventory.rs:163-176` (`item_in_equipped_slot`). The slot numbers are the
+    /// reference's `EquippedItemSlot` (`GmInventory.h`): 2 body, 3 legs, 4 head, 5 boots, 6 gloves;
+    /// this tree's `config/World/Vanilla/creation/worn_slots.json` names the same cells by kind.
+    /// The file id and the dye colours are the item's own, truncated as the reference truncates
+    /// them (`GameSrv.c:1903`).
+    fn pieces_worn_by(&self, uuid: &str) -> Vec<ArmourPiece> {
+        let Some(bag_id) = self.equipped_bag else {
+            return Vec::new();
+        };
+        let held = match self.items_of(uuid) {
+            Ok(held) => held,
+            Err(error) => {
+                // A list whose armour could not be read still arrives: the client gets the row it
+                // already knows (undressed) rather than no character at all, which is what the
+                // working implementation does (`ASURA/crates/asura-auth/src/lib.rs:826-834`).
+                self.log.out(
+                    LogLevel::Error,
+                    "server.characters",
+                    format!("Cannot read the armour of {uuid} for the character list: {error}"),
+                );
+                return Vec::new();
+            }
+        };
+        let mut pieces = Vec::with_capacity(PIECE_SLOTS);
+        for slot in 2..=6u8 {
+            let Some(item) = held
+                .iter()
+                .find(|item| item.bag_id == bag_id && item.slot == slot)
+            else {
+                continue;
+            };
+            pieces.push(ArmourPiece {
+                file_id: (item.file_id & 0xFFFF) as u16,
+                colors: item.dye_colors,
+            });
+        }
+        pieces
+    }
+
     /// One row, as the list reads it.
     fn character(&self, row: &postgres::Row) -> Option<Character> {
         let uuid_text: String = row.get("uuid");
@@ -1456,10 +1555,10 @@ impl DatabaseCharacters {
                 is_pvp: row.get("is_pvp"),
                 secondary_profession: secondary as u8,
                 helm_status: helm as u8,
-                // The armour pieces are the equipped bag's, and this tree has no items yet: a
-                // character wearing nothing sends five empty slots, which is what the reference's
-                // own record does.
-                pieces: Vec::new(),
+                // The armour pieces are the equipped bag's rows, derived on every read exactly as the
+                // working implementation does (`ASURA/crates/asura-db/src/game.rs:344-356`), not
+                // denormalised onto the character row.
+                pieces: self.pieces_worn_by(&uuid_text),
             },
         })
     }
@@ -1557,6 +1656,70 @@ mod tests {
             "the list carries a whole settings block, whatever the character wears"
         );
 
+        // The armour the login list draws: the equipped bag's five garment slots, derived from the
+        // item rows on every read (`ASURA/crates/asura-db/src/game.rs:344-356`). A character whose
+        // rows name pieces must not be sent to character select naked.
+        let equipped =
+            crate::creation::equipped_bag_id("../config/World/Vanilla/creation/inventory.json")
+                .expect("the creation inventory reads")
+                .expect("the content names an equipped bag");
+        {
+            let mut pool = pool.lock().unwrap();
+            for (slot, file_id) in [
+                (2u8, 0x1234u32),
+                (3, 0x2345),
+                (4, 0x3456),
+                (5, 0x4567),
+                (6, 0x5678),
+            ] {
+                pool.query_with(
+                    "INSERT INTO \"item_instance\" (\"character_uuid\", \"file_id\", \"dye_colors\", \"item_id\", \"bag_id\", \"slot\") \
+                     VALUES ($1, $2, $3, $4, $5, $6)",
+                    &[
+                        &uuid,
+                        &i64::from(file_id),
+                        &11i64,
+                        &(1000 + i64::from(slot)),
+                        &i64::from(equipped),
+                        &i64::from(slot),
+                    ],
+                )
+                .unwrap();
+            }
+        }
+        let dressed = DatabaseCharacters {
+            pool: Arc::clone(&source.pool),
+            log: Log::new(),
+            equipped_bag: Some(equipped),
+        };
+        let characters = dressed.for_account(account);
+        assert_eq!(
+            characters[0].settings.pieces,
+            vec![
+                ArmourPiece {
+                    file_id: 0x1234,
+                    colors: 11
+                },
+                ArmourPiece {
+                    file_id: 0x2345,
+                    colors: 11
+                },
+                ArmourPiece {
+                    file_id: 0x3456,
+                    colors: 11
+                },
+                ArmourPiece {
+                    file_id: 0x4567,
+                    colors: 11
+                },
+                ArmourPiece {
+                    file_id: 0x5678,
+                    colors: 11
+                },
+            ],
+            "the five pieces are the equipped bag's rows, in body-legs-head-boots-gloves order"
+        );
+
         // And a different account's characters are not in it.
         assert!(
             source
@@ -1589,6 +1752,11 @@ mod tests {
 
         {
             let mut pool = pool.lock().unwrap();
+            pool.query_with(
+                "DELETE FROM \"item_instance\" WHERE \"character_uuid\" = $1",
+                &[&uuid],
+            )
+            .unwrap();
             pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&uuid])
                 .unwrap();
         }
@@ -1791,7 +1959,9 @@ mod tests {
             "the row keeps the words the model produced"
         );
         assert_eq!(
-            source.exploration(uuid, 2).expect("another continent is read"),
+            source
+                .exploration(uuid, 2)
+                .expect("another continent is read"),
             None,
             "a continent the character never explored has no row"
         );
@@ -1852,5 +2022,112 @@ fn hex_digit(digit: u8) -> Result<u8, String> {
         b'a'..=b'f' => Ok(digit - b'a' + 10),
         b'A'..=b'F' => Ok(digit - b'A' + 10),
         _ => Err(format!("'{}' is not a hex digit", digit as char)),
+    }
+}
+
+/// A character's skills as plain numbers: learned ids, the eight (skill, copy) slots and one rank per
+/// attribute index (`character_skills`, `data/sql/base/db_characters/0013-character-skills.sql`).
+///
+/// Ported from `ASURA/crates/asura-db/src/skills.rs:1-85` (`Profile`, `profile`, `save`). Ids and ranks only:
+/// what a skill is lives in the pack (`config/World/Vanilla/skills.json` and its Lua scripts).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SkillProfile {
+    /// Learned skill ids.
+    pub learned: Vec<u32>,
+    /// The eight (skill, copy) slots, slot 0 first.
+    pub bar: [(u32, u32); 8],
+    /// One rank per attribute index; may be shorter than the attribute count.
+    pub ranks: Vec<u8>,
+}
+
+/// A comma list, the form an integer array crosses the worker as (`array_to_string`).
+fn comma_list(text: &str) -> Vec<i64> {
+    text.split(',')
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.trim().parse().ok())
+        .collect()
+}
+
+fn comma_text(values: impl Iterator<Item = i64>) -> String {
+    values.map(|value| value.to_string()).collect::<Vec<_>>().join(",")
+}
+
+impl DatabaseCharacters {
+    /// The character's skills row, or `None` when it has none yet - a new character. ASURA `skills.rs:35-63`.
+    pub fn skill_profile(&self, uuid: &str) -> Result<Option<SkillProfile>, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "SELECT array_to_string(\"learned\", ','), array_to_string(\"bar_skills\", ','), \
+                 array_to_string(\"bar_copies\", ','), array_to_string(\"ranks\", ',') \
+                 FROM \"character_skills\" WHERE \"character_uuid\" = $1",
+                vec![Param::Text(uuid.to_string())],
+            ),
+            Err(_) => {
+                return Err(
+                    "the character database pool is poisoned; no skills can be read".to_string(),
+                );
+            }
+        };
+        let rows = match reply.recv() {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(error)) => return Err(format!("the skills row cannot be read: {error}")),
+            Err(_) => {
+                return Err(
+                    "the character database answered no query: it is shutting down".to_string(),
+                );
+            }
+        };
+        let Some(row) = rows.first() else {
+            return Ok(None);
+        };
+        let column = |index: usize| -> Vec<i64> { comma_list(&row.get::<_, String>(index)) };
+        let (learned, skills, copies, ranks) = (column(0), column(1), column(2), column(3));
+        let mut bar = [(0u32, 0u32); 8];
+        for (slot, entry) in bar.iter_mut().enumerate() {
+            let skill = skills.get(slot).and_then(|id| u32::try_from(*id).ok()).unwrap_or(0);
+            let copy = copies.get(slot).and_then(|id| u32::try_from(*id).ok()).unwrap_or(0);
+            *entry = (skill, copy);
+        }
+        Ok(Some(SkillProfile {
+            learned: learned.iter().filter_map(|id| u32::try_from(*id).ok()).collect(),
+            bar,
+            ranks: ranks.iter().map(|rank| u8::try_from(*rank).unwrap_or(0)).collect(),
+        }))
+    }
+
+    /// Store the whole skills row, replacing what was there. ASURA `skills.rs:65-85`.
+    pub fn record_skill_profile(&self, uuid: &str, profile: &SkillProfile) -> Result<bool, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "INSERT INTO \"character_skills\" \
+                 (\"character_uuid\", \"learned\", \"bar_skills\", \"bar_copies\", \"ranks\") \
+                 VALUES ($1, string_to_array($2, ',')::integer[], string_to_array($3, ',')::integer[], \
+                         string_to_array($4, ',')::integer[], string_to_array($5, ',')::smallint[]) \
+                 ON CONFLICT (\"character_uuid\") DO UPDATE SET \
+                 \"learned\" = EXCLUDED.\"learned\", \"bar_skills\" = EXCLUDED.\"bar_skills\", \
+                 \"bar_copies\" = EXCLUDED.\"bar_copies\", \"ranks\" = EXCLUDED.\"ranks\", \
+                 \"updated_at\" = now() RETURNING 1",
+                vec![
+                    Param::Text(uuid.to_string()),
+                    Param::Text(comma_text(profile.learned.iter().map(|id| i64::from(*id)))),
+                    Param::Text(comma_text(profile.bar.iter().map(|slot| i64::from(slot.0)))),
+                    Param::Text(comma_text(profile.bar.iter().map(|slot| i64::from(slot.1)))),
+                    Param::Text(comma_text(profile.ranks.iter().map(|rank| i64::from(*rank)))),
+                ],
+            ),
+            Err(_) => {
+                return Err(
+                    "the character database pool is poisoned; the skills were not recorded"
+                        .to_string(),
+                );
+            }
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(!rows.is_empty()),
+            Ok(Err(error)) => Err(format!("the skills were not recorded: {error}")),
+            Err(_) => {
+                Err("the character database answered no query: it is shutting down".to_string())
+            }
+        }
     }
 }

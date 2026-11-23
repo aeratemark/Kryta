@@ -171,15 +171,7 @@ impl Tables {
         let inventory_path = inventory_path.as_ref();
         if inventory_path.exists() {
             let document = Document::read(inventory_path).map_err(|error| error.to_string())?;
-            for record in document.records("bags")? {
-                tables.bags.push(Bag {
-                    id: number(&record, "bag_id")? as u16,
-                    model: number(&record, "model")? as u8,
-                    kind: number(&record, "type")? as u8,
-                    slots: number(&record, "slots")? as u8,
-                    assoc_item: number(&record, "assoc_item")? as u32,
-                });
-            }
+            tables.bags = read_bags(&document)?;
             for record in document.records("items")? {
                 tables.items.push(item(&record, None, None)?);
             }
@@ -488,6 +480,14 @@ pub fn inventory_block(inventory: &Inventory) -> Vec<Vec<u8>> {
 /// four times, `0x0141`, then `0x00EA` to `0x00ED`. A map load carries no player-data end (`0x018A`):
 /// the reference sends the creation screen's wrapper and a map's stream do not share it.
 pub fn load_item_stream(inventory: &Inventory, gold: u32) -> Vec<Vec<u8>> {
+    load_item_stream_purse(inventory, gold, 0)
+}
+
+/// [`load_item_stream`] with the stored gold as well. The gold is as the live server sends it: the
+/// carried gold (`0x0140`) and then the stored gold (`0x0141`), each only when it is not 0, after the
+/// weapon sets (`ASURA/crates/asura-world/src/item.rs:72-85`; preforged records 472025-472026). This
+/// tree sent the carried gold as `0x0141`, which the client shows as storage gold.
+pub fn load_item_stream_purse(inventory: &Inventory, gold: u32, stored: u32) -> Vec<Vec<u8>> {
     let mut frames = vec![
         item_packets::item_stream_create(item_packets::ITEM_STREAM, 0),
         item_packets::item_set_active_weapon_set(item_packets::ITEM_STREAM, 0),
@@ -501,10 +501,18 @@ pub fn load_item_stream(inventory: &Inventory, gold: u32) -> Vec<Vec<u8>> {
             0,
         ));
     }
-    frames.push(item_packets::update_gold_storage(
-        item_packets::ITEM_STREAM,
-        gold,
-    ));
+    if gold != 0 {
+        frames.push(crate::server::packets::vendor_packets::gold_character_add(
+            item_packets::ITEM_STREAM,
+            gold,
+        ));
+    }
+    if stored != 0 {
+        frames.push(crate::server::packets::vendor_packets::gold_storage_add(
+            item_packets::ITEM_STREAM,
+            stored,
+        ));
+    }
     for header in [
         character_packets::FACTION_MAX_KURZICK,
         character_packets::FACTION_MAX_LUXON,
@@ -611,6 +619,32 @@ pub fn equipped_bag(tables: &Tables) -> Option<&Bag> {
     tables.bags.iter().find(|bag| bag.kind == BAG_EQUIPPED)
 }
 
+/// The id of the bag a character wears things in, read from the creation inventory alone.
+///
+/// The login's character list carries each character's armour pieces in its settings block
+/// (`0x0007`), and they are the equipped bag's (`ASURA/crates/asura-db/src/game.rs:344-356`). This
+/// tree's bags are content rather than rows, so the program that builds the list reads the one file
+/// that names them; it is the same file `worldserver.json`'s `InventoryFile` names.
+///
+/// A missing file is an error, as every content reader's is: a login list with no equipped bag is
+/// every character naked at character select. A file with no `BagType_Equipped` bag answers `None`,
+/// and a world with no equipped bag draws its characters with nothing on - which is what its content
+/// says.
+pub fn equipped_bag_id(path: impl AsRef<std::path::Path>) -> Result<Option<u16>, String> {
+    let path = path.as_ref();
+    if !path.exists() {
+        return Err(format!(
+            "no creation inventory at {}: the character list cannot be told which bag a character wears its armour in",
+            path.display()
+        ));
+    }
+    let document = Document::read(path).map_err(|error| error.to_string())?;
+    Ok(read_bags(&document)?
+        .into_iter()
+        .find(|bag| bag.kind == BAG_EQUIPPED)
+        .map(|bag| bag.id))
+}
+
 /// An item as `CREATE_NAMED_ITEM` carries it.
 pub fn named_item(item: &Item) -> item_packets::NamedItem {
     item_packets::NamedItem {
@@ -636,6 +670,21 @@ fn number(record: &common::configuration::json::Record<'_>, field: &str) -> Resu
         .required(field)?
         .parse()
         .map_err(|_| format!("{}: '{}' is not a number", record.at(), field))
+}
+
+/// The bags a creation inventory document lists, in its own order.
+fn read_bags(document: &Document) -> Result<Vec<Bag>, String> {
+    let mut bags = Vec::new();
+    for record in document.records("bags")? {
+        bags.push(Bag {
+            id: number(&record, "bag_id")? as u16,
+            model: number(&record, "model")? as u8,
+            kind: number(&record, "type")? as u8,
+            slots: number(&record, "slots")? as u8,
+            assoc_item: number(&record, "assoc_item")? as u32,
+        });
+    }
+    Ok(bags)
 }
 
 /// One item row, with the bag and slot it is placed in when the row states them.
@@ -699,6 +748,23 @@ mod tests {
             &log,
         )
         .expect_err("a world with no creation inventory does not start");
+        assert!(error.contains("does-not-exist"), "{error}");
+    }
+
+    /// The login list draws each character's armour from this bag, so the bag is the content's own and
+    /// not a number in the auth program (`ASURA/crates/asura-db/src/game.rs:344-356`).
+    #[test]
+    fn the_equipped_bag_is_the_inventory_files_own() {
+        let bag = equipped_bag_id("../config/World/Vanilla/creation/inventory.json")
+            .expect("the inventory reads")
+            .expect("the content names an equipped bag");
+        assert_eq!(bag, 5, "bag 5 is the one with type 2 and model 21");
+    }
+
+    #[test]
+    fn a_missing_inventory_is_refused_when_the_equipped_bag_is_asked_for() {
+        let error = equipped_bag_id("../config/World/Vanilla/creation/does-not-exist.json")
+            .expect_err("a list with no bag content does not start");
         assert!(error.contains("does-not-exist"), "{error}");
     }
 

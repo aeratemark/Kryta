@@ -167,6 +167,10 @@ pub const AGENT_KILL_REWARD: u16 = 0x00EE;
 /// `ASURA/crates/asura-protocol/src/game/skill.rs:30-31`).
 pub const ATTRIBUTE_EXPERIENCE: u32 = 0;
 
+/// The attribute id a morale change rides: `0x00EE [10, -15]` on the death tick and
+/// `[10, +n]` on a boost (`E95`, `E110`; `ASURA/crates/asura-protocol/src/game/skill.rs:32`).
+pub const ATTRIBUTE_MORALE: u32 = 10;
+
 /// `0x00EE`: one player attribute's delta. Attribute 0 is experience; the client applies `+=` to the
 /// sheet, which is what makes the experience bar move without re-sending the whole `0x00E9` block.
 ///

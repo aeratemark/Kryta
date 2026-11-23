@@ -70,12 +70,10 @@ impl MapArea {
         if bounds[2] <= bounds[0] || bounds[3] <= bounds[1] {
             return None;
         }
-        let cell_x = ((f64::from(self.rect[0])
-            + (f64::from(x) - f64::from(bounds[0])) / 96.0)
+        let cell_x = ((f64::from(self.rect[0]) + (f64::from(x) - f64::from(bounds[0])) / 96.0)
             / 32.0)
             .floor();
-        let cell_y = ((f64::from(self.rect[1])
-            + (f64::from(bounds[3]) - f64::from(y)) / 96.0)
+        let cell_y = ((f64::from(self.rect[1]) + (f64::from(bounds[3]) - f64::from(y)) / 96.0)
             / 32.0)
             .floor();
         if cell_x < 0.0 || cell_y < 0.0 {
@@ -237,10 +235,7 @@ impl Cartography {
                 )
                 .is_some()
             {
-                return Err(format!(
-                    "{}: map {map_id} is stated twice",
-                    path.display()
-                ));
+                return Err(format!("{}: map {map_id} is stated twice", path.display()));
             }
         }
 
@@ -444,7 +439,10 @@ impl Grid {
 
     /// How many cells are explored.
     pub fn explored(&self) -> usize {
-        self.words.iter().map(|word| word.count_ones() as usize).sum()
+        self.words
+            .iter()
+            .map(|word| word.count_ones() as usize)
+            .sum()
     }
 
     /// A 3 x 3 cover of the explored cells inside `rect` (the loaded map's footprint), one centre
@@ -505,9 +503,9 @@ impl Grid {
             // An all-fogged band is an empty header: the client memsets its bitmap to zero before
             // the stream runs, so no bytes mean all-fog under every reading, and it is the shape
             // seven of ArenaNet's own eight bands carry.
-            if (first..last).all(|index| {
-                self.words[(index / 32) as usize] & (1u32 << (index % 32)) == 0
-            }) {
+            if (first..last)
+                .all(|index| self.words[(index / 32) as usize] & (1u32 << (index % 32)) == 0)
+            {
                 out.extend_from_slice(&[0, 0]);
                 continue;
             }
@@ -546,9 +544,9 @@ impl Grid {
             }
             let length = u16::from_le_bytes([stream[at], stream[at + 1]]) as usize;
             at += 2;
-            let end = at.checked_add(length).ok_or_else(|| {
-                format!("band {band}'s length {length} runs past the stream")
-            })?;
+            let end = at
+                .checked_add(length)
+                .ok_or_else(|| format!("band {band}'s length {length} runs past the stream"))?;
             if end > stream.len() {
                 return Err(format!(
                     "band {band}'s length {length} runs past the stream"
@@ -624,8 +622,14 @@ impl Grid {
 }
 
 fn words_for(width: u32, height: u32) -> usize {
-    debug_assert!(width % 32 == 0, "the client asserts the grid width is a multiple of 32");
-    debug_assert!(height % BAND_ROWS == 0, "the band format has no partial band");
+    debug_assert!(
+        width % 32 == 0,
+        "the client asserts the grid width is a multiple of 32"
+    );
+    debug_assert!(
+        height % BAND_ROWS == 0,
+        "the band format has no partial band"
+    );
     ((u64::from(width) * u64::from(height)) / 32) as usize
 }
 
@@ -674,7 +678,11 @@ mod tests {
     fn an_empty_grid_is_the_eight_empty_band_headers() {
         let grid = Grid::empty(TYRIA.0, TYRIA.1);
         let blob = grid.encode();
-        assert_eq!(blob, vec![0u8; 8 * 2], "eight empty bands, two zero bytes each");
+        assert_eq!(
+            blob,
+            vec![0u8; 8 * 2],
+            "eight empty bands, two zero bytes each"
+        );
         let decoded = Grid::decode(&blob, TYRIA.0, TYRIA.1).expect("decodes");
         assert_eq!(decoded, grid);
         assert_eq!(grid.explored(), 0);
@@ -683,9 +691,19 @@ mod tests {
     #[test]
     fn the_retail_stream_decodes_to_the_blocks_the_client_proved() {
         let grid = Grid::decode(&retail_stream(), 64, 128).expect("the retail stream decodes");
-        assert_eq!(grid.explored(), 55, "55 cells under Preforged's fog-first +1 rule");
-        assert!(grid.is_set(30, 24), "(30,24) is set - marking it changed 0 px");
-        assert!(!grid.is_set(26, 22), "(26,22) is clear - marking it revealed 1,059 px");
+        assert_eq!(
+            grid.explored(),
+            55,
+            "55 cells under Preforged's fog-first +1 rule"
+        );
+        assert!(
+            grid.is_set(30, 24),
+            "(30,24) is set - marking it changed 0 px"
+        );
+        assert!(
+            !grid.is_set(26, 22),
+            "(26,22) is clear - marking it revealed 1,059 px"
+        );
     }
 
     /// The client sniffer's own non-empty creation stream, after its 8-byte header/count. The
@@ -701,7 +719,11 @@ mod tests {
             .collect();
         assert_eq!(stream.len(), 44);
         let grid = Grid::decode(&stream, 256, 192).expect("the live stream decodes");
-        assert_eq!(grid.explored(), 9, "the stream's only non-empty band has nine cells");
+        assert_eq!(
+            grid.explored(),
+            9,
+            "the stream's only non-empty band has nine cells"
+        );
         // Preforged writes full bands, so its encoder does not reproduce this server's empty-band
         // stream; the decoder still has to read it, which is what a captured stream needs.
     }
@@ -792,7 +814,11 @@ mod tests {
         );
         assert_eq!(frames.len(), 2, "the announcement and one slice");
         assert_eq!(&frames[1][..2], &[0x8A, 0x00]);
-        assert_eq!(frames[1].len(), 260, "a u16 count and the fixed 64-slot array");
+        assert_eq!(
+            frames[1].len(),
+            260,
+            "a u16 count and the fixed 64-slot array"
+        );
         assert_eq!(
             u16::from_le_bytes([frames[1][2], frames[1][3]]),
             4,
@@ -804,15 +830,13 @@ mod tests {
     fn the_mark_is_the_eleven_byte_wire_frame() {
         let mark = crate::server::packets::instance_packets::cartography_mark(30, 24, 1);
         assert_eq!(&mark[..2], &[0x8C, 0x00]);
-        assert_eq!(mark.len(), 11, "the client sniffer's 16-byte struct is not the wire");
         assert_eq!(
-            u32::from_le_bytes([mark[2], mark[3], mark[4], mark[5]]),
-            30
+            mark.len(),
+            11,
+            "the client sniffer's 16-byte struct is not the wire"
         );
-        assert_eq!(
-            u32::from_le_bytes([mark[6], mark[7], mark[8], mark[9]]),
-            24
-        );
+        assert_eq!(u32::from_le_bytes([mark[2], mark[3], mark[4], mark[5]]), 30);
+        assert_eq!(u32::from_le_bytes([mark[6], mark[7], mark[8], mark[9]]), 24);
         assert_eq!(mark[10], 1, "the half-span byte: one mark reveals 3 x 3");
     }
 
@@ -821,15 +845,19 @@ mod tests {
         let carto = shipped();
         assert_eq!(carto.grids().len(), 9, "nine continents");
         assert_eq!(carto.maps().len(), 492, "every map with a usable rect");
-        let with_bounds = carto.maps().values().filter(|area| area.bounds.is_some()).count();
-        assert_eq!(with_bounds, 31, "the maps whose source bounds this archive still has");
+        let with_bounds = carto
+            .maps()
+            .values()
+            .filter(|area| area.bounds.is_some())
+            .count();
+        assert_eq!(
+            with_bounds, 31,
+            "the maps whose source bounds this archive still has"
+        );
         let area = carto.area(148).expect("Ascalon City has an area");
         assert_eq!(area.continent, 1);
         assert_eq!(area.rect, [768, 512, 1184, 1024]);
-        assert_eq!(
-            area.bounds,
-            Some([-18432.0, -24576.0, 21504.0, 24576.0])
-        );
+        assert_eq!(area.bounds, Some([-18432.0, -24576.0, 21504.0, 24576.0]));
         let dims = carto.dims(148);
         assert_eq!(dims, (64, 128));
         assert_eq!(

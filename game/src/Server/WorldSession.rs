@@ -139,6 +139,20 @@ const CLIENT_DISCONNECT: u16 = 0x8008;
 /// `GAME_CMSG_EQUIP_ITEM` (`0x8030`): the item to wear.
 const CLIENT_EQUIP_ITEM: u16 = 0x8030;
 
+// The skill family's requests (`ASURA/crates/asura-protocol/src/game/skill.rs:340-449`). Both use
+// messages carry a skill, its copy, a target and a call byte; the bar edits carry the client's own
+// placement; the attribute edits carry the attribute window's request.
+const CLIENT_USE_SKILL: u16 = 0x8046;
+const CLIENT_USE_ATTACK_SKILL: u16 = 0x8027;
+const CLIENT_ATTACK_AGENT: u16 = 0x8026;
+const CLIENT_SKILLBAR_SKILL_SET: u16 = 0x805C;
+const CLIENT_SKILLBAR_LOAD: u16 = 0x805D;
+const CLIENT_SKILLBAR_SKILL_REPLACE: u16 = 0x805E;
+const CLIENT_SKILLBAR_SKILL_MOVE: u16 = 0x805F;
+const CLIENT_ATTRIBUTE_DECREASE: u16 = 0x800E;
+const CLIENT_ATTRIBUTE_INCREASE: u16 = 0x800F;
+const CLIENT_ATTRIBUTE_LOAD: u16 = 0x8010;
+
 /// The client's movement reports: `0x803D` carries the direction as well, `0x803E` the point a walk is
 /// asked for, `0x8047` the stopping point of a cancel, and `0x8028` the cancel itself.
 const CLIENT_MOVE_TO_COORD_WITH_DIR: u16 = 0x803D;
@@ -197,7 +211,10 @@ pub struct WorldSession {
     pub(crate) arrivals: Vec<crate::maps::Arrival>,
     /// The character this connection is playing, as the version message named it: what the saved
     /// position and the last outpost are written for.
-    character: std::sync::Mutex<Option<[u8; 16]>>,
+    pub(crate) character: std::sync::Mutex<Option<[u8; 16]>>,
+    /// The character's row as the load read it: the professions and level a skill answer states.
+    /// `None` before a map begins.
+    pub(crate) sheet: std::sync::Mutex<Option<CharacterSheet>>,
     /// Where a claimed travel says the receiving map puts this character, when it was a doorway
     /// crossing: the load stands it there and faces it along the arrival, rather than scattering it
     /// around a spawn point (R13/R21).
@@ -228,6 +245,9 @@ pub struct WorldSession {
     /// The player's own agent: where the client says it is. The client moves it; the world keeps
     /// what it reports, which is what a later load or a second client would be told.
     agent: std::sync::Mutex<Option<crate::agents::Agent>>,
+    /// The character's skills: what it has learned, its bar and its ranks. Read from its row at the
+    /// load and written back by every bar or attribute edit (`game/Characters/Skills.rs`).
+    pub(crate) skills: std::sync::Mutex<crate::skills::Loadout>,
     /// The bags, items and profession sets a creation screen is built from, when the program read them.
     pub(crate) creation: Option<crate::creation::Tables>,
     /// The item templates the world holds, so a load can resolve a character's held items.
@@ -283,6 +303,14 @@ pub struct WorldSession {
     /// `/.exp` has changed it since (`ASURA/crates/asura-world/src/player.rs:489-492`, `traits`). `None`
     /// until a map load reads the row (`Handlers/CharacterHandler.rs`, `answer_experience`).
     pub(crate) progress: std::sync::Mutex<Option<crate::characters::experience::Progress>>,
+    /// The NPC window this connection has open and the ids each NPC's window declared
+    /// (`ASURA/crates/asura-world/src/vendor/mod.rs:64-76`; `Handlers/NpcHandler.rs`).
+    pub(crate) vendor: std::sync::Mutex<crate::handlers::npc::Windows>,
+    /// The walk to an agent this player is in (`Movement/Approach.rs`); `None` when it is not.
+    pub(crate) approach: std::sync::Mutex<Option<crate::movement::approach::Approach>>,
+    /// The carried and the stored gold as trades have left them; `None` until the sheet is first read
+    /// (`Handlers/NpcHandler.rs`, `purse`).
+    pub(crate) purse: std::sync::Mutex<Option<(u32, u32)>>,
 }
 
 impl WorldSession {
@@ -306,6 +334,7 @@ impl WorldSession {
             portals: std::sync::Arc::clone(world.portals()),
             arrivals: world.arrivals().to_vec(),
             character: std::sync::Mutex::new(None),
+            sheet: std::sync::Mutex::new(None),
             landing: std::sync::Mutex::new(None),
             portal: std::sync::Mutex::new(PortalStep::default()),
             exploration: std::sync::Mutex::new(None),
@@ -314,6 +343,7 @@ impl WorldSession {
             districts: world.districts(),
             entered: std::sync::Mutex::new(None),
             agent: std::sync::Mutex::new(None),
+            skills: std::sync::Mutex::new(crate::skills::Loadout::default()),
             agent_id: std::sync::Mutex::new(None),
             creation: Some(world.creation().clone()),
             templates: world.templates().to_vec(),
@@ -326,6 +356,9 @@ impl WorldSession {
             unanswered: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             guild: std::sync::Mutex::new(None),
             progress: std::sync::Mutex::new(None),
+            vendor: std::sync::Mutex::new(crate::handlers::npc::Windows::default()),
+            approach: std::sync::Mutex::new(None),
+            purse: std::sync::Mutex::new(None),
         }
     }
 
@@ -452,6 +485,31 @@ impl WorldSession {
             .unwrap_or_default()
     }
 
+    /// The skills a load draws: the character's own row when it has one, and a new character's empty
+    /// loadout otherwise (`ASURA/crates/asura-world/src/skill/character.rs:63-73`, `load`). A row
+    /// that cannot be read costs the bar for one session, not the session.
+    fn load_skills(&self, sheet: &CharacterSheet) -> crate::skills::Loadout {
+        let Some(pool) = self.characters.as_ref() else {
+            return crate::skills::Loadout::default();
+        };
+        let characters = crate::characters::DatabaseCharacters::new(
+            std::sync::Arc::clone(pool),
+            self.log.clone(),
+        );
+        match characters.skill_profile(&crate::characters::uuid_text(&sheet.uuid)) {
+            Ok(profile) => crate::skills::Loadout::from_profile(profile),
+            Err(error) => {
+                self.say(
+                    LogLevel::Warn,
+                    format!(
+                        "The character's skills cannot be read ({error}); the bar starts empty."
+                    ),
+                );
+                crate::skills::Loadout::default()
+            }
+        }
+    }
+
     /// The bags this world's content gives a character, or none when the world read no creation data.
     /// The item templates this world read at start-up: what an item's kind and slot come from.
     pub(crate) fn item_templates(&self) -> &[crate::data_stores::ItemDefinition] {
@@ -496,7 +554,7 @@ impl WorldSession {
     /// client that got no answer asks again. Logging every arrival made one stuck ask into the whole
     /// log (`docs/port/03-tracing.md`); the count is kept beside the first sighting, and later sightings
     /// are a `Trace` line, below both the console and the default log file.
-    fn report_unanswered(&self, peer: &str, header: u16, what: &str, bytes: usize) {
+    pub(crate) fn report_unanswered(&self, peer: &str, header: u16, what: &str, bytes: usize) {
         let mut unanswered = match self.unanswered.lock() {
             Ok(unanswered) => unanswered,
             Err(_) => return,
@@ -851,13 +909,13 @@ impl WorldSession {
                     0,
                 ),
             ];
-            // The exploration grid, right after the instance's record: that is where a live server
-            // sends it, once per instance (`ASURA/crates/asura-world/src/map.rs:22-48`), and a client
-            // without it asserts on its own world map the first time the map view opens
-            // (`GmMapView.cpp(1731)`, client build 39112). The bits are the character's own saved
-            // exploration for the continent this map is on (`config/World/Vanilla/cartography.json`).
-            let (grid_frames, grid_dims, explored) = self.begin_exploration(map.id, sheet.uuid);
-            frames.extend(grid_frames);
+            // The exploration grid is not sent here, beside the instance's record, where ASURA sent it
+            // (`ASURA/crates/asura-world/src/map.rs:22-48`): sent here, this client drew the HUD bars
+            // empty. It goes inside the load block after the morale, where retail sends it
+            // (`player::splice_exploration_grid`). Every load still carries it, which the client's
+            // world map needs (`GmMapView.cpp(1731)`, client build 39112). The bits are the character's
+            // own saved exploration for the continent (`config/World/Vanilla/cartography.json`).
+            let (_, grid_dims, explored) = self.begin_exploration(map.id, sheet.uuid);
             // And the destinations it can resolve, in the batches a load uses - the working
             // implementation sends these in the same phase (`ASURA/crates/asura-world/src/map.rs:49-58`).
             let (table, notes) = crate::maps::instance_table::table_for(&self.maps);
@@ -1336,6 +1394,15 @@ impl WorldSession {
         // idempotent second call, kept so the load block and the entry point cannot get a later one.
         self.draw_player_id(sheet.uuid);
         let inventory = self.load_inventory(sheet);
+        // The character's row, kept for the skill answers, and its loadout, read once for the load's
+        // bar, learned set and attribute snapshot (`ASURA/crates/asura-world/src/skill/character.rs`).
+        if let Ok(mut stored) = self.sheet.lock() {
+            *stored = Some(sheet.clone());
+        }
+        let loadout = self.load_skills(sheet);
+        if let Ok(mut skills) = self.skills.lock() {
+            *skills = loadout.clone();
+        }
         // The instant the last tick went out, so the next one carries how long it really has been.
         let mut last_tick = std::time::Instant::now();
         let mut loaded = false;
@@ -1406,7 +1473,8 @@ impl WorldSession {
             direction,
             appearance,
             equipped,
-            gold: sheet.gold,
+            gold: self.purse(sheet).0,
+            gold_storage: self.purse(sheet).1,
             profession: sheet.profession,
             unlocked_professions: sheet.unlocked_professions,
             campaigns_finished: sheet.campaigns_finished,
@@ -1714,11 +1782,27 @@ impl WorldSession {
                             others.iter().map(|peer| peer.player_id).collect::<Vec<_>>()
                         );
                         let mut frames = Vec::with_capacity(40);
+                        // The character's own skill numbers replace the reference's constants when
+                        // the pack is read: attribute points, bar, learned set, the snapshot and the
+                        // maxima (`ASURA/crates/asura-world/src/skill/character.rs:134-199`).
+                        let skill_load = self
+                            .world
+                            .skills()
+                            .map(|pack| crate::characters::skills::SkillLoad::of(&loadout, sheet, pack));
                         let mut block = state.load_block(
                             &self.settings,
                             load_ms,
                             &unlocked,
                             self.world.titles(),
+                            skill_load.as_ref(),
+                        );
+                        // The exploration grid, where retail sends it: after the morale, inside the
+                        // vitals block (`maps-live-20261123-022154.jsonl` seq 653-655, 1940-1943,
+                        // 2306-2310). Still the empty grid; the saved blocks follow as marks.
+                        let dims = self.world.cartography().dims(map.id);
+                        crate::agents::player::splice_exploration_grid(
+                            &mut block,
+                            crate::maps::cartography::Grid::empty(dims.0, dims.1).frames(),
                         );
                         // The party state every live load ends with, before its finish, and the
                         // player's own party as the table has it in place of the block's party of one
@@ -1791,6 +1875,34 @@ impl WorldSession {
                                 others.iter().map(|other| other.player_id).collect();
                             frames.extend(crate::parties::in_map_notices(party, player, &entered));
                         }
+                        // The character joins its district's fight with its loadout, its equipping
+                        // and its vitals (`ASURA/crates/asura-world/src/skill/character.rs:204-215`,
+                        // `enter_combat`). The agents the load introduced are the fight's bodies.
+                        if !map.is_creation()
+                            && let Some(pack) = self.world.skills()
+                        {
+                            let worn: Vec<(u8, Vec<u32>)> = inventory
+                                .equipped_items()
+                                .iter()
+                                .map(|item| (item.item_type, item.modifiers.clone()))
+                                .collect();
+                            let spec = crate::skills::player_spec(
+                                &loadout,
+                                sheet.level,
+                                sheet.profession,
+                                sheet.secondary_profession,
+                                &worn,
+                                pack,
+                            );
+                            self.world.combat_join(
+                                map.id,
+                                self.district(),
+                                agent,
+                                player,
+                                spec,
+                                position,
+                            );
+                        }
                         let count = frames.len();
                         self.send(
                             io,
@@ -1848,6 +1960,36 @@ impl WorldSession {
                         }
                         loaded = true;
                     }
+                    // The skill family: using a skill, putting an attack on a foe, the four bar edits
+                    // and the attribute window's three requests. Each is its own handler in
+                    // `game/Handlers/SkillHandler.rs`, ported from ASURA's `skill/character.rs`.
+                    CLIENT_USE_SKILL | CLIENT_USE_ATTACK_SKILL => {
+                        self.answer_use_skill(io, peer, &message, crypt).await;
+                    }
+                    CLIENT_ATTACK_AGENT => {
+                        self.answer_attack_agent(io, peer, &message, crypt).await;
+                    }
+                    CLIENT_SKILLBAR_SKILL_SET => {
+                        self.answer_skillbar_set(io, peer, &message, crypt).await;
+                    }
+                    CLIENT_SKILLBAR_LOAD => {
+                        self.answer_skillbar_load(io, peer, &message, crypt).await;
+                    }
+                    CLIENT_SKILLBAR_SKILL_REPLACE => {
+                        self.answer_skillbar_swap(io, peer, &message, crypt).await;
+                    }
+                    CLIENT_SKILLBAR_SKILL_MOVE => {
+                        self.answer_skillbar_move(io, peer, &message, crypt).await;
+                    }
+                    CLIENT_ATTRIBUTE_INCREASE => {
+                        self.answer_attribute_increase(io, peer, &message, crypt).await;
+                    }
+                    CLIENT_ATTRIBUTE_DECREASE => {
+                        self.answer_attribute_decrease(io, peer, &message, crypt).await;
+                    }
+                    CLIENT_ATTRIBUTE_LOAD => {
+                        self.answer_attribute_load(io, peer, &message, crypt).await;
+                    }
                     // ASURA crates/asura-protocol/src/packets.rs:422-423,772 supplies the layouts.
                     // Retail login-unfiltered-9292 seq 659-661 replies with the selected rank.
                     // Preforged packets-1360-15821281.jsonl:36252 shows rank zero for no title.
@@ -1898,10 +2040,14 @@ impl WorldSession {
                     // implementation's own (`ASURA/crates/asura-world/src/agent.rs`): `0x803E` asks for
                     // a walk, `0x803D` reports where the client is and the direction it is walking in,
                     // `0x8028` cancels, and `0x8047` is the stopping point a cancel carries.
+                    // A click, the keyboard or a stop is the player moving by itself: any walk to an
+                    // agent is over (`ASURA/crates/asura-world/src/dispatch.rs:44-66`).
                     CLIENT_MOVE_TO_COORD => {
+                        self.forget_approach();
                         self.answer_move_to_coord(io, peer, &message, crypt).await;
                     }
                     CLIENT_MOVE_TO_COORD_WITH_DIR => {
+                        self.forget_approach();
                         self.answer_position_update(io, peer, &message, crypt).await;
                         // The step the report moved the agent along, checked against the map's own
                         // walls (`ASURA/crates/asura-world/src/dispatch.rs:44-54`).
@@ -1910,6 +2056,7 @@ impl WorldSession {
                         }
                     }
                     CLIENT_CANCEL_MOVEMENT => {
+                        self.forget_approach();
                         self.answer_cancel_movement(io, peer, crypt).await;
                     }
                     CLIENT_LAST_POS_BEFORE_MOVE_CANCELED => {
@@ -1974,6 +2121,15 @@ impl WorldSession {
                         self.answer_chat_message(io, peer, &message, crypt, sheet)
                             .await;
                     }
+                    // What one party member shows the others: a stroke drawn on the compass, and a
+                    // called target (`ASURA/crates/asura-world/src/compass.rs`, dispatched by its
+                    // `dispatch.rs:135-137`).
+                    misc_packets::CLIENT_DRAW_MAP => {
+                        self.answer_draw_map(peer, &message, sheet);
+                    }
+                    misc_packets::CLIENT_TARGET_CALL => {
+                        self.answer_target_call(peer, &message, sheet);
+                    }
                     // The guild panel and the registration window
                     // (`ASURA/crates/asura-world/src/dispatch.rs:116-129`; `Handlers/GuildHandler.rs`).
                     guild_packets::CLIENT_GUILD_CREATE if loaded => {
@@ -2022,6 +2178,32 @@ impl WorldSession {
                     // bag, with whatever was worn there taken off to the first free carrying slot - and
                     // the agent's worn items sent again, which is the one thing the client cannot work
                     // out for itself (`ASURA/crates/asura-world/src/item.rs:314-436`).
+                    // A walk to an agent, a trade in an NPC's window and a gold move at Xunlai
+                    // (`ASURA/crates/asura-world/src/dispatch.rs:82-84`, `:222-229`;
+                    // `Handlers/NpcHandler.rs`).
+                    crate::server::packets::vendor_packets::INTERACT_LIVING if loaded => {
+                        self.answer_interact_living(peer, &message);
+                    }
+                    crate::server::packets::vendor_packets::INTERACT_PLAYER if loaded => {
+                        self.answer_interact_player(peer, &message);
+                    }
+                    crate::server::packets::vendor_packets::TRANSACT_ITEMS
+                    | crate::server::packets::vendor_packets::BUY_MATERIALS
+                        if loaded =>
+                    {
+                        self.answer_transaction(io, peer, crypt, &message, sheet)
+                            .await;
+                    }
+                    crate::server::packets::vendor_packets::CHANGE_GOLD if loaded => {
+                        self.answer_change_gold(io, peer, crypt, &message, sheet)
+                            .await;
+                    }
+                    // A dialog choice (`ASURA/crates/asura-world/src/dispatch.rs:230-231`,
+                    // `Handlers/NpcHandler.rs` `answer_send_dialog`).
+                    crate::server::packets::dialog_packets::SEND_DIALOG if loaded => {
+                        self.answer_send_dialog(io, peer, crypt, &message, sheet)
+                            .await;
+                    }
                     CLIENT_EQUIP_ITEM => {
                         self.answer_equip_item(io, peer, &message, crypt, sheet)
                             .await;
@@ -2064,6 +2246,19 @@ impl WorldSession {
                         // pushed to the connection and served before anything else, as `portal_inbox` is in
                         // `connection.rs:498-502`.
                         let (crossed, walk) = self.step_map(elapsed);
+                        // This player's walk to an agent, steered on where the target stands now; what
+                        // it says goes to everyone in the copy (`ASURA/crates/asura-world/src/instance.rs:830-837`).
+                        let (approached, arrived) = self.steer_approach(elapsed);
+                        if !approached.is_empty()
+                            && let Ok(peers) = self.peers.lock()
+                        {
+                            peers.broadcast(
+                                self.player_id(),
+                                self.map_id(),
+                                self.district(),
+                                &approached,
+                            );
+                        }
                         let mut frames = vec![misc_packets::world_simulation_tick(
                             u32::try_from(elapsed.as_millis()).unwrap_or(u32::MAX),
                         )];
@@ -2101,15 +2296,38 @@ impl WorldSession {
                                 self.player_id(),
                                 position,
                             ));
+                            // The copy's fight: on its own clock, once per period, by whichever
+                            // connection reaches it first. Its messages go to the whole copy, not to
+                            // this tick's frames, because another client may be the one that draws
+                            // them (`game/Districts/Combat.rs`).
+                            self.world.combat_tick(map_id, district, now);
+                            // A party whose members are all down tells its clock and rises
+                            // (`game/World/mod.rs`, `death_tick`; `E105`-`E106`).
+                            self.world.death_tick(map_id, district, now);
+                            // E114: the risen body's own copy moves to the shrine with the
+                            // client's, and the corpse's walk records retire.
+                            if let Some(standing) = self.world.take_placement(self.player_id()) {
+                                self.with_agent(|agent| {
+                                    agent.adopt_exact(standing.position, standing.plane);
+                                    agent.facing = standing.direction;
+                                    agent.stand_still();
+                                });
+                            }
                         }
                         // The tick is periodic, so its report is routine: one line per connection per
                         // `World.SimulationTickMs` at `Info` was the whole of a flowing log.
+                        frames.extend(approached);
                         self.send_quiet(io, peer, crypt, &frames, "a tick").await;
                         if let Some((from, to)) = crossed {
                             // The travelling body leaves the map it is in: the clock that crossed it has
                             // already been announced, then the transfer is served.
                             self.cross_portal(io, peer, crypt, sheet, from, to).await;
                             return;
+                        }
+                        // At the NPC: this connection answers the talk
+                        // (`ASURA/crates/asura-world/src/instance.rs:949-956`, `Order::Talk`).
+                        if let Some(npc) = arrived {
+                            self.talk(io, peer, crypt, sheet, npc).await;
                         }
                     }
                 }
@@ -2531,6 +2749,7 @@ impl WorldSession {
         {
             self.world
                 .release_agent(map_id, district, self.player_id(), agent);
+            self.world.combat_leave(map_id, district, agent);
         }
         let session = self.session_token.lock().ok().and_then(|token| *token);
         if let Ok(mut peers) = self.peers.lock() {
@@ -2821,7 +3040,10 @@ mod tests {
         let session = WorldSession::new(log, &Arc::new(world));
         let (frames, dims, explored) = session.begin_exploration(148, [0u8; 16]);
         assert_eq!(dims, (64, 128), "Ascalon City is on Tyria's grid");
-        assert_eq!(explored, 0, "a character with no saved row starts all-fogged");
+        assert_eq!(
+            explored, 0,
+            "a character with no saved row starts all-fogged"
+        );
         assert_eq!(&frames[0][..2], &[0x8B, 0x00], "the announcement");
         assert_eq!(
             u32::from_le_bytes([frames[0][2], frames[0][3], frames[0][4], frames[0][5]]),
@@ -2832,9 +3054,7 @@ mod tests {
             128
         );
         assert_eq!(
-            u32::from_le_bytes([
-                frames[0][10], frames[0][11], frames[0][12], frames[0][13]
-            ]),
+            u32::from_le_bytes([frames[0][10], frames[0][11], frames[0][12], frames[0][13]]),
             16,
             "eight empty bands"
         );
@@ -3499,13 +3719,8 @@ Logger.root = 6,Console
         let mut reading = common::cryptography::Arc4::new(&key);
         let mut sending = common::cryptography::Arc4::new(&key);
 
-        // 3. The head block: load head, player-data start, the name, the instance's record, and the
-        // exploration grid a live server sends right after it.
-        let grid = crate::maps::cartography::Grid::empty(
-            crate::maps::cartography::TYRIA.0,
-            crate::maps::cartography::TYRIA.1,
-        )
-        .frames();
+        // 3. The head block: load head, player-data start, the name and the instance's record. No
+        // exploration grid: it goes inside the load block, after the morale, where retail sends it.
         let mut expected = vec![
             instance_packets::instance_load_head(),
             instance_packets::instance_player_data_start(),
@@ -3514,7 +3729,6 @@ Logger.root = 6,Console
             // (`ASURA/crates/asura-world/src/map.rs:76-86`, `load_info_explorable`).
             instance_packets::instance_load_info(1, 148, 0, 1, 0, 0),
         ];
-        expected.extend(grid);
         // And the instance table: one batch, because this world's one map with a value states it.
         let (table, notes) = crate::maps::instance_table::table_for(world.maps());
         assert!(
@@ -3537,7 +3751,7 @@ Logger.root = 6,Console
             .collect();
         assert_eq!(
             headers,
-            vec![0x017C, 0x0186, 0x017D, 0x019A, 0x008B, 0x008A, 0x01A0]
+            vec![0x017C, 0x0186, 0x017D, 0x019A, 0x01A0]
         );
 
         // 4. The ping pair the measured load follows the head block with.
@@ -3586,9 +3800,10 @@ Logger.root = 6,Console
             .iter()
             .map(|frame| u16::from_le_bytes([frame[0], frame[1]]))
             .collect();
+        // `0x0141` (stored gold) is sent only when the character has some: the live server's rule,
+        // which `Creation::load_item_stream_purse` keeps, and this character has none.
         for header in [
-            0x0144, 0x0148, 0x0147, 0x0141, 0x00EA, 0x00ED, 0x0070, 0x0030, 0x0099, 0x01AC, 0x0199,
-            0x0198,
+            0x0144, 0x0148, 0x0147, 0x00EA, 0x00ED, 0x0070, 0x0030, 0x0099, 0x01AC, 0x0199, 0x0198,
         ] {
             assert!(
                 headers.contains(&header),
@@ -4241,13 +4456,9 @@ Logger.root = 6,Console
         let mut sending = common::cryptography::Arc4::new(&key);
 
         // 3. The block: the outpost's load, not the creation instance's, with the record's district
-        // and language, and the character's own name. The block carries the exploration grid and the
-        // instance table after the instance's record, so it is read frame by frame up to the table.
-        let grid = crate::maps::cartography::Grid::empty(
-            crate::maps::cartography::TYRIA.0,
-            crate::maps::cartography::TYRIA.1,
-        )
-        .frames();
+        // and language, and the character's own name. The block carries the instance table after the
+        // instance's record (the exploration grid goes inside the load block), so it is read frame by
+        // frame up to the table.
         let (table, notes) = crate::maps::instance_table::table_for(world.maps());
         assert!(
             notes.is_empty(),
@@ -4259,7 +4470,6 @@ Logger.root = 6,Console
             instance_packets::instance_load_player_name("Travelled One"),
             instance_packets::instance_load_info(1, 148, 1, 3, 2, 0),
         ];
-        expected.extend(grid);
         expected.extend(table.frames());
         let expected_bytes: usize = expected.iter().map(Vec::len).sum();
         let mut block = vec![0u8; expected_bytes];
@@ -4944,18 +5154,12 @@ Logger.root = 6,Console
         let mut reading = common::cryptography::Arc4::new(&key);
         let mut sending = common::cryptography::Arc4::new(&key);
 
-        let grid = crate::maps::cartography::Grid::empty(
-            crate::maps::cartography::TYRIA.0,
-            crate::maps::cartography::TYRIA.1,
-        )
-        .frames();
         // The instance table closes the block, and this test's world states one value (map 148's).
         let (table, _) = crate::maps::instance_table::table_for(world.maps());
         let block_size = instance_packets::instance_load_head().len()
             + instance_packets::instance_player_data_start().len()
             + instance_packets::instance_load_player_name("Ununlocked One").len()
             + instance_packets::instance_load_info(1, 147, 1, 1, 0, 0).len()
-            + grid.iter().map(Vec::len).sum::<usize>()
             + table.frames().iter().map(Vec::len).sum::<usize>();
         let mut block = vec![0u8; block_size];
         client.read_exact(&mut block).unwrap();

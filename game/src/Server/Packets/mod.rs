@@ -10,6 +10,8 @@ pub mod agent_packets;
 pub mod character_packets;
 #[path = "ChatPackets.rs"]
 pub mod chat_packets;
+#[path = "DialogPackets.rs"]
+pub mod dialog_packets;
 #[path = "GuildPackets.rs"]
 pub mod guild_packets;
 #[path = "InstancePackets.rs"]
@@ -22,8 +24,12 @@ pub mod misc_packets;
 pub mod npc_packets;
 #[path = "PartyPackets.rs"]
 pub mod party_packets;
+#[path = "SkillPackets.rs"]
+pub mod skill_packets;
 #[path = "TitlePackets.rs"]
 pub mod title_packets;
+#[path = "VendorPackets.rs"]
+pub mod vendor_packets;
 
 pub use instance_packets::{
     CHAR_CREATION_START, INSTANCE_LOAD_HEAD, INSTANCE_PLAYER_DATA_DONE, INSTANCE_PLAYER_DATA_START,

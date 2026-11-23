@@ -85,6 +85,11 @@ pub struct WorldConfig {
     /// stops where the server believes it is and nothing goes on the wire, so the client is never
     /// ordered backwards.
     pub max_allowed_correction: f32,
+    /// How near a player walks to an agent it interacts with or follows (`0x8039`, `0x8033`) before the
+    /// server stops it, in game units: ASURA's `config/Server/movement.json`, `interact_range`, 50 -
+    /// inside the 62 units at which the live server still sent a walk
+    /// (`ASURA/crates/asura-config/src/lib.rs:269-283`). Chosen, not measured.
+    pub interact_range: f32,
     /// What the `is_explorable` field of a redirect carries (`0x01A6`), as
     /// `ASURA/crates/asura-world/src/travel.rs:21-69` decides it.
     ///
@@ -141,6 +146,7 @@ impl Default for WorldConfig {
             agent_speed: 288.0,
             appearance: 0x0310_0000,
             max_allowed_correction: 250.0,
+            interact_range: 50.0,
             travel_explorable: TravelExplorable::Zero,
             point_box_half_extent: 250.0,
             starting_outpost: 148,
@@ -260,6 +266,7 @@ impl WorldConfig {
             "MaxAllowedCorrection",
             settings.max_allowed_correction,
         )?;
+        settings.interact_range = number(config, "InteractRange", settings.interact_range)?;
         // What a redirect's `is_explorable` carries. `travel.rs:33-69` reads the same three words from
         // `ASURA_TRAVEL_EXPLORABLE`; here it is the program's file (rule 7), with the same default.
         let (travel_explorable, _) = config

@@ -186,6 +186,37 @@ impl WorldSession {
                         self.answer_grant_item(io, peer, crypt, sheet, &argument)
                             .await;
                     }
+                    crate::chat::operations::Outcome::Skill { argument } => {
+                        self.answer_skill_command(io, peer, &argument, crypt).await;
+                    }
+                    // The operator's three tests of the death cycle (ours, not ASURA's): they act on
+                    // the caller's own agent and the fight answers with the measured death and rise
+                    // batches (`game/Combat/`, `game/Districts/Combat.rs`).
+                    crate::chat::operations::Outcome::Damage { amount } => {
+                        self.world.combat_hurt(
+                            self.map_id(),
+                            self.district(),
+                            self.agent_id(),
+                            amount,
+                        );
+                    }
+                    crate::chat::operations::Outcome::Kill => {
+                        self.world.combat_kill(
+                            self.map_id(),
+                            self.district(),
+                            self.agent_id(),
+                        );
+                    }
+                    crate::chat::operations::Outcome::Revive => {
+                        if let Some(position) = self.with_agent(|agent| agent.position) {
+                            self.world.combat_revive(
+                                self.map_id(),
+                                self.district(),
+                                self.agent_id(),
+                                position,
+                            );
+                        }
+                    }
                 }
             }
             other => {
@@ -263,6 +294,9 @@ impl WorldSession {
         let me = self.player_id();
         let map_id = self.map_id();
         let district = self.district();
+        // A resign resets the death penalty (`E12`), even before the return load clears the copy.
+        self.world
+            .combat_clear_penalty(map_id, district, self.agent_id());
         let party_id = match self.world.parties().lock() {
             Ok(mut parties) => {
                 let table = parties.table(map_id, district);

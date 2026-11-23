@@ -53,6 +53,8 @@ pub(crate) struct Player {
     pub equipped: [u32; 9],
     /// The gold the character carries (R45: gold is per character).
     pub gold: u32,
+    /// The gold its Xunlai storage holds.
+    pub gold_storage: u32,
     pub profession: u8,
     pub unlocked_professions: u32,
     /// Bit 0 Prophecies, bit 1 Factions, bit 2 Nightfall: a finished campaign unlocks hard mode.
@@ -76,7 +78,7 @@ impl Player {
         inventory: &crate::creation::Inventory,
         map: &crate::world::MapEntry,
     ) -> Vec<Vec<u8>> {
-        let mut frames = crate::creation::load_item_stream(inventory, self.gold);
+        let mut frames = crate::creation::load_item_stream_purse(inventory, self.gold, self.gold_storage);
         // `0x0070`: hard mode is a campaign completion reward. A character that has finished any of
         // Prophecies, Factions or Nightfall has the normal/hard toggle; one that has finished none
         // does not. Pre-Searing is not a special case in the protocol - a character who has finished
@@ -132,6 +134,7 @@ impl Player {
         load_ms: u32,
         unlocked: &[u32],
         titles: &crate::characters::titles::VanillaTitles,
+        skills: Option<&crate::characters::skills::SkillLoad>,
     ) -> Vec<Vec<u8>> {
         let agent = self.agent;
         let player = self.player;
@@ -180,7 +183,14 @@ impl Player {
             unlocked,
         ]));
         frames.push(misc_packets::instance_loaded(PLAYER_TEAM_TOKEN));
-        frames.push(agent_packets::agent_update_attribute_points(agent, 50, 50));
+        // The character's own attribute points when the skill pack is read; the reference's 50/50
+        // otherwise (`ASURA/crates/asura-world/src/skill/character.rs:137-145`).
+        let (free, total) = skills
+            .map(|skills| skills.attribute_points)
+            .unwrap_or((50, 50));
+        frames.push(agent_packets::agent_update_attribute_points(
+            agent, free, total,
+        ));
         frames.push(character_packets::player_update_profession(
             agent,
             self.profession,
@@ -191,10 +201,34 @@ impl Player {
             agent,
             self.unlocked_professions,
         ));
+        // The character's own bar: eight skill ids and eight copy indices, as the skill pack holds
+        // them (`ASURA/crates/asura-world/src/skill/character.rs:186-189`).
+        let bar = skills.map(|skills| skills.bar).unwrap_or(crate::skills::EMPTY_BAR);
+        let bar_ids: Vec<u32> = bar.iter().map(|slot| slot.0).collect();
+        let bar_copies: Vec<u32> = bar.iter().map(|slot| slot.1).collect();
         frames.push(character_packets::skillbar_update(
-            agent, &[0u32; 8], &[0u32; 8], 1,
+            agent,
+            &bar_ids,
+            &bar_copies,
+            1,
         ));
-        frames.push(character_packets::update_unlocked_skills(&[]));
+        // Retail primes both pools with 1 and states the morale right after the skillbar, before the
+        // agent exists (`ASURA/recordings/client/feature/maps/maps-live-20261123-022154.jsonl` seq
+        // 650-653, 1939-1940, 2305-2306; `doors-20261031-095754.jsonl` seq 4005-4008).
+        frames.push(agent_packets::agent_property_update_int(
+            agent_packets::AGENT_PROPERTY_ENERGY,
+            agent,
+            1,
+        ));
+        frames.push(agent_packets::agent_property_update_int(
+            agent_packets::AGENT_PROPERTY_HEALTH,
+            agent,
+            1,
+        ));
+        frames.push(agent_packets::agent_update_morale(agent, MORALE_FULL));
+        frames.push(character_packets::update_unlocked_skills(
+            skills.map(|skills| skills.learned.as_slice()).unwrap_or(&[]),
+        ));
         frames.push(progress);
         frames.push(misc_packets::char_visibility_flags(
             0xFFFF_FFFF,
@@ -205,7 +239,49 @@ impl Player {
         // without a title sender. Build 39167 Northlands, seq 534-582:
         // definitions follow 0x00E9, 0x00EF and 0x003C, before load finish.
         frames.extend(crate::characters::titles::load_frames(titles));
-        frames.push(agent_packets::agent_update_attributes(agent, &[0u32; 42]));
+        // The attribute snapshot for the character's professions: ids, base ranks, effective ranks
+        // (`ASURA/crates/asura-world/src/skill/character.rs:149-164`); 42 zeros without the pack.
+        let attributes = skills
+            .map(|skills| skills.attributes.as_slice())
+            .unwrap_or(&[]);
+        if attributes.is_empty() {
+            frames.push(agent_packets::agent_update_attributes(agent, &[0u32; 42]));
+        } else {
+            frames.push(agent_packets::agent_update_attributes(agent, attributes));
+        }
+        // The real maxima follow the attributes, still before the agent is created, in retail's order:
+        // energy, its regeneration, health - and no current-pool fractions at load
+        // (`maps-live-20261123-022154.jsonl` seq 676-680, 1965-1967, 2335-2337). Sent after the create
+        // instead, the client sometimes drew no health or energy bar.
+        // Maximum health is the pack's `health_base + health_per_level * level` (`combat.json`,
+        // `ASURA/crates/asura-world/src/skill/character.rs:191-198`, `vitals`).
+        let health = skills.map_or_else(
+            || {
+                settings.agent_health_base.saturating_add(
+                    settings
+                        .agent_health_per_level
+                        .saturating_mul(u32::from(self.level)),
+                )
+            },
+            |skills| skills.max_health,
+        );
+        let energy = skills.map_or(settings.agent_energy, |skills| skills.max_energy);
+        let energy_regen = skills.map_or(settings.agent_energy_regen, |skills| skills.energy_regen);
+        frames.push(agent_packets::agent_property_update_int(
+            agent_packets::AGENT_PROPERTY_ENERGY,
+            agent,
+            energy,
+        ));
+        frames.push(agent_packets::agent_property_update_float(
+            agent_packets::AGENT_PROPERTY_ENERGY_REGEN,
+            agent,
+            energy_regen,
+        ));
+        frames.push(agent_packets::agent_property_update_int(
+            agent_packets::AGENT_PROPERTY_HEALTH,
+            agent,
+            health,
+        ));
         frames.push(misc_packets::world_update_load_time(load_ms));
         frames.push(instance_packets::player_create(
             player, agent, appearance, &self.name,
@@ -232,43 +308,12 @@ impl Player {
                 ..agent_packets::CreateAgent::LIVING
             },
         ));
-        frames.push(agent_packets::agent_update_morale(agent, MORALE_FULL));
-        frames.push(agent_packets::agent_property_update_int(
-            agent_packets::AGENT_PROPERTY_ENERGY,
-            agent,
-            settings.agent_energy,
-        ));
-        // Maximum health is the pack's `health_base + health_per_level * level` (`combat.json`,
-        // `ASURA/crates/asura-world/src/skill/character.rs:191-198`, `vitals`), not the reference
-        // creation path's fixed 400: a level 1 character is 100, and the client's own bar is drawn
-        // against that maximum.
-        let health = settings.agent_health_base.saturating_add(
-            settings
-                .agent_health_per_level
-                .saturating_mul(u32::from(self.level)),
-        );
-        frames.push(agent_packets::agent_property_update_int(
-            agent_packets::AGENT_PROPERTY_HEALTH,
-            agent,
-            health,
-        ));
-        // The maxima are the capacity; the two fractions are the current pool. Preforged's tested
-        // order is capacity first, then fraction (`src/runtime/gw_vitals.h:64-78`, `packets_2022`).
-        frames.push(agent_packets::agent_property_update_float(
-            agent_packets::AGENT_PROPERTY_ENERGY_FRACTION,
-            agent,
-            1.0,
-        ));
-        frames.push(agent_packets::agent_property_update_float(
-            agent_packets::AGENT_PROPERTY_HEALTH_FRACTION,
-            agent,
-            1.0,
-        ));
-        frames.push(agent_packets::agent_property_update_float(
-            agent_packets::AGENT_PROPERTY_ENERGY_REGEN,
-            agent,
-            settings.agent_energy_regen,
-        ));
+        // No current-pool fractions here: retail sends none in the load. The client starts the bars
+        // full on its own when the exploration grid sits inside this block, right after the morale,
+        // where `splice_exploration_grid` puts it. With the grid before the load instead, the bars
+        // drew empty and only these fractions filled them - the workaround this replaced, proven
+        // unnecessary in the live client on 2026-11-23 (`maps-live-20261123-022154.jsonl` seq
+        // 653-655, 1940-1943, 2306-2310).
         frames.push(agent_packets::agent_property_update_int(
             agent_packets::AGENT_PROPERTY_PUBLIC_LEVEL,
             agent,
@@ -297,5 +342,85 @@ impl Player {
             titles.initial_display_rank(),
         ));
         frames
+    }
+}
+
+/// Put the exploration grid (`0x008B`, `0x008A`) into a load block where retail sends it: right after
+/// the morale (`0x009C`), inside the vitals block. The client's HUD bars rely on this place - sent
+/// before the load, the bars draw empty. Without a morale frame, the grid goes first.
+pub(crate) fn splice_exploration_grid(block: &mut Vec<Vec<u8>>, grid: Vec<Vec<u8>>) {
+    let morale = agent_packets::AGENT_UPDATE_MORALE.to_le_bytes();
+    let at = block
+        .iter()
+        .position(|frame| frame.len() >= 2 && frame[..2] == morale)
+        .map_or(0, |at| at + 1);
+    block.splice(at..at, grid);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Player;
+    use crate::server::packets::instance_packets;
+    use crate::server::packets::agent_packets;
+
+    /// REGRESSION GUARD - the empty health/energy bars (broken and "fixed" four times by 2026-11-23).
+    ///
+    /// Retail's mechanism, proven in the live client: the exploration grid sits inside the vitals
+    /// block right after the morale, and the load sends no current-pool fractions (properties 33/34).
+    /// Earlier sessions sent the grid before the load and patched the empty bars with fractions; others
+    /// then removed the fractions to "match retail" and the bars broke again. If this test fails, do
+    /// not edit the test: put the grid back after the morale, or prove the bars in the live client.
+    #[test]
+    fn the_exploration_grid_follows_the_morale_and_no_pool_fractions_are_sent() {
+        let player = Player {
+            agent: 7,
+            player: 3,
+            position: (0.0, 0.0),
+            plane: 0,
+            direction: (1.0, 0.0),
+            appearance: 0,
+            equipped: [0; 9],
+            gold: 0,
+            gold_storage: 0,
+            profession: 1,
+            unlocked_professions: 0,
+            campaigns_finished: 0,
+            level: 1,
+            experience: 0,
+            skill_points: 0,
+            skill_points_total: 0,
+            name: "Test".into(),
+        };
+        let mut frames = player.load_block(
+            &crate::world::world_config::WorldConfig::default(),
+            0,
+            &[],
+            &crate::characters::titles::VanillaTitles::default(),
+            None,
+        );
+        for property in [
+            agent_packets::AGENT_PROPERTY_ENERGY_FRACTION,
+            agent_packets::AGENT_PROPERTY_HEALTH_FRACTION,
+        ] {
+            assert!(
+                !frames.contains(&agent_packets::agent_property_update_float(property, 7, 1.0)),
+                "retail sends no pool fraction {property} in the load"
+            );
+        }
+        super::splice_exploration_grid(
+            &mut frames,
+            crate::maps::cartography::Grid::empty(64, 128).frames(),
+        );
+        let header = |frame: &Vec<u8>| u16::from_le_bytes([frame[0], frame[1]]);
+        let morale = frames
+            .iter()
+            .position(|frame| header(frame) == agent_packets::AGENT_UPDATE_MORALE)
+            .expect("the load carries the player's morale");
+        assert_eq!(
+            header(&frames[morale + 1]),
+            instance_packets::MAP_INIT_START,
+            "the exploration grid must follow the morale, or the HUD bars draw empty"
+        );
+        assert_eq!(header(&frames[morale + 2]), instance_packets::CARTOGRAPHY_DATA);
     }
 }

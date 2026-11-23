@@ -123,7 +123,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x0000` | `AUTH_SMSG_HEARTBEAT` | `client/messages.rs:540` | `login_reply::heartbeat` | ported |
 | `0x0001` | `AUTH_SMSG_SESSION_INFO` | `messages.rs:532` | `login_reply::session_info` | ported |
 | `0x0003` | `AUTH_SMSG_REQUEST_RESPONSE` | `RequestResponse::frame` | `login_reply::request_response` | ported |
-| `0x0007` | `AUTH_SMSG_CHARACTER_INFO` (138) | `messages.rs:498` | `login_reply::character_info` | ported |
+| `0x0007` | `AUTH_SMSG_CHARACTER_INFO` (138) | `messages.rs:498` | `login_reply::character_info` | ported (the settings block's armour pieces were empty until 2026-11-23, so every character was drawn naked at character select; they are now the equipped bag's, as `asura-db/src/game.rs:344-356` derives them) |
 | `0x0009` | `AUTH_SMSG_GAME_SERVER_INFO` (42) | `messages.rs:690`, `host_for` | `login_reply::game_server_info`, `host_blob` | ported |
 | `0x0011` | `AUTH_SMSG_ACCOUNT_INFO` (275) | `messages.rs:593` | `login_reply::account_info` | ported (the EULA byte was ours until 2026-11-12) |
 | `0x0014` | `AUTH_SMSG_FRIEND_STREAM_END` | `messages.rs:524` | `login_reply::friend_stream_end` | ported |
@@ -188,7 +188,7 @@ string my comparison script cannot read as fields (`0x0026`, `0x0035`, `0x003C`,
 | `0x00F2` | instance loaded | `instance_loaded` | same | ported |
 | `0x013E` | item moved to a location | `item_move_to_location` | same | ported |
 | `0x013F` | inventory create bag | `inventory_create_bag` | same | ported |
-| `0x0141` | gold | `update_gold_storage` | same | ported |
+| `0x0141` | gold | `update_gold_storage` | same | ported; since 7j the load sends the carried gold as `0x0140` and the stored gold as `0x0141`, each only when not 0 (`ASURA/crates/asura-world/src/item.rs:72-85`) - this tree had sent the carried gold as `0x0141`, which the client shows as storage gold |
 | `0x0144` | item stream create | `item_stream_create` | same | ported |
 | `0x0147` | weapon set | `item_weapon_set` | same | ported |
 | `0x0148` | active weapon set | `item_set_active_weapon_set` | same | ported |
@@ -607,8 +607,14 @@ and the ground check) and `pathfind.rs` 1682-1686 (`on_ground`). **Carried with 
 `behavior.rs` 1-840 except the Script leaf and its Lua state, `table.rs` 26-48 (`BehaviorSource`,
 `PackBehaviors`), 50-197 (the burrow cycle), 278-310 (`tree_for`, `check_trees`), 639-718 (status,
 created set, hidden bodies) and 720-879 (the body tick, walks and per-viewer deliveries), each with
-its tests. **Left:** `lua.rs`, `fight.rs`, `table.rs` 531-637 (`/npc`), `mod.rs` 1-89 (`NpcWorld`),
-and the pack content itself.
+its tests. **Carried with the Lua source (2026-11-23):** `lua.rs` 1-481 whole, with its six tests
+(`game/Scripting/NpcBehaviors.rs`); the Script leaf of `behavior.rs` (72-79, 93-111, 168-169, 196-204,
+244-250, 300, 358-398); `table.rs` 32-37 (`BehaviorSource::script`) and 347-351 (the script-owned
+burrow at seed); `mod.rs` 55-88 (the source chosen once, a pack refused on any tree problem, in
+`World::load_npcs`); and ASURA's `config/World/Vanilla/npcs/behaviors.lua`, copied unchanged.
+**Left:** `fight.rs` (so `ctx.in_combat` is always false, and `table.rs:779-787`'s fight gate has
+nothing to gate), `table.rs` 531-637 (`/npc`), and `mod.rs` 1-54 (`NpcWorld`, whose job
+`World` and `NpcDistricts` already do).
 
 | ASURA | this tree | verdict |
 |---|---|---|
@@ -619,9 +625,9 @@ and the pack content itself.
 | `npc/mod.rs` 90-135 (`current`, `check_ground`), `main.rs` 403-412 and 479-485 | `World::load_npcs` (after the settings), `World::check_npc_ground` (after `set_graphs`), `worldserver/src/main.rs` | ported: a bad row refuses the start naming the row; a moving body or route point off the surface refuses it; a standing one or a graphless map is a note |
 | `pathfind.rs` 1682-1686 `on_ground` | `PathGraphs::on_ground`, `game/Terrain/Pathfind.rs` | ported |
 | `npc/table.rs` (per-instance table, ids before players, sight churn, dormancy, the burrow cycle, the tick) and the NPC half of `instance.rs` (`with_npcs` 178-225, `join`'s agent id 307-316, `npc_arrival` 450-460, `leave` 424) | `game/Districts/Npcs.rs` (`NpcTable`, `NpcDistricts`), `World::allocate_agent`/`release_agent`/`npc_arrival`/`npc_tick`/`npc_sweep`, the load's agent array and the session tick in `WorldSession.rs` | **ported thin (N3-N4, 2026-11-22):** a copy's bodies are seeded from agent id 2 the first time it hands out an agent; a player's agent is the copy's lowest free id, **separate from its player id** (retail: `pre-searing-load-3.jsonl` seq 221, player 0x35 is agent 40); the load's agent array is other players and NPCs in range sorted by agent id (`player.rs:784-818`); the burrow cycle, the status word, the created set, dormant bodies and the walk half of `tick` are carried. The clock is adapted to this tree's per-connection loops: a copy stores its last body tick and only the first connection to reach `SimulationTickMs` advances the bodies, so two players do not run the town twice as fast. Not here: the Script leaf, the fight, `/npc`, quest markers. Every place that named the player id where an agent was meant now names the agent: `0x019A`, the load's `0x0020`, the travel's `0x00F1`/`0x0028`, `0x006E`, the guild badge and property 30, the registrar window. Client proof pending |
-| `npc/behavior.rs`, `PackBehaviors` | `game/Behaviour/mod.rs` (`Tree`, `Spec`, `Ctx`, `Patrol`, `PackBehaviors`) | **ported thin (N4, 2026-11-22):** `Sequence`, `Fallback`, `Wait`, `Stand`, `Patrol`, `Burrow`, the clock, the failure reasons and the 7 tests. The Script leaf and its per-agent Lua state are the missing part (`behavior.rs:72-79`, 93-111, 168-169, 244-250, 300, 358-398); `lua.rs` builds them when its runtime arrives. No `Script` node is built yet, so a pack behavior of that form parks its body |
-| `npc/lua.rs` | `game/Scripting/` | missing - needs the Lua runtime (planned `mlua`, lua54, vendored). The pack's `worm_lakeside` and `worm_queen` are script behaviors: until this arrives they park with a log line and stand. `table.rs` `check_trees`/`tree_for` are ported and `World::report_npc_behaviors` runs them at start-up; it reports the unknown script entries instead of refusing, because they are the one missing part, and `NpcTable::seed` names every parked body again on its district's first tick |
-| `npc/fight.rs` | `game/Combat/` | missing - after skills |
+| `npc/behavior.rs`, `PackBehaviors` | `game/Behaviour/mod.rs` (`Tree`, `Spec`, `Ctx`, `Patrol`, `Script`, `PackBehaviors`) | **ported (2026-11-23):** `Sequence`, `Fallback`, `Wait`, `Stand`, `Patrol`, `Burrow`, the Script leaf and its per-agent Lua state (`behavior.rs:72-79`, 93-111, 168-169, 196-204, 244-250, 300, 358-398), the clock, the failure reasons and the 7 tests |
+| `npc/lua.rs` | `game/Scripting/NpcBehaviors.rs` | **ported (2026-11-23):** whole, mlua 0.10 / Lua 5.4 vendored, sandboxed to `table`, `string`, `math`, with its 6 tests. `World::load_npcs` chooses the source once (`mod.rs:55-69`) and refuses a pack on any `check_trees` problem (`mod.rs:74-88`); `worm_lakeside` and `worm_queen` build and run |
+| `npc/fight.rs` | `game/Combat/mod.rs` | ported (2026-11-23) with the skills subject, 7i |
 
 **`behavior.rs` function by function (840 lines), so the next session starts from the map:** 33-42
 `Status`; 44-80 `Spec` (six node kinds); 82-91 `BurrowRequest`; 93-111 `Script` (the Lua leaf, still
@@ -653,10 +659,10 @@ where the live load varies.
 
 **What walks now:** the two map 148 placements whose `behavior` is `patrol` walk their authored routes
 while a client is inside `World.CompassRange`; a body with no behavior still stands. The nineteen
-Lakeside worm placements name `worm_lakeside` and `worm_queen`, which are Lua script entries, so the
-built-in source cannot build them: they park once, log the reason, and stand until `lua.rs` arrives
-(the Lua source). This is the one visible thinness of N4 and is why start-up does not yet refuse on
-`check_trees`.
+Lakeside worm placements name `worm_lakeside` and `worm_queen`, which are Lua script entries in the
+pack's `npcs/behaviors.lua`: the Lua source builds them, the worms run ASURA's burrow cycle (up 5-10 s,
+under 5-15 s, the measured 2.00 s transitions) and the Queen emerges once and stays up. Start-up now
+refuses a pack with any `check_trees` problem, as ASURA does.
 
 ## 7h. The item catalogue and inventory rules, from the local ASURA tree
 
@@ -729,6 +735,102 @@ The test's map is an explorable, because a drop is refused in an outpost; the re
 3. **The ground item's reservation** (`309`, `E48`) and gold drops (`E49`), neither of which ASURA
    carries: stops, not gaps.
 
+
+## 7i. Skills, from the local ASURA_testfork tree, with Lua scripts
+
+**Opened (2026-11-23, `D:\ASURA-main`, ASURA_testfork `071735e`):** `crates/asura-world/src/skill/` - `engine.rs`
+2,637 lines, `tests.rs` 956, `catalog.rs` 751, `character.rs` 744, `model.rs` 531, `wire.rs` 386, `mod.rs` 291 -
+with `asura-rules/src/skills.rs` 620, `asura-protocol/src/game/skill.rs` 538, `asura-db/src/skills.rs` 85 and
+migration `0034`. **Carried:** `model.rs`, `engine.rs`, `tests.rs`, `catalog.rs`, `wire.rs`, `rules`, the protocol
+family and the row, whole; `mod.rs` 1-257 except `Inventory` (this tree passes the worn items). **Left:**
+`character.rs` 1-744 and the instance half of `instance.rs` (169-230, 422, 733-904).
+
+**One deviation, the owner's:** what a skill does is a Lua script (`docs/decisions/0016-skills-are-lua-scripts.md`).
+The script queues ASURA's operations; the engine runs them unchanged.
+
+| ASURA | this tree | verdict |
+|---|---|---|
+| `skill/model.rs`, `skill/engine.rs` | `game/Skills/Model.rs`, `Engine.rs` | ported whole; `SkillDef::script` and the script seam (`CastView`, `SkillScripts`, `ops_for`) added and marked `KRYTA:` |
+| `skill/tests.rs` (26 tests with the rules') | `game/Skills/Tests.rs` | ported; 26 pass, plus 3 for the seam (scripted ops run, a fault completes doing nothing, no host runs `effects`) |
+| `skill/catalog.rs` | `game/Skills/Catalog.rs` | ported; reads `script`, `effects` optional beside it; `current()` not carried (read at start-up, rule 7) |
+| `asura-rules/src/skills.rs` | `game/Skills/Rules.rs` | ported whole |
+| `skill/wire.rs` | `game/Skills/Wire.rs` | ported; ASURA's `game::` builders are `AgentPackets`, the tuple builders' frame taken |
+| `asura-protocol/src/game/skill.rs` (builders, readers, 4 tests) | `game/Server/Packets/SkillPackets.rs` | ported whole; headers from ASURA's table |
+| `skill/mod.rs` (`Combat`, `deliveries`, `equipment`, `player_spec`, `npc_spec`, its test) | `game/Skills/mod.rs` | ported; `Loadout` (`character.rs:20-60`) moved here with the row |
+| `asura-db/src/skills.rs`, migration `0034` | `Characters/Repository.rs` (`SkillProfile`, `skill_profile`, `record_skill_profile`), `data/sql/base/db_characters/0013-character-skills.sql` | ported; arrays cross the worker as comma text |
+| `config/World/Vanilla/{skills,combat,attributes}.json` | same paths + `skills/*.lua` (44) | ported as data; each `effects` list is now its script, translated one-to-one |
+| — | `game/Scripting/SkillScripts.rs` (mlua 0.10, Lua 5.4) | **ours, by decision 0016**: the host, sandbox, budget, 3 tests |
+| `skill/character.rs` (load block: bar `0x00DA`, learned `0x00DB`, attributes `0x003A`, points `0x0037`/`0x0038`/`0x0039`, vitals; the nine requests `0x8026`, `0x8027`, `0x8046`, `0x805C`-`0x805F`, `0x800E`-`0x8010`; `/skill`) | `game/Characters/Skills.rs` (the load numbers), `game/Handlers/SkillHandler.rs` (the nine requests, `/skill`), `WorldSession::load_map` (the load block's frames), `Agents/Player.rs::load_block` | **ported** (2026-11-23): the load block carries the character's own attribute points, bar, learned bitmap, attribute snapshot and maxima; the nine requests answer with the authoritative state; `/skill` is a chat row (`config/Server/commands.json`) |
+| `instance.rs` combat half (one `Combat` per copy, NPCs joined, the tick, `deliveries` to peers) | `game/Districts/Combat.rs` (`CombatDistricts`), `World::combat_join`/`combat_tick`/`combat_*`, the session tick | **ported** (2026-11-23), with the `0015` clock: the first connection to reach the period ticks the copy, NPC combat blocks seed the engine and the brain, deliveries go to the owner or the whole copy |
+| `npc/fight.rs` | `game/Combat/mod.rs` | **ported** (2026-11-23): the state machine, the aggro/assist/leash numbers from `creatures.json`, the walk orders applied through the NPC table's path finder, `Fall`/`Restore`/`Revive` on the engine |
+| `approach.rs` | `game/Movement/Approach.rs` (carried with the vendor subject, 7j) | ported; an attack request does not yet start a walk - the client walks itself into reach, and the engine swings once it is there |
+
+**Compiled and tested (2026-11-23):** the whole workspace builds; `cargo test -p game --lib` is 483 passed, 0
+failed, 16 ignored, including the 26 engine tests, the 3 script-seam tests, the rules, the packet family's 4, the
+fight's 9 and the delivery test. **Not proved by a client:** the cast's message numbers and order and the fight's
+aggro/leash/respawn values remain preforged's and chosen numbers, not a capture; the numbers are named in 7i and
+in `docs/game-rules.md`.
+
+## 7j. Vendors, collectors and Xunlai storage, from the local ASURA tree
+
+**Opened (2026-11-23):** `crates/asura-world/src/vendor/mod.rs` (924 lines), `vendor/rules.rs` (797),
+`vendor/content.rs` (478), `crates/asura-protocol/src/game/vendor.rs` (445),
+`crates/asura-world/src/approach.rs` (468), `instance.rs:885-961` (`steer_approaches`),
+`item.rs:25-100` and `:356-401` (the purse and `commit_ops`'s `extra`), `asura-db` migration `0035` and
+`inventory.rs:1090-1197`, and `config/World/Vanilla/vendors.json`. **Carried:** `vendor.rs` 1-445,
+`rules.rs` 1-797 and `content.rs` 23-378 whole with their tests (the `0x804A`/`0x804D` reader, every
+builder, the price, sale, exchange and gold-move rules), `approach.rs` 27-320 and its 7 tests,
+`vendor/mod.rs` 37-199, 218-255, 291-388, 390-721. The 18 rule and protocol tests and the 7 walk
+tests were run against this tree's own `Agent` outside the workspace on 2026-11-23; the workspace
+itself is not yet built with them. **Client proof pending.**
+
+| ASURA | this tree | verdict |
+|---|---|---|
+| `asura-protocol/src/game/vendor.rs`, and `game/mod.rs:2311-2336` (`0x002A`) | `game/Server/Packets/VendorPackets.rs` | ported, with every test |
+| `vendor/rules.rs` | `game/Trader/Rules.rs` | ported, with every test |
+| `vendor/content.rs` | `game/Trader/Content.rs` (the types, `check`, `service`, `limits`) and `game/Maps/VendorPack.rs` (the file) | ported; the file is read with this tree's JSON and an unknown key is refused. The source is to become Lua (`docs/decisions/0017-vendor-content-is-the-packs.md`); a file that does not check refuses the start, where ASURA logs it and opens nothing |
+| `config/World/Vanilla/vendors.json` | `config/World/Vanilla/vendors.json` | ported as data, unchanged |
+| `asura-protocol/src/game/dialog.rs` | `game/Server/Packets/DialogPackets.rs` | ported, with every test |
+| `dialog.rs` (the reader, `When`, `Page::is_open`/`visible`/`has_quest_step`, `check`, `talk_range_for`) | `config/World/Vanilla/scripts/runtime.lua`, run by `game/Scripting/NpcScripts.rs` | **ours, by decision 0019**: the same pages, conditions, actions and checks, in Lua; a condition may be a function and a dialog may carry `on_talk`/`on_choose` |
+| `config/World/Vanilla/dialogs.json` | `config/World/Vanilla/dialogs/<npc>.lua` (42 files) | ported as data: every unit, id, skill and page target checked against ASURA's file (pages numbered from 1) |
+| `approach.rs` | `game/Movement/Approach.rs`; the requests in `Handlers/NpcHandler.rs` | **ported thin**: `Purpose::Attack` is never started here (the fight owns it). The dialog's talk range (`approach.rs:288-298`) is ported (2026-11-23), asked of the Lua runtime. The steer runs on each connection's own tick (`WorldSession`), as this tree's NPC clock does (decision 0015), and its frames go to the copy through `Peers::broadcast` |
+| `dispatch.rs:44-66`, `:82-84`, `:222-229` | the arms in `WorldSession` for `0x803E`, `0x803D`, `0x8028` (forget the walk), `0x8039`, `0x8033`, `0x804D`, `0x804A`, `0x807C` | ported; `0x803B` (`SEND_DIALOG`, `dispatch.rs:230-231`) with the dialog subject (2026-11-23) |
+| `vendor/mod.rs` - `talk`, `open_merchant`, `handle_transaction`, `taken`, `placed`, `handle_change_gold`, `storage_open` | `game/Handlers/NpcHandler.rs` | **ported thin**: the dialog half of a talk (`:256-290`), `handle_send_dialog` (`:723-900`) and `in_reach`'s talk range (`:88-107`) are ported (2026-11-23), with the page, the choices and the action asked of the Lua runtime (decision 0019). A quest choice's step (`quest::handle_offer`, `handle_reward`, `handle_credit`) and the quest marker refresh (`:201-216`) wait for `quest.rs`; the `/xunlai` test command (`:902-923`) is not carried. The window's state, the walk and the purse are fields of `WorldSession` (`vendor`, `approach`, `purse`) |
+| `item.rs:371-374` - the rules' `storage_open` from the window | `WorldSession::wearer_for`, every `ItemHandler` operation | ported: an item moves into or out of storage only while a Xunlai window is open and in reach |
+| `item.rs:356-401` - `commit_ops`'s `extra` | `Characters/ItemOps.rs`, `commit_ops_with` | ported |
+| `0035_storage_gold.sql`, `inventory.rs:1090-1197` | `data/sql/base/db_characters/0014-storage-gold.sql`; `RowChange::Gold`, `RowChange::StorageGold`, the sheet's `gold_storage` | **ported thin**: the write is guarded on the old balance as ASURA's is, but this tree's transaction does not yet refuse a statement that touched no row, so a stale balance writes nothing instead of rolling the operation back |
+
+What ASURA itself does not do is not done here either: no live refusal is answered, and preforged
+answers none.
+
+## 7k. Death, the death penalty and the party wipe
+
+**Opened (2026-11-23):** `docs/game-rules.md` E94-E114, Rurik's `studies/morale/FINDINGS.md` 1-3 and
+7.1, `recordings/client/feature/anything/maps-live-20261123-023840.jsonl` seq 712-719, 721, 756,
+780-790, and the ASURA engine's `die`/`resurrect` (`crates/asura-world/src/skill/engine.rs`, now
+`game/Skills/Engine.rs`). **What was taken from ASURA:** the two events and their places in the tick;
+the health/energy pools and the flags word. **What ASURA did not carry, and this tree now does:** the
+death penalty, the measured death batch and the party wipe's clock and rise.
+
+| subject | source | this tree | verdict |
+|---|---|---|---|
+| the death batch's order | E95; Rurik `studies/morale/FINDINGS.md` 1.3 (eleven of twelve player deaths): status word, morale pair, hold, strips, maxima, `0x002D`, `0x0026 {4}` | `game/Skills/Engine.rs` `die` and `Event::Death`; `game/Skills/Wire.rs`'s player death arm; the 16 (18 with a condition) status word | ported |
+| the penalty's arithmetic | E96-E99; `FINDINGS.md` 2.1-2.2: `total + base * (morale - 100) / 100`, -15 a death, floor 40, energy on its base (25 total / 20 base -> 22) | `Actor::max_health`/`max_energy`, `effective`, `Engine::charged_deaths`; level-2/level-20 tests | ported |
+| the free death | E100: fourteen seconds after a resurrection, and pre-Searing Ascalon never | `Actor::in_grace` (14 s), `World::death_charges` (the pack's `Ascalon (pre-Searing)` set: 145-151 and 160-166) | ported |
+| the pre-Searing shape | this tree's own capture seq 712-719: status, hold, regeneration stops, `0x002D`, `0x0026 {4}` - no morale pair, no maxima | the same wire arm when `penalty == 0`; `a_free_death_sends_no_morale_pair_and_no_maxima` | ported |
+| the wipe's clock | E106; `SLICE-F43`: `0x0180 [0x575, 5, 0, 10000]` three times 0.58 s after the last death | `World::death_tick`, `InstancePackets::instance_countdown`, `WorldSession`'s tick | ported |
+| the rise | E103/E104: status, rescaled regeneration, hold release, then the refill one tick later; `0x017E` opens it | `Engine::resurrect` (`wipe: true`) and `Event::RiseRefill`; `Wire`'s two arms | ported |
+| an ally's resurrection | E108: status, `0x00A2 [55, body, f]`, flags 9; no `0x017E` | `Engine::resurrect` (`wipe: false`), `Event::Resurrected`'s `fraction`; `Wire` | ported |
+| the placement | E105/E114: the body jumps to the shrine, the walk records retire | `World::death_tick` sends `0x0025`/`0x002C`/`0x0028` and revives the engine body at the map's first spawn point | **ported thin**: the shrine coordinate is not content this world has (E114's "which shrine" is unanswered in `docs/game-rules.md`), so the entry point stands in; named here rather than invented |
+| the penalty clears on an outpost load | E12/E113 | a new outpost is a new copy and a new actor, at morale 100 | ported |
+| the penalty survives a field-to-field move | E12: both remain until the party enters an outpost | - | **missing**: a new copy's actors start at 100. The cross-zone morale is not carried by the player id yet |
+| `/damage`, `/kill`, `/revive` | none - the engine's blows need a skill, and skills are still landing | `game/Chat/Operations.rs`, `Handlers/ChatHandler.rs`, `World::combat_hurt`/`combat_kill`/`combat_revive`, `config/Server/commands.json` | **ours, by the owner's word**: the test surface for the cycle before a skill lands the blow |
+| the corpse and the fight | Rurik's 2026-09-30 symptom: a hostile holds aggro on a dead party through the countdown | - | **missing**: the brain drops a dead player from its target list (`combat/mod.rs` `think`), but no order is sent to a hostile whose bout ended with the party's last death |
+
+**Not proved:** the whole cycle has unit tests (`a_player_death_sends_the_measured_batch_and_shrinks_the_pools`,
+`a_free_death_sends_no_morale_pair_and_no_maxima`, `death_ends_effects_and_resurrection_brings_back_a_dead_ally`)
+but no client run of the wipe and the shrine rise yet; the entry-point placement is the one difference a
+client would see from E105.
 
 ## 8. The order this audit imposes
 

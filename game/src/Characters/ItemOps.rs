@@ -100,16 +100,18 @@ pub fn row_changes(changes: &[Change], new_rows: &[HeldItem]) -> Vec<RepositoryR
                 quantity,
             }),
             Change::Removed { item } => Some(RepositoryRow::Delete { item_id: item }),
-            Change::Inserted { item, at } => new_rows
-                .iter()
-                .find(|row| row.item_id == item)
-                .map(|row| RepositoryRow::Insert {
-                    item: HeldItem {
-                        bag_id: at.0,
-                        slot: at.1,
-                        ..row.clone()
-                    },
-                }),
+            Change::Inserted { item, at } => {
+                new_rows
+                    .iter()
+                    .find(|row| row.item_id == item)
+                    .map(|row| RepositoryRow::Insert {
+                        item: HeldItem {
+                            bag_id: at.0,
+                            slot: at.1,
+                            ..row.clone()
+                        },
+                    })
+            }
             // What is worn is not a row: the equipped bag's placement is the row, and that change is
             // already a `Moved`.
             Change::Worn { .. } => None,
@@ -153,6 +155,34 @@ pub fn commit_ops(
     wearer: crate::characters::Wearer,
     new_rows: &[HeldItem],
 ) -> Result<Result<Applied, Refusal>, String> {
+    commit_ops_with(
+        characters,
+        uuid,
+        rows,
+        bags,
+        catalogue,
+        ops,
+        wearer,
+        new_rows,
+        Vec::new(),
+    )
+}
+
+/// [`commit_ops`] with row writes of the caller's beside the rules' in the same transaction: a
+/// purchase's insert and its gold, a sale's take and its gold (`ASURA/crates/asura-world/src/item.rs:356-401`,
+/// `commit_ops`'s `extra`).
+#[allow(clippy::too_many_arguments)]
+pub fn commit_ops_with(
+    characters: &DatabaseCharacters,
+    uuid: &str,
+    rows: &[HeldItem],
+    bags: &[Bag],
+    catalogue: Option<&Catalogue>,
+    ops: &[Op],
+    wearer: crate::characters::Wearer,
+    new_rows: &[HeldItem],
+    extra: Vec<RepositoryRow>,
+) -> Result<Result<Applied, Refusal>, String> {
     let mut model = match model_of(rows, bags, catalogue) {
         Ok(model) => model,
         Err(error) => {
@@ -167,8 +197,9 @@ pub fn commit_ops(
             Err(refusal) => return Ok(Err(refusal)),
         }
     }
-    if !changes.is_empty() || !new_rows.is_empty() {
-        let writes = row_changes(&changes, new_rows);
+    if !changes.is_empty() || !new_rows.is_empty() || !extra.is_empty() {
+        let mut writes = row_changes(&changes, new_rows);
+        writes.extend(extra);
         let written = characters.apply_item_changes(uuid, &writes);
         // Read back either way: after a failed write the caller must see the database again, not the
         // model (`ASURA/crates/asura-world/src/item.rs:394-396`).
@@ -255,7 +286,9 @@ pub fn item_of_row(row: &HeldItem) -> crate::creation::Item {
 /// The bulk `UPDATE_AGENT_VISUAL_EQUIPMENT` (`0x006E`): the nine worn ids, out of the rows.
 pub fn equipped_item_ids(rows: &[HeldItem], bags: &[Bag]) -> [u32; 9] {
     let mut ids = [0u32; 9];
-    let Some(bag) = bags.iter().find(|bag| bag.model == crate::characters::EQUIPPED_ITEMS_MODEL)
+    let Some(bag) = bags
+        .iter()
+        .find(|bag| bag.model == crate::characters::EQUIPPED_ITEMS_MODEL)
     else {
         return ids;
     };

@@ -58,7 +58,11 @@ impl Request {
     fn claimed_session(&self) -> Option<&str> {
         let value = self.authorization.as_deref()?;
         let session = value.strip_prefix("Arena ").map(str::trim)?;
-        if session.is_empty() { None } else { Some(session) }
+        if session.is_empty() {
+            None
+        } else {
+            Some(session)
+        }
     }
 
     /// One field of an XML body, by tag.
@@ -308,8 +312,22 @@ pub fn new_uuid() -> String {
     bytes[8] = (bytes[8] & 0x3F) | 0x80;
     format!(
         "{:02X}{:02X}{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8],
-        bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15]
     )
 }
 
@@ -506,7 +524,9 @@ mod tests {
         let titles = crate::characters::titles::VanillaTitles::load(path).unwrap();
         let request = Request::new("GET", "/kryta/custom-titles.json");
         assert_eq!(portal().route(&request).status, 404);
-        let response = portal().with_custom_titles(titles.custom_catalog()).route(&request);
+        let response = portal()
+            .with_custom_titles(titles.custom_catalog())
+            .route(&request);
         assert_eq!(response.status, 200);
         assert_eq!(response.content_type, "application/json");
         let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
@@ -526,10 +546,9 @@ mod tests {
         let id = new_uuid();
         assert_eq!(id.len(), 36, "{id}");
         assert!(
-            id.chars()
-                .all(|character| character.is_ascii_uppercase()
-                    || character.is_ascii_digit()
-                    || character == '-'),
+            id.chars().all(|character| character.is_ascii_uppercase()
+                || character.is_ascii_digit()
+                || character == '-'),
             "{id}"
         );
         assert_eq!(&id[14..15], "4", "the version nibble: {id}");

@@ -239,11 +239,19 @@ pub struct Wearer {
 // ASURA/crates/asura-world/src/inventory_model.rs:191
 pub enum Op {
     /// `ITEM_MOVE`: put an item in a slot. Into the equipped bag this is an equip into that exact slot.
-    Move { item: ItemId, bag: BagId, slot: Slot },
+    Move {
+        item: ItemId,
+        bag: BagId,
+        slot: Slot,
+    },
     /// `EQUIP_ITEM`: wear an item in the slot its kind belongs to.
     Equip { item: ItemId },
     /// `UNEQUIP_ITEM`: take off what is worn in `equipped` and put it at `(bag, slot)`.
-    Unequip { equipped: Slot, bag: BagId, slot: Slot },
+    Unequip {
+        equipped: Slot,
+        bag: BagId,
+        slot: Slot,
+    },
     /// `DROP_ITEM` and the like: take `count` off a carried stack.
     Take { item: ItemId, count: u32 },
     /// `ITEM_DESTROY`: delete an item in a slot.
@@ -261,7 +269,11 @@ pub enum Op {
 // ASURA/crates/asura-world/src/inventory_model.rs:211
 pub enum Change {
     /// The item now sits at `to`.
-    Moved { item: ItemId, from: (BagId, Slot), to: (BagId, Slot) },
+    Moved {
+        item: ItemId,
+        from: (BagId, Slot),
+        to: (BagId, Slot),
+    },
     /// The stack now holds `quantity`.
     Quantity { item: ItemId, quantity: u32 },
     /// The item's row is gone (destroyed, or a whole stack taken off).
@@ -334,10 +346,9 @@ impl InvModel {
         }
         for entry in items {
             if let Some((bag, slot)) = entry.at {
-                let info = model
-                    .bags
-                    .get(&bag)
-                    .ok_or_else(|| format!("item {} is in bag {bag}, which does not exist", entry.id))?;
+                let info = model.bags.get(&bag).ok_or_else(|| {
+                    format!("item {} is in bag {bag}, which does not exist", entry.id)
+                })?;
                 if slot >= info.slots {
                     return Err(format!(
                         "item {} is in slot {slot} of bag {bag}, which has {} slots",
@@ -373,13 +384,18 @@ impl InvModel {
     /// The item in a slot.
     // ASURA/crates/asura-world/src/inventory_model.rs:314
     pub fn at(&self, bag: BagId, slot: Slot) -> Option<&Entry> {
-        self.slots.get(&(bag, slot)).and_then(|id| self.items.get(id))
+        self.slots
+            .get(&(bag, slot))
+            .and_then(|id| self.items.get(id))
     }
 
     /// The equipped-items bag.
     // ASURA/crates/asura-world/src/inventory_model.rs:319
     pub fn equipped_bag(&self) -> Option<BagId> {
-        self.bags.values().find(|bag| bag.kind == BagKind::Equipped).map(|bag| bag.id)
+        self.bags
+            .values()
+            .find(|bag| bag.kind == BagKind::Equipped)
+            .map(|bag| bag.id)
     }
 
     /// What is worn in an equipped slot.
@@ -433,7 +449,11 @@ impl InvModel {
                 let bag = self.equipped_bag().ok_or(Refusal::NoSuchBag)?;
                 self.do_equip(entry, bag, slot, wearer)
             }
-            Op::Unequip { equipped, bag, slot } => {
+            Op::Unequip {
+                equipped,
+                bag,
+                slot,
+            } => {
                 let worn = *self.worn(equipped).ok_or(Refusal::NothingWorn)?;
                 self.do_move(worn.id, bag, slot, wearer)
             }
@@ -451,12 +471,18 @@ impl InvModel {
                 if entry.at.is_none() {
                     return Err(Refusal::NotInASlot);
                 }
-                let total = entry.quantity.checked_add(count).ok_or(Refusal::BadQuantity)?;
+                let total = entry
+                    .quantity
+                    .checked_add(count)
+                    .ok_or(Refusal::BadQuantity)?;
                 if count == 0 || total > entry.stack_max {
                     return Err(Refusal::BadQuantity);
                 }
                 entry.quantity = total;
-                Ok(vec![Change::Quantity { item: into, quantity: total }])
+                Ok(vec![Change::Quantity {
+                    item: into,
+                    quantity: total,
+                }])
             }
             Op::Insert { entry } => {
                 if self.items.contains_key(&entry.id) {
@@ -466,7 +492,10 @@ impl InvModel {
                     return Err(Refusal::BadQuantity);
                 }
                 let at = self.first_free_carrying().ok_or(Refusal::NoRoom)?;
-                self.place_new(Entry { at: Some(at), ..entry });
+                self.place_new(Entry {
+                    at: Some(at),
+                    ..entry
+                });
                 Ok(vec![Change::Inserted { item: entry.id, at }])
             }
         }
@@ -474,7 +503,13 @@ impl InvModel {
 
     /// A move into any slot. Into the equipped bag it is an equip into exactly that slot.
     // ASURA/crates/asura-world/src/inventory_model.rs:409
-    fn do_move(&mut self, item: ItemId, bag: BagId, slot: Slot, wearer: Wearer) -> Result<Vec<Change>, Refusal> {
+    fn do_move(
+        &mut self,
+        item: ItemId,
+        bag: BagId,
+        slot: Slot,
+        wearer: Wearer,
+    ) -> Result<Vec<Change>, Refusal> {
         let entry = *self.items.get(&item).ok_or(Refusal::NoSuchItem)?;
         let from = entry.at.ok_or(Refusal::NotInASlot)?;
         if from == (bag, slot) {
@@ -484,7 +519,11 @@ impl InvModel {
         if slot >= info.slots {
             return Err(Refusal::OutOfRange);
         }
-        let from_kind = self.bags.get(&from.0).map(|bag| bag.kind).ok_or(Refusal::NoSuchBag)?;
+        let from_kind = self
+            .bags
+            .get(&from.0)
+            .map(|bag| bag.kind)
+            .ok_or(Refusal::NoSuchBag)?;
         if !wearer.storage_open && (from_kind.is_storage() || info.kind.is_storage()) {
             return Err(Refusal::StorageClosed);
         }
@@ -505,7 +544,11 @@ impl InvModel {
             return Err(Refusal::Occupied);
         }
         self.relocate(item, (bag, slot));
-        let mut changes = vec![Change::Moved { item, from, to: (bag, slot) }];
+        let mut changes = vec![Change::Moved {
+            item,
+            from,
+            to: (bag, slot),
+        }];
         self.note_worn(from, &mut changes);
         Ok(changes)
     }
@@ -522,12 +565,22 @@ impl InvModel {
     ///   weapon). Retail swaps in place even with full bags, but that answer has not been captured, so
     ///   with no other free slot the equip is refused.
     // ASURA/crates/asura-world/src/inventory_model.rs:456
-    fn do_equip(&mut self, entry: Entry, bag: BagId, slot: Slot, wearer: Wearer) -> Result<Vec<Change>, Refusal> {
+    fn do_equip(
+        &mut self,
+        entry: Entry,
+        bag: BagId,
+        slot: Slot,
+        wearer: Wearer,
+    ) -> Result<Vec<Change>, Refusal> {
         let from = entry.at.ok_or(Refusal::NotInASlot)?;
         if from == (bag, slot) {
             return Ok(Vec::new());
         }
-        let from_kind = self.bags.get(&from.0).map(|bag| bag.kind).ok_or(Refusal::NoSuchBag)?;
+        let from_kind = self
+            .bags
+            .get(&from.0)
+            .map(|bag| bag.kind)
+            .ok_or(Refusal::NoSuchBag)?;
         if !from_kind.is_carried() {
             return Err(Refusal::NotCarried);
         }
@@ -559,23 +612,42 @@ impl InvModel {
         // Free the target slot, then the other hand, each into a free carrying slot that is not the one
         // the incoming item is still in on the client.
         if let Some(occupant) = occupant {
-            let to = self.first_free_carrying_except(&[from]).ok_or(Refusal::NoRoom)?;
+            let to = self
+                .first_free_carrying_except(&[from])
+                .ok_or(Refusal::NoRoom)?;
             self.relocate(occupant.id, to);
-            changes.push(Change::Moved { item: occupant.id, from: (bag, slot), to });
+            changes.push(Change::Moved {
+                item: occupant.id,
+                from: (bag, slot),
+                to,
+            });
         }
         if let Some(conflict) = conflicting {
-            let to = self.first_free_carrying_except(&[from]).ok_or(Refusal::NoRoom)?;
+            let to = self
+                .first_free_carrying_except(&[from])
+                .ok_or(Refusal::NoRoom)?;
             let conflict_from = conflict.at.ok_or(Refusal::NotInASlot)?;
             self.relocate(conflict.id, to);
-            changes.push(Change::Moved { item: conflict.id, from: conflict_from, to });
+            changes.push(Change::Moved {
+                item: conflict.id,
+                from: conflict_from,
+                to,
+            });
             touched.push(conflict_from.1);
         }
         self.relocate(entry.id, (bag, slot));
-        changes.push(Change::Moved { item: entry.id, from, to: (bag, slot) });
+        changes.push(Change::Moved {
+            item: entry.id,
+            from,
+            to: (bag, slot),
+        });
         touched.push(slot);
 
         for slot in touched {
-            changes.push(Change::Worn { slot, item: self.at(bag, slot).map(|entry| entry.id) });
+            changes.push(Change::Worn {
+                slot,
+                item: self.at(bag, slot).map(|entry| entry.id),
+            });
         }
         Ok(changes)
     }
@@ -584,7 +656,11 @@ impl InvModel {
     fn do_take(&mut self, item: ItemId, count: u32) -> Result<Vec<Change>, Refusal> {
         let entry = *self.items.get(&item).ok_or(Refusal::NoSuchItem)?;
         let at = entry.at.ok_or(Refusal::NotInASlot)?;
-        let kind = self.bags.get(&at.0).map(|bag| bag.kind).ok_or(Refusal::NoSuchBag)?;
+        let kind = self
+            .bags
+            .get(&at.0)
+            .map(|bag| bag.kind)
+            .ok_or(Refusal::NoSuchBag)?;
         if kind != BagKind::Carrying {
             // `GmBag_FindItem` looks from the backpack to bag 2 and nowhere else; worn items and
             // storage are not something a drop names.
@@ -601,7 +677,10 @@ impl InvModel {
             if let Some(entry) = self.items.get_mut(&item) {
                 entry.quantity = remaining;
             }
-            Ok(vec![Change::Quantity { item, quantity: remaining }])
+            Ok(vec![Change::Quantity {
+                item,
+                quantity: remaining,
+            }])
         }
     }
 
@@ -609,7 +688,10 @@ impl InvModel {
     // ASURA/crates/asura-world/src/inventory_model.rs:539
     fn note_worn(&self, at: (BagId, Slot), changes: &mut Vec<Change>) {
         if Some(at.0) == self.equipped_bag() {
-            changes.push(Change::Worn { slot: at.1, item: self.at(at.0, at.1).map(|entry| entry.id) });
+            changes.push(Change::Worn {
+                slot: at.1,
+                item: self.at(at.0, at.1).map(|entry| entry.id),
+            });
         }
     }
 
@@ -655,41 +737,89 @@ mod tests {
     const STORAGE: BagId = 3;
     const EQUIPPED: BagId = 5;
     const UNCLAIMED: BagId = 6;
-    const WARRIOR: Wearer = Wearer { primary_profession: 1, storage_open: true };
+    const WARRIOR: Wearer = Wearer {
+        primary_profession: 1,
+        storage_open: true,
+    };
 
     /// The reference's default set: backpack (20), material storage, unclaimed, one storage pane, the
     /// equipped bag, two cupcake stacks and a warrior in his starting gear with a hammer.
     // ASURA/crates/asura-world/src/inventory_model.rs:587
     fn reference() -> InvModel {
         let bags = [
-            BagInfo { id: BACKPACK, model: 0, kind: BagKind::of(0), slots: 20 },
-            BagInfo { id: MATERIALS, model: 5, kind: BagKind::of(5), slots: 41 },
-            BagInfo { id: UNCLAIMED, model: 6, kind: BagKind::of(6), slots: 12 },
-            BagInfo { id: STORAGE, model: 7, kind: BagKind::of(7), slots: 25 },
-            BagInfo { id: EQUIPPED, model: 21, kind: BagKind::of(21), slots: 9 },
+            BagInfo {
+                id: BACKPACK,
+                model: 0,
+                kind: BagKind::of(0),
+                slots: 20,
+            },
+            BagInfo {
+                id: MATERIALS,
+                model: 5,
+                kind: BagKind::of(5),
+                slots: 41,
+            },
+            BagInfo {
+                id: UNCLAIMED,
+                model: 6,
+                kind: BagKind::of(6),
+                slots: 12,
+            },
+            BagInfo {
+                id: STORAGE,
+                model: 7,
+                kind: BagKind::of(7),
+                slots: 25,
+            },
+            BagInfo {
+                id: EQUIPPED,
+                model: 21,
+                kind: BagKind::of(21),
+                slots: 9,
+            },
         ];
         let items = [
-            entry(1, None, 3, 0, 1),                          // the backpack's own item
-            stack(2, (BACKPACK, 0), 100),                     // cupcakes
-            stack(9, (BACKPACK, 1), 100),                     // cupcakes
-            entry(3, Some((EQUIPPED, 0)), 15, 1, 1),          // hammer
-            entry(4, Some((EQUIPPED, 2)), 7, 1, 1),           // body
-            entry(5, Some((EQUIPPED, 3)), 19, 1, 1),          // legs
-            entry(6, Some((EQUIPPED, 4)), 16, 1, 1),          // head
-            entry(7, Some((EQUIPPED, 5)), 4, 1, 1),           // boots
-            entry(8, Some((EQUIPPED, 6)), 13, 1, 1),          // gloves
+            entry(1, None, 3, 0, 1),                 // the backpack's own item
+            stack(2, (BACKPACK, 0), 100),            // cupcakes
+            stack(9, (BACKPACK, 1), 100),            // cupcakes
+            entry(3, Some((EQUIPPED, 0)), 15, 1, 1), // hammer
+            entry(4, Some((EQUIPPED, 2)), 7, 1, 1),  // body
+            entry(5, Some((EQUIPPED, 3)), 19, 1, 1), // legs
+            entry(6, Some((EQUIPPED, 4)), 16, 1, 1), // head
+            entry(7, Some((EQUIPPED, 5)), 4, 1, 1),  // boots
+            entry(8, Some((EQUIPPED, 6)), 13, 1, 1), // gloves
         ];
         InvModel::new(bags, items).expect("the reference inventory is valid")
     }
 
     // ASURA/crates/asura-world/src/inventory_model.rs:609
-    fn entry(id: ItemId, at: Option<(BagId, Slot)>, item_type: u8, profession: u8, quantity: u32) -> Entry {
-        Entry { id, at, kind: ItemKind::of(item_type), profession, quantity, stack_max: 1 }
+    fn entry(
+        id: ItemId,
+        at: Option<(BagId, Slot)>,
+        item_type: u8,
+        profession: u8,
+        quantity: u32,
+    ) -> Entry {
+        Entry {
+            id,
+            at,
+            kind: ItemKind::of(item_type),
+            profession,
+            quantity,
+            stack_max: 1,
+        }
     }
 
     // ASURA/crates/asura-world/src/inventory_model.rs:613
     fn stack(id: ItemId, at: (BagId, Slot), quantity: u32) -> Entry {
-        Entry { id, at: Some(at), kind: ItemKind::Other, profession: 0, quantity, stack_max: 250 }
+        Entry {
+            id,
+            at: Some(at),
+            kind: ItemKind::Other,
+            profession: 0,
+            quantity,
+            stack_max: 250,
+        }
     }
 
     // ASURA/crates/asura-world/src/inventory_model.rs:617
@@ -711,31 +841,84 @@ mod tests {
     fn kinds_agree_with_the_protocol_slot_table() {
         // `asura_protocol::game::equipped_slot`, copied: the model must answer the same.
         let table: &[(u8, Option<Slot>)] = &[
-            (1, Some(0)), (2, Some(0)), (5, Some(0)), (15, Some(0)), (22, Some(0)), (26, Some(0)),
-            (27, Some(0)), (32, Some(0)), (35, Some(0)), (36, Some(0)), (12, Some(1)), (24, Some(1)),
-            (7, Some(2)), (19, Some(3)), (16, Some(4)), (4, Some(5)), (13, Some(6)), (44, Some(7)),
-            (45, Some(8)), (3, None), (9, None), (11, None), (30, None),
+            (1, Some(0)),
+            (2, Some(0)),
+            (5, Some(0)),
+            (15, Some(0)),
+            (22, Some(0)),
+            (26, Some(0)),
+            (27, Some(0)),
+            (32, Some(0)),
+            (35, Some(0)),
+            (36, Some(0)),
+            (12, Some(1)),
+            (24, Some(1)),
+            (7, Some(2)),
+            (19, Some(3)),
+            (16, Some(4)),
+            (4, Some(5)),
+            (13, Some(6)),
+            (44, Some(7)),
+            (45, Some(8)),
+            (3, None),
+            (9, None),
+            (11, None),
+            (30, None),
         ];
         for (item_type, slot) in table {
-            assert_eq!(ItemKind::of(*item_type).equip_slot(), *slot, "item type {item_type}");
+            assert_eq!(
+                ItemKind::of(*item_type).equip_slot(),
+                *slot,
+                "item type {item_type}"
+            );
         }
     }
 
     #[test]
     // ASURA/crates/asura-world/src/inventory_model.rs:644
     fn a_corrupt_inventory_is_refused_when_it_is_built() {
-        let bags = [BagInfo { id: 1, model: 0, kind: BagKind::Carrying, slots: 2 }];
-        assert!(InvModel::new(bags, [stack(1, (1, 0), 1), stack(2, (1, 0), 1)]).is_err(), "two in one slot");
-        assert!(InvModel::new(bags, [stack(1, (1, 5), 1)]).is_err(), "past the bag's end");
-        assert!(InvModel::new(bags, [stack(1, (9, 0), 1)]).is_err(), "no such bag");
+        let bags = [BagInfo {
+            id: 1,
+            model: 0,
+            kind: BagKind::Carrying,
+            slots: 2,
+        }];
+        assert!(
+            InvModel::new(bags, [stack(1, (1, 0), 1), stack(2, (1, 0), 1)]).is_err(),
+            "two in one slot"
+        );
+        assert!(
+            InvModel::new(bags, [stack(1, (1, 5), 1)]).is_err(),
+            "past the bag's end"
+        );
+        assert!(
+            InvModel::new(bags, [stack(1, (9, 0), 1)]).is_err(),
+            "no such bag"
+        );
     }
 
     #[test]
     // ASURA/crates/asura-world/src/inventory_model.rs:652
     fn a_move_to_a_free_slot_is_one_change() {
         let mut model = reference();
-        let changes = model.apply(Op::Move { item: 2, bag: BACKPACK, slot: 5 }, WARRIOR).unwrap();
-        assert_eq!(changes, vec![Change::Moved { item: 2, from: (BACKPACK, 0), to: (BACKPACK, 5) }]);
+        let changes = model
+            .apply(
+                Op::Move {
+                    item: 2,
+                    bag: BACKPACK,
+                    slot: 5,
+                },
+                WARRIOR,
+            )
+            .unwrap();
+        assert_eq!(
+            changes,
+            vec![Change::Moved {
+                item: 2,
+                from: (BACKPACK, 0),
+                to: (BACKPACK, 5)
+            }]
+        );
         assert_eq!(model.at(BACKPACK, 5).map(|e| e.id), Some(2));
         assert!(model.at(BACKPACK, 0).is_none());
     }
@@ -745,7 +928,17 @@ mod tests {
     fn a_move_onto_an_occupied_slot_is_refused_and_changes_nothing() {
         let mut model = reference();
         let before = model.clone();
-        assert_eq!(model.apply(Op::Move { item: 2, bag: BACKPACK, slot: 1 }, WARRIOR), Err(Refusal::Occupied));
+        assert_eq!(
+            model.apply(
+                Op::Move {
+                    item: 2,
+                    bag: BACKPACK,
+                    slot: 1
+                },
+                WARRIOR
+            ),
+            Err(Refusal::Occupied)
+        );
         assert_eq!(model, before);
     }
 
@@ -753,17 +946,67 @@ mod tests {
     // ASURA/crates/asura-world/src/inventory_model.rs:669
     fn a_move_to_the_same_place_changes_nothing() {
         let mut model = reference();
-        assert_eq!(model.apply(Op::Move { item: 2, bag: BACKPACK, slot: 0 }, WARRIOR), Ok(vec![]));
+        assert_eq!(
+            model.apply(
+                Op::Move {
+                    item: 2,
+                    bag: BACKPACK,
+                    slot: 0
+                },
+                WARRIOR
+            ),
+            Ok(vec![])
+        );
     }
 
     #[test]
     // ASURA/crates/asura-world/src/inventory_model.rs:675
     fn the_impossible_moves_are_refused() {
         let mut model = reference();
-        assert_eq!(model.apply(Op::Move { item: 77, bag: BACKPACK, slot: 3 }, WARRIOR), Err(Refusal::NoSuchItem));
-        assert_eq!(model.apply(Op::Move { item: 1, bag: BACKPACK, slot: 3 }, WARRIOR), Err(Refusal::NotInASlot));
-        assert_eq!(model.apply(Op::Move { item: 2, bag: 40, slot: 3 }, WARRIOR), Err(Refusal::NoSuchBag));
-        assert_eq!(model.apply(Op::Move { item: 2, bag: BACKPACK, slot: 20 }, WARRIOR), Err(Refusal::OutOfRange));
+        assert_eq!(
+            model.apply(
+                Op::Move {
+                    item: 77,
+                    bag: BACKPACK,
+                    slot: 3
+                },
+                WARRIOR
+            ),
+            Err(Refusal::NoSuchItem)
+        );
+        assert_eq!(
+            model.apply(
+                Op::Move {
+                    item: 1,
+                    bag: BACKPACK,
+                    slot: 3
+                },
+                WARRIOR
+            ),
+            Err(Refusal::NotInASlot)
+        );
+        assert_eq!(
+            model.apply(
+                Op::Move {
+                    item: 2,
+                    bag: 40,
+                    slot: 3
+                },
+                WARRIOR
+            ),
+            Err(Refusal::NoSuchBag)
+        );
+        assert_eq!(
+            model.apply(
+                Op::Move {
+                    item: 2,
+                    bag: BACKPACK,
+                    slot: 20
+                },
+                WARRIOR
+            ),
+            Err(Refusal::OutOfRange)
+        );
     }
 
     #[test]
@@ -771,53 +1014,177 @@ mod tests {
     fn a_cupcake_cannot_be_worn_as_a_helmet() {
         let mut model = reference();
         assert_eq!(
-            model.apply(Op::Move { item: 2, bag: EQUIPPED, slot: equip_slot::HEAD }, WARRIOR),
+            model.apply(
+                Op::Move {
+                    item: 2,
+                    bag: EQUIPPED,
+                    slot: equip_slot::HEAD
+                },
+                WARRIOR
+            ),
             Err(Refusal::NotEquippable)
         );
-        assert_eq!(model.apply(Op::Equip { item: 2 }, WARRIOR), Err(Refusal::NotEquippable));
+        assert_eq!(
+            model.apply(Op::Equip { item: 2 }, WARRIOR),
+            Err(Refusal::NotEquippable)
+        );
     }
 
     #[test]
     // ASURA/crates/asura-world/src/inventory_model.rs:694
     fn bags_only_take_what_they_are_for() {
         let mut model = reference();
-        assert_eq!(model.apply(Op::Move { item: 2, bag: MATERIALS, slot: 0 }, WARRIOR), Err(Refusal::WrongBag));
-        assert_eq!(model.apply(Op::Move { item: 2, bag: UNCLAIMED, slot: 0 }, WARRIOR), Err(Refusal::WrongBag));
-        add(&mut model, Entry { kind: ItemKind::Material, ..stack(50, (BACKPACK, 7), 10) });
-        assert!(model.apply(Op::Move { item: 50, bag: MATERIALS, slot: 0 }, WARRIOR).is_ok());
-        assert!(model.apply(Op::Move { item: 2, bag: STORAGE, slot: 0 }, WARRIOR).is_ok());
+        assert_eq!(
+            model.apply(
+                Op::Move {
+                    item: 2,
+                    bag: MATERIALS,
+                    slot: 0
+                },
+                WARRIOR
+            ),
+            Err(Refusal::WrongBag)
+        );
+        assert_eq!(
+            model.apply(
+                Op::Move {
+                    item: 2,
+                    bag: UNCLAIMED,
+                    slot: 0
+                },
+                WARRIOR
+            ),
+            Err(Refusal::WrongBag)
+        );
+        add(
+            &mut model,
+            Entry {
+                kind: ItemKind::Material,
+                ..stack(50, (BACKPACK, 7), 10)
+            },
+        );
+        assert!(
+            model
+                .apply(
+                    Op::Move {
+                        item: 50,
+                        bag: MATERIALS,
+                        slot: 0
+                    },
+                    WARRIOR
+                )
+                .is_ok()
+        );
+        assert!(
+            model
+                .apply(
+                    Op::Move {
+                        item: 2,
+                        bag: STORAGE,
+                        slot: 0
+                    },
+                    WARRIOR
+                )
+                .is_ok()
+        );
     }
 
     #[test]
     // ASURA/crates/asura-world/src/inventory_model.rs:704
     fn storage_is_reached_only_through_a_storage_window() {
-        let closed = Wearer { storage_open: false, ..WARRIOR };
+        let closed = Wearer {
+            storage_open: false,
+            ..WARRIOR
+        };
         let mut model = reference();
         assert_eq!(
-            model.apply(Op::Move { item: 2, bag: STORAGE, slot: 0 }, closed),
+            model.apply(
+                Op::Move {
+                    item: 2,
+                    bag: STORAGE,
+                    slot: 0
+                },
+                closed
+            ),
             Err(Refusal::StorageClosed)
         );
-        assert!(model.apply(Op::Move { item: 2, bag: STORAGE, slot: 0 }, WARRIOR).is_ok());
+        assert!(
+            model
+                .apply(
+                    Op::Move {
+                        item: 2,
+                        bag: STORAGE,
+                        slot: 0
+                    },
+                    WARRIOR
+                )
+                .is_ok()
+        );
         assert_eq!(
-            model.apply(Op::Move { item: 2, bag: BACKPACK, slot: 5 }, closed),
+            model.apply(
+                Op::Move {
+                    item: 2,
+                    bag: BACKPACK,
+                    slot: 5
+                },
+                closed
+            ),
             Err(Refusal::StorageClosed),
             "out of storage too"
         );
-        assert!(model.apply(Op::Move { item: 2, bag: BACKPACK, slot: 5 }, WARRIOR).is_ok());
+        assert!(
+            model
+                .apply(
+                    Op::Move {
+                        item: 2,
+                        bag: BACKPACK,
+                        slot: 5
+                    },
+                    WARRIOR
+                )
+                .is_ok()
+        );
         // Moves between carried bags do not need the window.
-        assert!(model.apply(Op::Move { item: 2, bag: BACKPACK, slot: 6 }, closed).is_ok());
+        assert!(
+            model
+                .apply(
+                    Op::Move {
+                        item: 2,
+                        bag: BACKPACK,
+                        slot: 6
+                    },
+                    closed
+                )
+                .is_ok()
+        );
     }
 
     #[test]
     // ASURA/crates/asura-world/src/inventory_model.rs:723
     fn dragging_a_worn_piece_out_says_the_slot_is_empty() {
         let mut model = reference();
-        let changes = model.apply(Op::Move { item: 3, bag: BACKPACK, slot: 4 }, WARRIOR).unwrap();
+        let changes = model
+            .apply(
+                Op::Move {
+                    item: 3,
+                    bag: BACKPACK,
+                    slot: 4,
+                },
+                WARRIOR,
+            )
+            .unwrap();
         assert_eq!(
             changes,
             vec![
-                Change::Moved { item: 3, from: (EQUIPPED, 0), to: (BACKPACK, 4) },
-                Change::Worn { slot: equip_slot::WEAPON, item: None },
+                Change::Moved {
+                    item: 3,
+                    from: (EQUIPPED, 0),
+                    to: (BACKPACK, 4)
+                },
+                Change::Worn {
+                    slot: equip_slot::WEAPON,
+                    item: None
+                },
             ]
         );
     }
@@ -827,24 +1194,55 @@ mod tests {
     fn unequip_and_equip_round_trip() {
         let mut model = reference();
         let changes = model
-            .apply(Op::Unequip { equipped: equip_slot::BODY, bag: BACKPACK, slot: 2 }, WARRIOR)
+            .apply(
+                Op::Unequip {
+                    equipped: equip_slot::BODY,
+                    bag: BACKPACK,
+                    slot: 2,
+                },
+                WARRIOR,
+            )
             .unwrap();
         assert_eq!(
             changes,
             vec![
-                Change::Moved { item: 4, from: (EQUIPPED, 2), to: (BACKPACK, 2) },
-                Change::Worn { slot: equip_slot::BODY, item: None },
+                Change::Moved {
+                    item: 4,
+                    from: (EQUIPPED, 2),
+                    to: (BACKPACK, 2)
+                },
+                Change::Worn {
+                    slot: equip_slot::BODY,
+                    item: None
+                },
             ]
         );
         let changes = model.apply(Op::Equip { item: 4 }, WARRIOR).unwrap();
         assert_eq!(
             changes,
             vec![
-                Change::Moved { item: 4, from: (BACKPACK, 2), to: (EQUIPPED, 2) },
-                Change::Worn { slot: equip_slot::BODY, item: Some(4) },
+                Change::Moved {
+                    item: 4,
+                    from: (BACKPACK, 2),
+                    to: (EQUIPPED, 2)
+                },
+                Change::Worn {
+                    slot: equip_slot::BODY,
+                    item: Some(4)
+                },
             ]
         );
-        assert_eq!(model.apply(Op::Unequip { equipped: 7, bag: BACKPACK, slot: 9 }, WARRIOR), Err(Refusal::NothingWorn));
+        assert_eq!(
+            model.apply(
+                Op::Unequip {
+                    equipped: 7,
+                    bag: BACKPACK,
+                    slot: 9
+                },
+                WARRIOR
+            ),
+            Err(Refusal::NothingWorn)
+        );
     }
 
     #[test]
@@ -854,7 +1252,10 @@ mod tests {
         // the worn weapon. The old weapon was sent to slot 6 before the hammer left it.
         let mut model = reference();
         for slot in 2..6 {
-            add(&mut model, stack(100 + u32::from(slot), (BACKPACK, slot), 1));
+            add(
+                &mut model,
+                stack(100 + u32::from(slot), (BACKPACK, slot), 1),
+            );
         }
         add(&mut model, entry(20, Some((BACKPACK, 6)), 15, 0, 1));
         assert_eq!(model.first_free_carrying(), Some((BACKPACK, 7)));
@@ -863,9 +1264,20 @@ mod tests {
         assert_eq!(
             changes,
             vec![
-                Change::Moved { item: 3, from: (EQUIPPED, 0), to: (BACKPACK, 7) },
-                Change::Moved { item: 20, from: (BACKPACK, 6), to: (EQUIPPED, 0) },
-                Change::Worn { slot: equip_slot::WEAPON, item: Some(20) },
+                Change::Moved {
+                    item: 3,
+                    from: (EQUIPPED, 0),
+                    to: (BACKPACK, 7)
+                },
+                Change::Moved {
+                    item: 20,
+                    from: (BACKPACK, 6),
+                    to: (EQUIPPED, 0)
+                },
+                Change::Worn {
+                    slot: equip_slot::WEAPON,
+                    item: Some(20)
+                },
             ]
         );
         // In change order, no move lands on a slot that is still occupied at that moment.
@@ -873,7 +1285,10 @@ mod tests {
         occupied.extend((2..7).map(|slot| (BACKPACK, slot)));
         for change in &changes {
             if let Change::Moved { from, to, .. } = *change {
-                assert!(!occupied.contains(&to), "{to:?} is still occupied when the move arrives");
+                assert!(
+                    !occupied.contains(&to),
+                    "{to:?} is still occupied when the move arrives"
+                );
                 occupied.retain(|at| *at != from);
                 occupied.push(to);
             }
@@ -892,7 +1307,10 @@ mod tests {
         add(&mut model, entry(20, Some((BACKPACK, 2)), 7, 1, 1)); // a second body piece
         fill_backpack(&mut model);
         let before = model.clone();
-        assert_eq!(model.apply(Op::Equip { item: 20 }, WARRIOR), Err(Refusal::NoRoom));
+        assert_eq!(
+            model.apply(Op::Equip { item: 20 }, WARRIOR),
+            Err(Refusal::NoRoom)
+        );
         assert_eq!(model, before);
     }
 
@@ -902,10 +1320,24 @@ mod tests {
         let mut model = reference();
         add(&mut model, entry(21, Some((BACKPACK, 2)), 16, 3, 1)); // a monk's head piece
         let before = model.clone();
-        assert_eq!(model.apply(Op::Equip { item: 21 }, WARRIOR), Err(Refusal::WrongProfession));
+        assert_eq!(
+            model.apply(Op::Equip { item: 21 }, WARRIOR),
+            Err(Refusal::WrongProfession)
+        );
         assert_eq!(model, before, "nothing came off either");
         // A character with no recorded profession is not held to it.
-        assert!(model.clone().apply(Op::Equip { item: 21 }, Wearer { primary_profession: 0, storage_open: true }).is_ok());
+        assert!(
+            model
+                .clone()
+                .apply(
+                    Op::Equip { item: 21 },
+                    Wearer {
+                        primary_profession: 0,
+                        storage_open: true
+                    }
+                )
+                .is_ok()
+        );
         // Weapons are not profession-locked.
         add(&mut model, entry(22, Some((BACKPACK, 3)), 27, 3, 1));
         assert!(model.apply(Op::Equip { item: 22 }, WARRIOR).is_ok());
@@ -924,10 +1356,24 @@ mod tests {
         assert_eq!(
             changes,
             vec![
-                Change::Moved { item: 3, from: (EQUIPPED, 0), to: (BACKPACK, 4) },
-                Change::Moved { item: 30, from: (BACKPACK, 2), to: (EQUIPPED, 1) },
-                Change::Worn { slot: equip_slot::WEAPON, item: None },
-                Change::Worn { slot: equip_slot::OFF_HAND, item: Some(30) },
+                Change::Moved {
+                    item: 3,
+                    from: (EQUIPPED, 0),
+                    to: (BACKPACK, 4)
+                },
+                Change::Moved {
+                    item: 30,
+                    from: (BACKPACK, 2),
+                    to: (EQUIPPED, 1)
+                },
+                Change::Worn {
+                    slot: equip_slot::WEAPON,
+                    item: None
+                },
+                Change::Worn {
+                    slot: equip_slot::OFF_HAND,
+                    item: Some(30)
+                },
             ]
         );
 
@@ -936,10 +1382,24 @@ mod tests {
         assert_eq!(
             changes,
             vec![
-                Change::Moved { item: 30, from: (EQUIPPED, 1), to: (BACKPACK, 2) },
-                Change::Moved { item: 31, from: (BACKPACK, 3), to: (EQUIPPED, 0) },
-                Change::Worn { slot: equip_slot::OFF_HAND, item: None },
-                Change::Worn { slot: equip_slot::WEAPON, item: Some(31) },
+                Change::Moved {
+                    item: 30,
+                    from: (EQUIPPED, 1),
+                    to: (BACKPACK, 2)
+                },
+                Change::Moved {
+                    item: 31,
+                    from: (BACKPACK, 3),
+                    to: (EQUIPPED, 0)
+                },
+                Change::Worn {
+                    slot: equip_slot::OFF_HAND,
+                    item: None
+                },
+                Change::Worn {
+                    slot: equip_slot::WEAPON,
+                    item: Some(31)
+                },
             ]
         );
         assert!(model.worn(equip_slot::OFF_HAND).is_none());
@@ -954,7 +1414,10 @@ mod tests {
         fill_backpack(&mut model);
         let before = model.clone();
         // Neither the hammer nor the shield has anywhere to go but the bow's slot.
-        assert_eq!(model.apply(Op::Equip { item: 31 }, WARRIOR), Err(Refusal::NoRoom));
+        assert_eq!(
+            model.apply(Op::Equip { item: 31 }, WARRIOR),
+            Err(Refusal::NoRoom)
+        );
         assert_eq!(model, before, "the hammer did not come off");
     }
 
@@ -963,15 +1426,27 @@ mod tests {
     fn nothing_is_worn_straight_out_of_storage() {
         let mut model = reference();
         add(&mut model, entry(40, Some((STORAGE, 0)), 7, 1, 1));
-        assert_eq!(model.apply(Op::Equip { item: 40 }, WARRIOR), Err(Refusal::NotCarried));
+        assert_eq!(
+            model.apply(Op::Equip { item: 40 }, WARRIOR),
+            Err(Refusal::NotCarried)
+        );
     }
 
     #[test]
     // ASURA/crates/asura-world/src/inventory_model.rs:872
     fn a_take_leaves_the_rest_or_removes_the_row() {
         let mut model = reference();
-        assert_eq!(model.apply(Op::Take { item: 2, count: 1 }, WARRIOR), Ok(vec![Change::Quantity { item: 2, quantity: 99 }]));
-        assert_eq!(model.apply(Op::Take { item: 2, count: 99 }, WARRIOR), Ok(vec![Change::Removed { item: 2 }]));
+        assert_eq!(
+            model.apply(Op::Take { item: 2, count: 1 }, WARRIOR),
+            Ok(vec![Change::Quantity {
+                item: 2,
+                quantity: 99
+            }])
+        );
+        assert_eq!(
+            model.apply(Op::Take { item: 2, count: 99 }, WARRIOR),
+            Ok(vec![Change::Removed { item: 2 }])
+        );
         assert!(model.item(2).is_none());
         assert!(model.at(BACKPACK, 0).is_none());
     }
@@ -980,19 +1455,58 @@ mod tests {
     // ASURA/crates/asura-world/src/inventory_model.rs:881
     fn a_take_refuses_bad_counts_and_places_a_drop_cannot_come_from() {
         let mut model = reference();
-        assert_eq!(model.apply(Op::Take { item: 9, count: 0 }, WARRIOR), Err(Refusal::BadQuantity));
-        assert_eq!(model.apply(Op::Take { item: 9, count: 101 }, WARRIOR), Err(Refusal::BadQuantity));
-        assert_eq!(model.apply(Op::Take { item: 3, count: 1 }, WARRIOR), Err(Refusal::NotCarried), "worn");
-        assert_eq!(model.apply(Op::Take { item: 1, count: 1 }, WARRIOR), Err(Refusal::NotInASlot), "a bag");
+        assert_eq!(
+            model.apply(Op::Take { item: 9, count: 0 }, WARRIOR),
+            Err(Refusal::BadQuantity)
+        );
+        assert_eq!(
+            model.apply(
+                Op::Take {
+                    item: 9,
+                    count: 101
+                },
+                WARRIOR
+            ),
+            Err(Refusal::BadQuantity)
+        );
+        assert_eq!(
+            model.apply(Op::Take { item: 3, count: 1 }, WARRIOR),
+            Err(Refusal::NotCarried),
+            "worn"
+        );
+        assert_eq!(
+            model.apply(Op::Take { item: 1, count: 1 }, WARRIOR),
+            Err(Refusal::NotInASlot),
+            "a bag"
+        );
     }
 
     #[test]
     // ASURA/crates/asura-world/src/inventory_model.rs:890
     fn a_merge_respects_the_stack_limit() {
         let mut model = reference();
-        assert_eq!(model.apply(Op::Merge { into: 2, count: 150 }, WARRIOR), Ok(vec![Change::Quantity { item: 2, quantity: 250 }]));
-        assert_eq!(model.apply(Op::Merge { into: 2, count: 1 }, WARRIOR), Err(Refusal::BadQuantity));
-        assert_eq!(model.apply(Op::Merge { into: 3, count: 1 }, WARRIOR), Err(Refusal::BadQuantity), "a hammer does not stack");
+        assert_eq!(
+            model.apply(
+                Op::Merge {
+                    into: 2,
+                    count: 150
+                },
+                WARRIOR
+            ),
+            Ok(vec![Change::Quantity {
+                item: 2,
+                quantity: 250
+            }])
+        );
+        assert_eq!(
+            model.apply(Op::Merge { into: 2, count: 1 }, WARRIOR),
+            Err(Refusal::BadQuantity)
+        );
+        assert_eq!(
+            model.apply(Op::Merge { into: 3, count: 1 }, WARRIOR),
+            Err(Refusal::BadQuantity),
+            "a hammer does not stack"
+        );
     }
 
     #[test]
@@ -1000,11 +1514,36 @@ mod tests {
     fn an_insert_goes_to_the_first_free_carrying_slot() {
         let mut model = reference();
         let new = stack(500, (0, 0), 3);
-        assert_eq!(model.apply(Op::Insert { entry: new }, WARRIOR), Ok(vec![Change::Inserted { item: 500, at: (BACKPACK, 2) }]));
-        assert_eq!(model.apply(Op::Insert { entry: new }, WARRIOR), Err(Refusal::DuplicateId));
-        assert_eq!(model.apply(Op::Insert { entry: stack(501, (0, 0), 251) }, WARRIOR), Err(Refusal::BadQuantity));
+        assert_eq!(
+            model.apply(Op::Insert { entry: new }, WARRIOR),
+            Ok(vec![Change::Inserted {
+                item: 500,
+                at: (BACKPACK, 2)
+            }])
+        );
+        assert_eq!(
+            model.apply(Op::Insert { entry: new }, WARRIOR),
+            Err(Refusal::DuplicateId)
+        );
+        assert_eq!(
+            model.apply(
+                Op::Insert {
+                    entry: stack(501, (0, 0), 251)
+                },
+                WARRIOR
+            ),
+            Err(Refusal::BadQuantity)
+        );
         fill_backpack(&mut model);
-        assert_eq!(model.apply(Op::Insert { entry: stack(502, (0, 0), 1) }, WARRIOR), Err(Refusal::NoRoom));
+        assert_eq!(
+            model.apply(
+                Op::Insert {
+                    entry: stack(502, (0, 0), 1)
+                },
+                WARRIOR
+            ),
+            Err(Refusal::NoRoom)
+        );
     }
 
     #[test]
@@ -1013,8 +1552,17 @@ mod tests {
         let mut model = reference();
         assert_eq!(
             model.apply(Op::Destroy { item: 6 }, WARRIOR),
-            Ok(vec![Change::Removed { item: 6 }, Change::Worn { slot: equip_slot::HEAD, item: None }])
+            Ok(vec![
+                Change::Removed { item: 6 },
+                Change::Worn {
+                    slot: equip_slot::HEAD,
+                    item: None
+                }
+            ])
         );
-        assert_eq!(model.apply(Op::Destroy { item: 1 }, WARRIOR), Err(Refusal::NotInASlot));
+        assert_eq!(
+            model.apply(Op::Destroy { item: 1 }, WARRIOR),
+            Err(Refusal::NotInASlot)
+        );
     }
 }

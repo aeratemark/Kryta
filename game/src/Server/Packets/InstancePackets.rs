@@ -48,6 +48,22 @@ pub const INSTANCE_LOAD_INFO: u16 = 0x019A;
 /// plane 0.
 pub const INSTANCE_LOAD_SPAWN_POINT: u16 = 0x0196;
 
+/// `GAME_SMSG_INSTANCE_COUNTDOWN` (`0x0180`): the client's mission clock.
+///
+/// The wire is `[string16 caption (one code unit), byte kind, dword elapsed, dword total]`
+/// (`Rurik/schema/overrides.json` 384, `studies/newopcodes/FINDINGS.md`; `E106`). The
+/// string16 is a u16 count of code units and then the units - for a wipe the caption is one
+/// unit, `0x0575`, so the whole frame is fifteen bytes. The struct-layer capture in this
+/// tree (`recordings/client/feature/anything/maps-live-20261123-023840.jsonl` seq 721)
+/// shows the client's in-memory 122-unit buffer, not the wire; the count prefix is what
+/// makes the wire short.
+pub const INSTANCE_COUNTDOWN: u16 = 0x0180;
+
+/// `GAME_SMSG_INSTANCE_COUNTDOWN_STOP` (`0x017E`): the clock is cancelled; header only.
+///
+/// It opens the wipe's rise batch (`SLICE-F43`; `E106`).
+pub const INSTANCE_COUNTDOWN_STOP: u16 = 0x017E;
+
 /// `GAME_CMSG_INSTANCE_LOAD_REQUEST_SPAWN` (`0x8088`): the client asks where it stands.
 pub const CLIENT_LOAD_REQUEST_SPAWN: u16 = 0x8088;
 
@@ -223,6 +239,26 @@ pub fn instance_manifest_done(phase: u8, word: u16, dword: u32) -> Vec<u8> {
 /// Source: the same trace - `SEND 0x01AC 6 bytes : AC 01 00 00 00 00`.
 pub fn ready_for_map_spawn(dword: u32) -> Vec<u8> {
     frame(READY_FOR_MAP_SPAWN, &dword.to_le_bytes())
+}
+
+/// `0x0180`: the mission clock - a caption of `count` code units, a kind byte, the elapsed
+/// milliseconds and the total.
+///
+/// The wipe's clock is one code unit (`0x0575`), kind 5, nothing elapsed and 10000 ms
+/// (`E106`; `Rurik/studies/newopcodes/FINDINGS.md` 0x017E/0x0180).
+pub fn instance_countdown(label: u16, kind: u8, elapsed_ms: u32, total_ms: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(13);
+    body.extend_from_slice(&1u16.to_le_bytes()); // one code unit
+    body.extend_from_slice(&label.to_le_bytes());
+    body.push(kind);
+    body.extend_from_slice(&elapsed_ms.to_le_bytes());
+    body.extend_from_slice(&total_ms.to_le_bytes());
+    frame(INSTANCE_COUNTDOWN, &body)
+}
+
+/// `0x017E`: the mission clock is cancelled - the header alone.
+pub fn instance_countdown_stop() -> Vec<u8> {
+    frame(INSTANCE_COUNTDOWN_STOP, &[])
 }
 
 /// `0x0059`: the player's own agent, as the client is told about it at a load.

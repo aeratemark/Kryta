@@ -33,8 +33,9 @@ bitmaps, per-slot armour dyes, hero flags and inventory each arrive with the mes
 2. **The schema follows the messages.** The character list is the only reader today, and the blob it
    sends is `CharacterSettings_FromDbCharacter` (`GmChar.c`) - a 62-byte record of outpost, appearance,
    campaign, level, PvP flag, secondary profession, helm and up to five armour pieces. Every one of those
-   has a column here; the pieces do not, because this tree has no items yet, and a character wearing
-   nothing sends five empty slots.
+   has a column here except the pieces, which are the equipped bag's `item_instance` rows and are
+   derived on every read (`game/Characters/Repository.rs`, `pieces_worn_by`, from
+   `ASURA/crates/asura-db/src/game.rs:344-356`), so an in-game equip is in the next login's list.
 3. **`account_id` is what makes a list an account's.** The login asks for the characters of the account
    it just resolved; the column is the join.
 
@@ -44,8 +45,9 @@ bitmaps, per-slot armour dyes, hero flags and inventory each arrive with the mes
   It is recorded for that reason.
 - A character's `uuid` is generated at the confirm and stored as text: the wire carries 16 bytes
   little-endian, and the text form is what a human reads in a query.
-- The armour pieces are not columns. When the item stream lands, they become a bag's worth of rows and
-  the settings block derives them, which is where the reference derives them too.
+- The armour pieces are not columns. They are the equipped bag's rows, and the settings block derives
+  them from that bag on every read, which is what the working implementation does
+  (`ASURA/crates/asura-db/src/game.rs:344-356`).
 
 ## What it does not decide
 

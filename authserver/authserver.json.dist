@@ -14,6 +14,10 @@
     "value": 148,
     "doc": "Where a character whose row names no map and which has never been in an outpost enters. A setting rather than a rule: the outpost a character starts in is written by creation and by travelling, never derived, and this program holds no map catalogue to pick one from (docs/port/04-configuration.md)."
   },
+  "WorldConfigFile": {
+    "value": "worldserver/worldserver.json",
+    "doc": "The world program's own settings file. This program builds the login's character list, whose settings block draws each character's armour from the equipped bag, so it reads that world's InventoryFile to learn which bag that is. Relative to where this program is started; an empty value stops this program rather than start a list that draws every character naked."
+  },
   "BindIP": {
     "value": "0.0.0.0",
     "doc": "The address the listener binds. 0.0.0.0 is every interface."

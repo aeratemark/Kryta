@@ -19,6 +19,26 @@
       "doc": "resign from the party: after the pack's delay the member dies; when every present member has resigned the party is defeated and its leader may return to the last outpost"
     },
     {
+      "command": "damage",
+      "operation": "chat.damage",
+      "parameters": [
+        "amount"
+      ],
+      "doc": "take this much health, for watching the death cycle before a skill lands the blow (ours, not ASURA's)"
+    },
+    {
+      "command": "kill",
+      "operation": "chat.kill",
+      "parameters": [],
+      "doc": "take all of the caller's health, for watching the death cycle (ours, not ASURA's)"
+    },
+    {
+      "command": "revive",
+      "operation": "chat.revive",
+      "parameters": [],
+      "doc": "stand the caller up where it fell, for watching the rise (ours, not ASURA's)"
+    },
+    {
       "command": "maps",
       "operation": "chat.maps",
       "parameters": [],
@@ -51,6 +71,14 @@
       "operation": "chat.experience_read",
       "parameters": [],
       "doc": "a server line with the character's total experience and level (ASURA chat.rs:297-302; preforged's /xp). ASURA's /xp also sets with an argument; one name is one row here, so setting is /.exp"
+    },
+    {
+      "command": "skill",
+      "operation": "chat.skill",
+      "parameters": [
+        "argument"
+      ],
+      "doc": "ASURA's test command while no quest or trainer teaches skills: /skill list, /skill learn <id>, /skill learn all, /skill forget <id> (ASURA skill/character.rs:628-744)"
     },
     {
       "command": "item",

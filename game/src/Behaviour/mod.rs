@@ -5,13 +5,12 @@
 //! The NPC behavior-tree runtime, ported from
 //! `ASURA/crates/asura-world/src/npc/behavior.rs` (840 lines, the local repository as it stands on
 //! 2026-11-22): the node semantics, the running state, the patrol walk and the halt. The tree's
-//! *shape* is content and arrives later from `npcs/behaviors.lua` (`ASURA` `npc/lua.rs`); this file
-//! is the Rust half that the Lua source will construct.
+//! *shape* is content, read from `npcs/behaviors.lua` by `game/Scripting/NpcBehaviors.rs` (`ASURA`
+//! `npc/lua.rs`); this file is the Rust half that source constructs.
 //!
-//! **Ported thin:** the Script leaf and its per-agent Lua state wait for `game/Scripting/` and the
-//! Lua runtime (`docs/asura-port-plan.md`, stage N4, then the Lua source). Everything else - `Sequence`,
-//! `Fallback`, `Wait`, `Stand`, `Patrol`, `Burrow`, the clock, the failure reasons and the tests -
-//! is carried.
+//! **Ported whole** (2026-11-23): `Sequence`, `Fallback`, `Wait`, `Stand`, `Patrol`, `Burrow`, the
+//! Script leaf and its per-agent Lua state (`behavior.rs:72-79`, 93-111, 168-169, 196-204, 244-250,
+//! 300, 358-398), the clock, the failure reasons and the tests.
 //!
 //! The clock is the district tick's elapsed time, passed in. Nothing here reads a wall clock, so a
 //! tree's run is a function of its inputs.
@@ -19,13 +18,13 @@
 //! The states the tree names are the ones ASURA has: `Stand` is the idle body, `Patrol` is a route
 //! walk, and `Burrow` is the vanish/appear cycle. Combat and flight are not leaves: ASURA keeps them
 //! in `npc/fight.rs` (`State::Idle`, `Engaged`, `Returning`, `Dead`) on top of `crate::skill`, and a
-//! Lua script leaf reads `ctx.in_combat` when that source arrives. This tree does not invent a
-//! `Combat` or `Flee` node.
+//! Lua script leaf reads `ctx.in_combat`. This tree does not invent a `Combat` or `Flee` node.
 
 use crate::agents::Agent;
 use crate::agents::npc_content::{Route, RouteMode};
 use crate::server::packets::npc_packets::Msg;
 use crate::terrain::pathfind::{Pos, Walk};
+use mlua::{Function, Table};
 use std::collections::BTreeMap;
 
 /// What a node says after a tick.
@@ -68,13 +67,18 @@ pub enum Spec {
         /// Milliseconds the body stays removed before the next emerge transition.
         hidden_ms: u32,
     },
+    /// A Lua function called once per tick (`behavior.rs:72-79`). `burrow` starts the body in the
+    /// emerge transition, so a script that owns the cycle begins where a [`Spec::Burrow`] body does.
+    Script {
+        /// The name the script table uses; the source resolves it to the function.
+        name: String,
+        /// Whether the body starts emerging and accepts `ctx:burrow()`/`ctx:emerge()`.
+        burrow: bool,
+    },
 }
 
 /// A burrow transition a script asked for. The table applies it on the next tick, through the same
 /// measured wire a [`Spec::Burrow`] body uses (`behavior.rs:82-91`).
-///
-/// No script leaf exists yet, so nothing constructs one; the table's own test drives it, and the
-/// Lua source will, unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BurrowRequest {
     /// Leave the surface: the 2.00 s submerge animation, then hidden. A `hidden_ms` of 0 stays hidden
@@ -87,11 +91,37 @@ pub enum BurrowRequest {
     Emerge,
 }
 
+/// One script leaf's per-agent Lua state: the function, its persistent state table, the context it is
+/// called with, and the command table the context's methods append to (`behavior.rs:93-111`).
+#[derive(Clone)]
+pub struct Script {
+    /// The Lua function.
+    pub function: Function,
+    /// The table passed as `ctx` on every call.
+    pub context: Table,
+    /// The persistent `ctx.state` table.
+    pub state: Table,
+    /// The commands the context's methods wrote this tick.
+    pub commands: Table,
+}
+
+impl std::fmt::Debug for Script {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Script").finish_non_exhaustive()
+    }
+}
+
 /// Where behavior trees come from: the pack's constructor (`table.rs:26-37`). A pack with a Lua
 /// script uses its trees through `npc/lua.rs`; a pack without one has [`PackBehaviors`].
 pub trait BehaviorSource {
     /// The tree a behavior name builds, or `None` for a name the source does not know.
     fn spec(&self, name: &str) -> Option<Spec>;
+
+    /// The per-agent Lua state for a script entry, or `None` when the source has no such function
+    /// (`table.rs:32-37`).
+    fn script(&self, _name: &str) -> Option<Script> {
+        None
+    }
 }
 
 /// The pack's built-in behavior names, used when a pack has no Lua script: `patrol` walks the
@@ -133,9 +163,9 @@ pub struct Ctx<'a> {
     pub out: &'a mut Vec<Msg>,
     /// Why the last leaf that failed failed, for the log line that parks the agent.
     pub failure: Option<String>,
-    /// Whether a fight is driving this body: what the future script leaf reads as `ctx.in_combat`.
+    /// Whether a fight is driving this body: what a script leaf reads as `ctx.in_combat`.
     pub in_combat: bool,
-    /// The body's burrow phase, when it has one: what the future script leaf reads as `ctx.phase`.
+    /// The body's burrow phase, when it has one: what a script leaf reads as `ctx.phase`.
     pub burrow_phase: Option<&'static str>,
     /// A transition a script asked for; the table applies it on the next tick.
     pub burrow_request: Option<BurrowRequest>,
@@ -148,6 +178,8 @@ pub struct Tree {
     nodes: Vec<Node>,
     /// The first [`Spec::Burrow`] in the tree, if it has one: the terms the table's cycle runs on.
     burrow: Option<(u32, u32)>,
+    /// Whether a [`Spec::Script`] asked to own the burrow cycle (`behavior.rs:168-169`).
+    script_burrow: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -173,22 +205,28 @@ enum Kind {
     Patrol(Patrol),
     /// The table owns the vanish/appear wire; this node stays running so the tree is not parked.
     Burrow,
+    /// A Lua function called once per tick with the context table.
+    Script {
+        script: Script,
+    },
 }
 
 impl Tree {
     /// Build one agent's tree from a spec. A `Patrol` with no route of its own takes `own_route`; a
-    /// route that does not resolve is a construction error, which refuses the pack at load
-    /// (`behavior.rs:172-188`).
+    /// route that does not resolve is a construction error, which refuses the pack at load. A
+    /// `Script` takes its per-agent Lua state from `behaviors` (`behavior.rs:172-188`).
     pub fn build(
         spec: &Spec,
         own_route: Option<&str>,
         routes: &BTreeMap<String, Route>,
+        behaviors: &dyn BehaviorSource,
     ) -> Result<Tree, String> {
         let mut tree = Tree {
             nodes: Vec::new(),
             burrow: None,
+            script_burrow: false,
         };
-        tree.add(spec, own_route, routes)?;
+        tree.add(spec, own_route, routes, behaviors)?;
         Ok(tree)
     }
 
@@ -199,11 +237,24 @@ impl Tree {
         self.burrow
     }
 
+    /// Whether a script leaf asked for the body to start emerging and own its burrow cycle
+    /// (`behavior.rs:196-199`).
+    pub fn script_burrow(&self) -> bool {
+        self.script_burrow
+    }
+
+    /// Whether the whole tree is one script leaf: such a tree keeps ticking while a fight drives the
+    /// body, so the script can react to the fight (`behavior.rs:200-204`).
+    pub fn is_script_only(&self) -> bool {
+        self.nodes.len() == 1 && matches!(&self.nodes[0].kind, Kind::Script { .. })
+    }
+
     fn add(
         &mut self,
         spec: &Spec,
         own_route: Option<&str>,
         routes: &BTreeMap<String, Route>,
+        behaviors: &dyn BehaviorSource,
     ) -> Result<usize, String> {
         let index = self.nodes.len();
         let (kind, children) = match spec {
@@ -236,6 +287,13 @@ impl Tree {
                 }
                 (Kind::Burrow, &[][..])
             }
+            Spec::Script { name, burrow } => {
+                let script = behaviors
+                    .script(name)
+                    .ok_or_else(|| format!("script {name} is not a Lua function"))?;
+                self.script_burrow |= *burrow;
+                (Kind::Script { script }, &[][..])
+            }
         };
         if matches!(&kind, Kind::Sequence { .. } | Kind::Fallback { .. }) && children.is_empty() {
             return Err("a Sequence or a Fallback has no children".to_string());
@@ -246,7 +304,7 @@ impl Tree {
             running: false,
         });
         for child in children {
-            let child = self.add(child, own_route, routes)?;
+            let child = self.add(child, own_route, routes, behaviors)?;
             self.nodes[index].children.push(child);
         }
         Ok(index)
@@ -285,6 +343,7 @@ impl Tree {
             }
             Kind::Stand | Kind::Burrow => Status::Running,
             Kind::Patrol(ref mut patrol) => patrol.tick(ctx),
+            Kind::Script { ref script } => tick_script(script, ctx),
         };
         self.nodes[index].running = status == Status::Running;
         status
@@ -336,9 +395,53 @@ impl Tree {
             Kind::Wait { left, .. } => *left = None,
             Kind::Stand | Kind::Burrow => {}
             Kind::Patrol(patrol) => patrol.halt(ctx),
+            Kind::Script { .. } => {}
         }
         node.running = false;
     }
+}
+
+/// One script leaf's tick: fill the context, call the function, and turn its commands into the tick
+/// (`behavior.rs:358-398`).
+fn tick_script(script: &Script, ctx: &mut Ctx<'_>) -> Status {
+    let prepared = script
+        .context
+        .set("agent_id", ctx.body.agent_id)
+        .and_then(|_| script.context.set("map_id", ctx.map_id))
+        .and_then(|_| script.context.set("delta_ms", ctx.elapsed_ms))
+        .and_then(|_| script.context.set("in_combat", ctx.in_combat))
+        .and_then(|_| script.context.set("phase", ctx.burrow_phase))
+        .and_then(|_| script.commands.clear());
+    if let Err(err) = prepared {
+        ctx.failure = Some(format!("script context: {err}"));
+        return Status::Failure;
+    }
+    let result: mlua::Result<Option<String>> = script.function.call(script.context.clone());
+    let status = match result {
+        Ok(Some(action)) if action == "success" => Status::Success,
+        Ok(Some(action)) if action == "failure" => Status::Failure,
+        Ok(_) => Status::Running,
+        Err(err) => {
+            ctx.failure = Some(format!("script: {err}"));
+            return Status::Failure;
+        }
+    };
+    for command in script
+        .commands
+        .sequence_values::<Table>()
+        .filter_map(Result::ok)
+    {
+        let op: String = command.get("op").unwrap_or_default();
+        match op.as_str() {
+            "burrow" => {
+                let hidden_ms: u32 = command.get("hidden_ms").unwrap_or(0);
+                ctx.burrow_request = Some(BurrowRequest::Submerge { hidden_ms });
+            }
+            "emerge" => ctx.burrow_request = Some(BurrowRequest::Emerge),
+            _ => {}
+        }
+    }
+    status
 }
 
 /// Cancel a body's walk where it stands and tell its clients, if it is walking (`behavior.rs:400-410`).
@@ -579,7 +682,7 @@ pub(crate) mod tests {
         own_route: Option<&str>,
         routes: &BTreeMap<String, Route>,
     ) -> Result<Tree, String> {
-        Tree::build(spec, own_route, routes)
+        Tree::build(spec, own_route, routes, &PackBehaviors)
     }
 
     /// Advance the body as the table does, then tick the tree.

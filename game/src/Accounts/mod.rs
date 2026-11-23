@@ -326,9 +326,7 @@ mod tests {
         );
         let blob: Vec<u8> = (0..=255u8).chain([0x08, 0x00, 0x66, 0x21]).collect();
         assert!(
-            accounts
-                .set_settings_for_user(user, &blob)
-                .expect("stored"),
+            accounts.set_settings_for_user(user, &blob).expect("stored"),
             "the account row was written"
         );
         assert_eq!(

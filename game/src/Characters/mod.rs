@@ -34,6 +34,9 @@ pub mod inventory;
 #[path = "ItemOps.rs"]
 pub mod item_ops;
 
+#[path = "Skills.rs"]
+pub mod skills;
+
 pub use equipping::{NotWorn, equip_place};
 pub use sheet::CharacterSheet;
 

@@ -392,6 +392,16 @@ impl Parties {
         self.tables.get(&(map_id, district))
     }
 
+    /// The members of a player's party standing in one running copy, the player included; a player
+    /// the copy's table does not know is a party of one
+    /// (`ASURA/crates/asura-world/src/compass.rs:11-19`, `party_present`).
+    pub fn present(&self, map_id: u32, district: u32, player_id: u32) -> Vec<u32> {
+        self.get(map_id, district)
+            .and_then(|table| table.party_of(player_id))
+            .map(Party::present)
+            .unwrap_or_else(|| vec![player_id])
+    }
+
     /// Forget a copy whose last party went, so an emptied district holds nothing.
     pub fn tidy(&mut self, map_id: u32, district: u32) {
         if self
@@ -1074,6 +1084,39 @@ mod tests {
         assert_eq!(
             table.leader_and_size(9),
             (9, 1),
+            "an unknown player is a party of one"
+        );
+    }
+
+    /// `ASURA/crates/asura-world/src/compass.rs:11-19`: the present members of one copy's party,
+    /// and a party of one for a player the copy does not know.
+    #[test]
+    fn a_players_party_is_the_members_standing_in_its_copy() {
+        let mut parties = Parties::new();
+        let party_id = parties.table(148, 1).found(1);
+        let party = parties
+            .table(148, 1)
+            .parties
+            .get_mut(&party_id)
+            .expect("the party that was just founded");
+        party.members.push(2);
+        party.members.push(3);
+        party.absent.insert(
+            3,
+            Absence {
+                held: true,
+                epoch: 1,
+            },
+        );
+        assert_eq!(parties.present(148, 1, 1), vec![1, 2]);
+        assert_eq!(
+            parties.present(148, 2, 1),
+            vec![1],
+            "another district has no table"
+        );
+        assert_eq!(
+            parties.present(148, 1, 9),
+            vec![9],
             "an unknown player is a party of one"
         );
     }

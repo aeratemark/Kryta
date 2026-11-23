@@ -317,7 +317,9 @@ mod tests {
         let portal = Arc::new(Portal::new(One));
         let factory: SessionFactory = {
             let portal = Arc::clone(&portal);
-            Arc::new(move || Box::new(PortalSession::new(Arc::clone(&portal), None)) as Box<dyn Session>)
+            Arc::new(move || {
+                Box::new(PortalSession::new(Arc::clone(&portal), None)) as Box<dyn Session>
+            })
         };
 
         let mut manager = SocketMgr::new(factory);
@@ -325,7 +327,9 @@ mod tests {
 
         let ask = |request: &str| -> String {
             let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-            client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
             client.write_all(request.as_bytes()).unwrap();
             let mut answer = Vec::new();
             let mut chunk = [0u8; 1024];
@@ -340,29 +344,38 @@ mod tests {
         };
 
         // 1. The session.
-        let created = ask("GET /Spawned/WebGate/session/create.xml HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        let created =
+            ask("GET /Spawned/WebGate/session/create.xml HTTP/1.1\r\nHost: localhost\r\n\r\n");
         assert!(created.starts_with("HTTP/1.1 200 OK"), "{created}");
         let start = created.find("<Session>").unwrap() + "<Session>".len();
         let end = created.find("</Session>").unwrap();
         let session = created[start..end].to_string();
 
         // 2. The login.
-        let body = "<Login><Provider>Portal</Provider><LoginName>player@example.com</LoginName></Login>";
+        let body =
+            "<Login><Provider>Portal</Provider><LoginName>player@example.com</LoginName></Login>";
         let logged_in = ask(&format!(
             "POST /Spawned/WebGate/users/login.xml HTTP/1.1\r\nHost: localhost\r\nAuthorization: Arena {session}\r\nContent-Length: {}\r\n\r\n{body}",
             body.len()
         ));
         assert!(logged_in.starts_with("HTTP/1.1 200 OK"), "{logged_in}");
-        assert!(logged_in.contains("AAAA1111-2222-3333-4444-555566667777"), "{logged_in}");
+        assert!(
+            logged_in.contains("AAAA1111-2222-3333-4444-555566667777"),
+            "{logged_in}"
+        );
 
         // 3. The token.
         let token = ask(&format!(
             "POST /Spawned/WebGate/my_account/token.xml HTTP/1.1\r\nHost: localhost\r\nAuthorization: Arena {session}\r\nContent-Length: 0\r\n\r\n"
         ));
-        assert!(token.contains("<Token>TOKEN-0000-1111-2222-333344445555</Token>"), "{token}");
+        assert!(
+            token.contains("<Token>TOKEN-0000-1111-2222-333344445555</Token>"),
+            "{token}"
+        );
 
         // 4. An unknown session, which is the refusal a client can act on.
-        let refused = ask("POST /Spawned/WebGate/my_account/token.xml HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        let refused =
+            ask("POST /Spawned/WebGate/my_account/token.xml HTTP/1.1\r\nHost: localhost\r\n\r\n");
         assert!(refused.starts_with("HTTP/1.1 401"), "{refused}");
 
         manager.stop_network();

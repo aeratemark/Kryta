@@ -196,8 +196,7 @@ impl Catalogue {
     /// definition silently dropped: the world refuses to start rather than serving half a pack.
     // ASURA/crates/asura-world/src/item_catalogue.rs:176
     pub fn from_json(text: &str) -> Result<Catalogue, String> {
-        let definitions =
-            definition_file(text).map_err(|err| format!("items.json: {err}"))?;
+        let definitions = definition_file(text).map_err(|err| format!("items.json: {err}"))?;
         if definitions.is_empty() {
             return Err("items.json: definitions is empty".to_string());
         }
@@ -233,8 +232,7 @@ impl Catalogue {
     /// lists must be defined here.
     // ASURA/crates/asura-world/src/item_catalogue.rs:213
     pub fn with_upgrades_json(mut self, text: &str) -> Result<Catalogue, String> {
-        let upgrades =
-            upgrade_file(text).map_err(|err| format!("{UPGRADES_FILE}: {err}"))?;
+        let upgrades = upgrade_file(text).map_err(|err| format!("{UPGRADES_FILE}: {err}"))?;
         for upgrade in upgrades {
             if upgrade.shape.first() != Some(&0x2408) {
                 return Err(format!(
@@ -456,21 +454,26 @@ const UPGRADE_FILE_KEYS: [&str; 2] = ["note", "upgrades"];
 const UPGRADE_KEYS: [&str; 5] = ["id", "role", "name", "shape", "seen_on"];
 
 /// An object whose keys are all in `allowed`, as `deny_unknown_fields` holds it.
-fn fields<'a>(value: &'a Value, allowed: &[&str], what: &str) -> Result<&'a Map<String, Value>, String> {
+fn fields<'a>(
+    value: &'a Value,
+    allowed: &[&str],
+    what: &str,
+) -> Result<&'a Map<String, Value>, String> {
     let object = value
         .as_object()
         .ok_or_else(|| format!("{what} is not an object"))?;
-    if let Some(key) = object
-        .keys()
-        .find(|key| !allowed.contains(&key.as_str()))
-    {
+    if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
         return Err(format!("{what} has unknown field `{key}`"));
     }
     Ok(object)
 }
 
 /// A field that must be present.
-fn required<'a>(object: &'a Map<String, Value>, key: &str, what: &str) -> Result<&'a Value, String> {
+fn required<'a>(
+    object: &'a Map<String, Value>,
+    key: &str,
+    what: &str,
+) -> Result<&'a Value, String> {
     object
         .get(key)
         .ok_or_else(|| format!("{what} is missing field `{key}`"))
@@ -497,7 +500,11 @@ fn whole<T: TryFrom<u64>>(value: &Value, what: &str) -> Result<T, String> {
     T::try_from(number).map_err(|_| format!("{what} is out of range: {number}"))
 }
 
-fn list<T>(value: &Value, what: &str, item: impl Fn(&Value, &str) -> Result<T, String>) -> Result<Vec<T>, String> {
+fn list<T>(
+    value: &Value,
+    what: &str,
+    item: impl Fn(&Value, &str) -> Result<T, String>,
+) -> Result<Vec<T>, String> {
     value
         .as_array()
         .ok_or_else(|| format!("{what} is not a list"))?
@@ -531,9 +538,11 @@ fn definition_file(text: &str) -> Result<Vec<ItemDefinition>, String> {
     let document: Value = serde_json::from_str(text).map_err(|err| err.to_string())?;
     let file = fields(&document, &DEFINITION_FILE_KEYS, "the file")?;
     optional(file, "note", |value| string(value, "note"))?;
-    list(required(file, "definitions", "the file")?, "definitions", |value, _| {
-        definition(value)
-    })
+    list(
+        required(file, "definitions", "the file")?,
+        "definitions",
+        |value, _| definition(value),
+    )
 }
 
 fn definition(value: &Value) -> Result<ItemDefinition, String> {
@@ -556,7 +565,9 @@ fn definition(value: &Value) -> Result<ItemDefinition, String> {
         profession: whole(get("profession")?, &what("profession"))?,
         modifiers: list(get("modifiers")?, &what("modifiers"), whole)?,
         stackable: boolean(get("stackable")?, &what("stackable"))?,
-        max_stack: optional(object, "max_stack", |value| whole(value, &what("max_stack")))?,
+        max_stack: optional(object, "max_stack", |value| {
+            whole(value, &what("max_stack"))
+        })?,
         equip_positions: list(get("equip_positions")?, &what("equip_positions"), whole)?,
         restrictions: list(get("restrictions")?, &what("restrictions"), string)?,
         base: optional(object, "base", |value| string(value, &what("base")))?,
@@ -570,9 +581,11 @@ fn upgrade_file(text: &str) -> Result<Vec<Upgrade>, String> {
     let document: Value = serde_json::from_str(text).map_err(|err| err.to_string())?;
     let file = fields(&document, &UPGRADE_FILE_KEYS, "the file")?;
     optional(file, "note", |value| string(value, "note"))?;
-    list(required(file, "upgrades", "the file")?, "upgrades", |value, _| {
-        upgrade(value)
-    })
+    list(
+        required(file, "upgrades", "the file")?,
+        "upgrades",
+        |value, _| upgrade(value),
+    )
 }
 
 fn upgrade(value: &Value) -> Result<Upgrade, String> {
@@ -655,12 +668,34 @@ mod tests {
             let definition = catalogue
                 .for_item(None, file_id, item_type, model_id)
                 .unwrap_or_else(|| {
-                    panic!("creation item {id} ({file_id}, {item_type}, {model_id}) has no definition")
+                    panic!(
+                        "creation item {id} ({file_id}, {item_type}, {model_id}) has no definition"
+                    )
                 });
-            assert_eq!(i64::from(definition.file_id), file_id, "{} file id", definition.id);
-            assert_eq!(i32::from(definition.item_type), item_type, "{} item type", definition.id);
-            assert_eq!(i64::from(definition.model_id), model_id, "{} model id", definition.id);
-            assert_eq!(i32::from(definition.profession), profession, "{} profession", definition.id);
+            assert_eq!(
+                i64::from(definition.file_id),
+                file_id,
+                "{} file id",
+                definition.id
+            );
+            assert_eq!(
+                i32::from(definition.item_type),
+                item_type,
+                "{} item type",
+                definition.id
+            );
+            assert_eq!(
+                i64::from(definition.model_id),
+                model_id,
+                "{} model id",
+                definition.id
+            );
+            assert_eq!(
+                i32::from(definition.profession),
+                profession,
+                "{} profession",
+                definition.id
+            );
         }
     }
 
@@ -670,8 +705,10 @@ mod tests {
         let catalogue = vanilla();
         let items = creation_items();
         let wire = |id: u64| {
-            let (_, file_id, item_type, model_id, _) =
-                *items.iter().find(|item| item.0 == id).expect("creation item");
+            let (_, file_id, item_type, model_id, _) = *items
+                .iter()
+                .find(|item| item.0 == id)
+                .expect("creation item");
             catalogue
                 .for_item(None, file_id, item_type, model_id)
                 .map(|definition| definition.id.as_str())
@@ -812,9 +849,11 @@ mod tests {
     fn listed_upgrades_must_match_the_words_and_be_defined() {
         // Words carry Knight's (0x1f9); the list says nothing.
         let unlisted = one("[33026,2395]", "[604504569]", "[]");
-        assert!(Catalogue::from_json(&unlisted)
-            .expect_err("refused")
-            .contains("lists upgrades"));
+        assert!(
+            Catalogue::from_json(&unlisted)
+                .expect_err("refused")
+                .contains("lists upgrades")
+        );
         // Listed and carried, but the upgrades file does not define it.
         let undefined = one("[33026,2395]", "[604504569]", "[505]");
         let err = Catalogue::from_json(&undefined)

@@ -32,6 +32,9 @@ pub mod pack;
 #[path = "NpcPack.rs"]
 pub mod npc_pack;
 
+#[path = "VendorPack.rs"]
+pub mod vendor_pack;
+
 pub use portals::{Arch, Crossed, Portals};
 
 pub use travel_targets::{TRAVEL_TARGETS, TravelTarget};

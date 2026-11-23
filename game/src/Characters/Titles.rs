@@ -567,7 +567,14 @@ mod tests {
         assert_eq!(titles.track_count(), 145);
         assert_eq!(titles.selectable_rank(48), Some(369));
         assert_eq!(titles.selectable_rank(147), Some(567));
-        assert!(titles.tracks.keys().filter(|&&id| id >= 48).copied().eq(48..148));
+        assert!(
+            titles
+                .tracks
+                .keys()
+                .filter(|&&id| id >= 48)
+                .copied()
+                .eq(48..148)
+        );
         let body: serde_json::Value = serde_json::from_slice(&titles.custom_catalog()).unwrap();
         let rows = body["custom_tracks"].as_array().unwrap();
         assert_eq!(rows.len(), 100);

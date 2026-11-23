@@ -141,6 +141,16 @@ content.
     the old copy, in one commit. The compiler is then the complete list of callers.
 12. **Say the short true thing.** A correction replaces the text it corrects; it is never appended
     beside it, in a file or in an answer.
+13. **A client-verified fix is never removed to "match retail".** A capture is evidence of what retail
+    sends, not proof that this server works without it: retail may set the same state another way that
+    this server does not reproduce. Before you remove or reorder a packet that a past fix added, read the
+    comment and the test that guard it, and show in the live client that the behaviour still works. A
+    failing regression test means put the behaviour back. Never edit the test to make it pass.
+    Guarded behaviour (one line each, with its test):
+    - HUD health/energy bars: the exploration grid (`0x008B`/`0x008A`) sits inside the load block
+      right after the morale (`0x009C`), as retail sends it, and the load sends no pool fractions
+      (properties 33/34). Proven in the live client 2026-11-23 - `game/src/Agents/Player.rs`,
+      `the_exploration_grid_follows_the_morale_and_no_pool_fractions_are_sent`.
 
 ### Before any change: the pre-flight sentence
 

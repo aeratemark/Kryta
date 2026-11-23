@@ -644,6 +644,48 @@ fn run(args: &[String]) -> Result<(), String> {
             .map_err(|error| format!("cannot start the world list refresh: {error}"))?
     };
 
+    // The bag the character list draws each character's armour from. The list is built here rather
+    // than by the world, so this program reads the world's creation content to learn which bag a
+    // character wears things in: the world program's own settings name the inventory file, which is
+    // the same content its creation screen gives a character. Reading it in one place is what keeps
+    // the id the list draws from equal to the id the world's equipment moves into.
+    let (world_config_file, notes) = config
+        .value_string("WorldConfigFile", "worldserver/worldserver.json")
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    if world_config_file.is_empty() {
+        return Err(
+            "WorldConfigFile is empty: the character list cannot learn which bag a character wears its armour in, and every character would be drawn naked at character select"
+                .to_string(),
+        );
+    }
+    let world_config = Config::load_json(&world_config_file, false, Policy::default())
+        .map_err(|error| error.to_string())?;
+    let (inventory_file, notes) = world_config
+        .value_string(
+            "InventoryFile",
+            "config/World/Vanilla/creation/inventory.json",
+        )
+        .map_err(|error| error.to_string())?;
+    for note in notes {
+        report(&note);
+    }
+    let equipped_bag = game::creation::equipped_bag_id(&inventory_file).map_err(|error| {
+        format!("the character list cannot read the creation inventory: {error}")
+    })?;
+    log.out(
+        LogLevel::Info,
+        "server.authserver",
+        format!(
+            "Character list: armour pieces from the equipped bag ({}) in {inventory_file}.",
+            equipped_bag
+                .map(|bag| bag.to_string())
+                .unwrap_or_else(|| "none".to_string())
+        ),
+    );
+
     // The characters of the account a login resolves: read from the character database, which is the
     // second database this program opens now that a login's answer lists them
     // (`docs/decisions/0007-character-schema.md`). Its connection string is critical for the same
@@ -664,10 +706,13 @@ fn run(args: &[String]) -> Result<(), String> {
         "server.authserver",
         "Started character database connection pool.",
     );
-    let characters_store = std::sync::Arc::new(crate::server::DatabaseCharacters::new(
-        std::sync::Arc::new(std::sync::Mutex::new(character_pool)),
-        log.clone(),
-    ));
+    let characters_store = std::sync::Arc::new(
+        crate::server::DatabaseCharacters::new(
+            std::sync::Arc::new(std::sync::Mutex::new(character_pool)),
+            log.clone(),
+        )
+        .with_equipped_bag(equipped_bag),
+    );
 
     let factory: SessionFactory = {
         let log = log.clone();

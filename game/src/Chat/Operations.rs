@@ -150,7 +150,7 @@ impl Refusal {
 /// the answer is, and the door performs it in its own medium - frames on chat, text on the console,
 /// JSON over the control endpoint - which is why one implementation serves every surface without a
 /// branch per surface anywhere.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
     /// Text: `wire` is what a client is told, `log` is what the operator's log gets.
     Text {
@@ -187,6 +187,21 @@ pub enum Outcome {
         /// What was typed after the command: a name or id, and optionally a quantity.
         argument: String,
     },
+    /// `/skill <verb> [id]`: ASURA's test command, because no quest or trainer teaches skills yet
+    /// (`ASURA/crates/asura-world/src/skill/character.rs:628-744`). The session holds the loadout.
+    Skill {
+        /// What was typed after the command: `list`, `learn <id>`, `learn all` or `forget <id>`.
+        argument: String,
+    },
+    /// `/damage <n>`: the operator's test of the death cycle before a skill lands the blow.
+    Damage {
+        /// How much health to take.
+        amount: f64,
+    },
+    /// `/kill`: take all of the caller's health.
+    Kill,
+    /// `/revive`: stand the caller up where it fell.
+    Revive,
 }
 
 impl Outcome {
@@ -215,7 +230,11 @@ impl Outcome {
             | Outcome::Resign
             | Outcome::Guild { .. }
             | Outcome::Experience { .. }
-            | Outcome::GrantItem { .. } => Err(Refusal::new(
+            | Outcome::GrantItem { .. }
+            | Outcome::Skill { .. }
+            | Outcome::Damage { .. }
+            | Outcome::Kill
+            | Outcome::Revive => Err(Refusal::new(
                 REFUSED,
                 "this operation needs a player session: it answers with frames a client performs",
             )),
@@ -459,6 +478,41 @@ pub fn chat_resign(
     Ok(Outcome::Resign)
 }
 
+/// `/damage <amount>`: the operator's test of the death cycle. It is **ours**, not ASURA's:
+/// the engine's own blows go through armour, and this is the door that lets a death be watched
+/// before a skill lands one.
+pub fn chat_damage(
+    invocation: &Invocation,
+    _world: &crate::world::World,
+    _agent: Option<&crate::agents::Agent>,
+) -> Result<Outcome, Refusal> {
+    let amount = invocation
+        .arguments
+        .get(0)
+        .and_then(|text| text.parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .ok_or_else(|| Refusal::new(INVALID_ARGUMENTS, "Usage: /damage <amount>"))?;
+    Ok(Outcome::Damage { amount })
+}
+
+/// `/kill`: the operator's test of the death cycle - all of the caller's health at once.
+pub fn chat_kill(
+    _invocation: &Invocation,
+    _world: &crate::world::World,
+    _agent: Option<&crate::agents::Agent>,
+) -> Result<Outcome, Refusal> {
+    Ok(Outcome::Kill)
+}
+
+/// `/revive`: the operator's test of the rise - stand the caller up where it fell.
+pub fn chat_revive(
+    _invocation: &Invocation,
+    _world: &crate::world::World,
+    _agent: Option<&crate::agents::Agent>,
+) -> Result<Outcome, Refusal> {
+    Ok(Outcome::Revive)
+}
+
 /// `/guild <verb>`: the session performs it (`ASURA/crates/asura-world/src/chat.rs:536-540`). Not the
 /// reference's: ASURA's owner's stand-in for the Guild Registrar (2026-11-06).
 pub fn chat_guild(
@@ -501,6 +555,17 @@ pub fn chat_grant_item(
     _agent: Option<&crate::agents::Agent>,
 ) -> Result<Outcome, Refusal> {
     Ok(Outcome::GrantItem {
+        argument: invocation.arguments.get(0).unwrap_or_default().to_string(),
+    })
+}
+
+/// `/skill <verb> [id]`: ASURA's test command (`ASURA/crates/asura-world/src/skill/character.rs:628-744`).
+pub fn chat_skill(
+    invocation: &Invocation,
+    _world: &crate::world::World,
+    _agent: Option<&crate::agents::Agent>,
+) -> Result<Outcome, Refusal> {
+    Ok(Outcome::Skill {
         argument: invocation.arguments.get(0).unwrap_or_default().to_string(),
     })
 }
@@ -573,6 +638,38 @@ pub fn register_chat(registry: &mut Registry) -> Result<(), String> {
             arguments: &["item"],
         },
         chat_grant_item,
+    )?;
+    registry.register(
+        Registration {
+            name: "chat.skill",
+            help: "list, learn or forget a skill; ASURA's test command while no quest teaches them",
+            arguments: &["argument"],
+        },
+        chat_skill,
+    )?;
+    registry.register(
+        Registration {
+            name: "chat.damage",
+            help: "take health, for watching the death cycle before a skill lands the blow",
+            arguments: &["amount"],
+        },
+        chat_damage,
+    )?;
+    registry.register(
+        Registration {
+            name: "chat.kill",
+            help: "take all of the caller's health, for watching the death cycle",
+            arguments: &[],
+        },
+        chat_kill,
+    )?;
+    registry.register(
+        Registration {
+            name: "chat.revive",
+            help: "stand the caller up where it fell",
+            arguments: &[],
+        },
+        chat_revive,
     )?;
     Ok(())
 }

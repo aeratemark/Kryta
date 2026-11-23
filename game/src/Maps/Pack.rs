@@ -304,16 +304,20 @@ mod tests {
             if graph.map_file_id == 0 {
                 continue;
             }
-            let Ok(Some((_, bytes))) = crate::terrain::pathfind::find_path_blob(
-                &mut dat,
-                graph.map_file_id,
-                graph.map_id,
-            ) else {
-                eprintln!("map {} file {} cannot be read", graph.map_id, graph.map_file_id);
+            let Ok(Some((_, bytes))) =
+                crate::terrain::pathfind::find_path_blob(&mut dat, graph.map_file_id, graph.map_id)
+            else {
+                eprintln!(
+                    "map {} file {} cannot be read",
+                    graph.map_id, graph.map_file_id
+                );
                 continue;
             };
             let Some(rect) = crate::terrain::map_data::map_rect(&bytes) else {
-                eprintln!("map {} file {} states no map rect", graph.map_id, graph.map_file_id);
+                eprintln!(
+                    "map {} file {} states no map rect",
+                    graph.map_id, graph.map_file_id
+                );
                 continue;
             };
             println!(

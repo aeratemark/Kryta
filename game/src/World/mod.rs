@@ -14,6 +14,15 @@ pub mod world_config;
 use common::logging::{Log, LogLevel};
 use std::sync::{Arc, Mutex};
 
+use crate::server::packets::{agent_packets, instance_packets};
+
+/// A party's wipe in progress: when the last member died, and whether the clock has been told.
+#[derive(Debug, Clone, Copy)]
+struct Wipe {
+    started: std::time::Instant,
+    countdown_sent: bool,
+}
+
 /// What kind of place a map is. The numbers are the client's, not this server's.
 pub mod map_kind {
     /// A town or outpost.
@@ -206,9 +215,35 @@ pub struct World {
     /// Every running copy's NPC bodies and agent ids (`game/Districts/Npcs.rs`): a copy's bodies are
     /// created the first time it hands out an agent id, which is before any player stands in it.
     npc_districts: Mutex<crate::districts::npcs::NpcDistricts>,
+    /// What each NPC offers - merchants, collectors, Xunlai storage (`game/Trader/Content.rs`), read
+    /// once at start-up from the pack's `vendors.json` (`game/Maps/VendorPack.rs`). Empty in a world
+    /// that has not read it; every NPC then opens nothing, as in ASURA without the file.
+    vendors: crate::trader::content::Vendors,
+    /// What each NPC says and what its choices do: the pack's `scripts/runtime.lua` and
+    /// `dialogs/*.lua`, read once at start-up (`game/Scripting/NpcScripts.rs`, decision 0019). `None`
+    /// in a world that has not read them; a talk then opens only a window, as ASURA without
+    /// `dialogs.json`.
+    npc_scripts: Option<Arc<crate::scripting::npc_scripts::NpcScripts>>,
     /// Every copy's ground items (`game/Districts/Ground.rs`): a dropped item belongs to the copy
     /// that holds it, not to the bag it came from (`ASURA/crates/asura-world/src/instance.rs:149-151`).
     ground: Mutex<crate::districts::GroundDistricts>,
+    /// The skill pack (`skills.json`, `combat.json`, `attributes.json`; `game/Skills/Catalog.rs`),
+    /// read once at start-up. `None` in a world that has not read it; a skill request is then still
+    /// answered with its slot's release, as ASURA answers a request with no pack
+    /// (`ASURA/crates/asura-world/src/skill/character.rs:245-255`).
+    skills: Option<std::sync::Arc<crate::skills::catalog::Pack>>,
+    /// The brain's numbers (`creatures.json`; `game/Combat/mod.rs`), read once at start-up.
+    fight_rules: Option<crate::combat::FightRules>,
+    /// Every copy's fight (`game/Districts/Combat.rs`): the engine and the creatures' brains, ticked
+    /// with the copy's clock. `None` until [`Self::load_skills`] has read the pack.
+    combat: Mutex<Option<crate::districts::combat::CombatDistricts>>,
+    /// The wipes in progress, by `(map, district, party)`. A wipe lasts from the last death to
+    /// the rise 10.58 s later (`E106`).
+    wipes: Mutex<std::collections::HashMap<(u32, u32, u16), Wipe>>,
+    /// Where a risen body now stands, by player id, until its own session applies it. This is
+    /// E114's retirement of the corpse's movement records: the server's copy and the client's
+    /// must move together.
+    placements: Mutex<std::collections::HashMap<u32, crate::districts::Standing>>,
     /// How long it has been since the copies were last swept: the world's own slower timer, the
     /// reference's `WorldUpdateTimer` arrangement - the program's loop says how much time passed and
     /// this decides whether a thing that does not run every tick is due (`World.cpp:1131`).
@@ -436,15 +471,532 @@ impl World {
                 pack.display()
             ),
         );
+        // The behavior source, chosen once: the pack's `npcs/behaviors.lua` when it has one, the
+        // built-in `patrol` when it does not. A script that does not load is an error, not a silent
+        // fallback, and a placement no source can build refuses the pack
+        // (`ASURA/crates/asura-world/src/npc/mod.rs:55-88`).
+        let behaviors: Arc<dyn crate::behaviour::BehaviorSource + Send + Sync> =
+            match crate::scripting::npc_behaviors::source(pack) {
+                Ok(Some(source)) => {
+                    let names: Vec<&str> = source.names().collect();
+                    log.out(
+                        LogLevel::Info,
+                        "server.worldserver",
+                        format!(
+                            "NPC behaviour: {} entr(ies) from {}: {}.",
+                            names.len(),
+                            crate::scripting::npc_behaviors::BEHAVIORS_FILE,
+                            names.join(", ")
+                        ),
+                    );
+                    Arc::new(source)
+                }
+                Ok(None) => Arc::new(crate::behaviour::PackBehaviors),
+                Err(error) => {
+                    let error = format!("NPC behaviour script: {error}");
+                    log.out(LogLevel::Error, "server.worldserver", &error);
+                    return Err(error);
+                }
+            };
+        let problems = crate::districts::npcs::check_trees(&content, behaviors.as_ref());
+        if !problems.is_empty() {
+            let error = format!(
+                "{} NPC behaviour problem(s) in {}:\n  {}\nrefusing to start with NPC content that does not check",
+                problems.len(),
+                pack.display(),
+                problems.join("\n  ")
+            );
+            log.out(LogLevel::Error, "server.worldserver", &error);
+            return Err(error);
+        }
+        self.npc_districts = Mutex::new(crate::districts::npcs::NpcDistricts::with_behaviors(
+            behaviors,
+        ));
         self.npcs = Arc::new(content);
         Ok(())
     }
 
-    /// Report every placement whose behavior tree this world cannot build yet. The built-in source
-    /// knows `patrol`; the pack's `worm_lakeside` and `worm_queen` are Lua script entries, so they are
-    /// named here and then stand until `game/Scripting/` arrives. ASURA refuses the pack on any
-    /// `check_trees` problem (`npc/mod.rs:74-88`); this tree reports first, because the Lua source is
-    /// the one missing part and the rest of the world is serviceable without it.
+    /// Read the skill pack: `skills.json`, `combat.json`, `attributes.json` (`game/Skills/Catalog.rs`)
+    /// and the brain's `creatures.json` (`game/Combat/mod.rs`). A missing or malformed file refuses
+    /// the start, naming it (`AGENTS.md`, rule 7). ASURA reads the pack lazily on first use; this tree
+    /// reads it once and hands it to every district, so the program cannot start half armed.
+    pub fn load_skills(
+        &mut self,
+        pack: impl AsRef<std::path::Path>,
+        log: &Log,
+    ) -> Result<(), String> {
+        let directory = pack.as_ref().to_path_buf();
+        let skills = crate::skills::catalog::load(&directory).map_err(|error| {
+            log.out(LogLevel::Error, "server.worldserver", &error);
+            error
+        })?;
+        let fight = crate::combat::load_rules(&directory).map_err(|error| {
+            log.out(LogLevel::Error, "server.worldserver", &error);
+            error
+        })?;
+        // Every skill row names a Lua script; the host is read and checked once, before the listener
+        // opens, so a missing or broken script refuses the start (rule 7).
+        let scripts =
+            crate::scripting::skill_scripts::LuaSkills::load(&directory, &skills.skills).map_err(
+                |error| {
+                    log.out(LogLevel::Error, "server.worldserver", &error);
+                    error
+                },
+            )?;
+        let count = skills.skills.by_id.len();
+        let script_count = scripts.len();
+        let pack = std::sync::Arc::new(skills);
+        let host: std::sync::Arc<std::sync::Mutex<dyn crate::skills::engine::SkillScripts>> =
+            std::sync::Arc::new(std::sync::Mutex::new(scripts));
+        self.combat = Mutex::new(Some(crate::districts::combat::CombatDistricts::new(
+            Arc::clone(&pack),
+            fight,
+            Some(host),
+        )));
+        self.skills = Some(pack);
+        self.fight_rules = Some(fight);
+        log.out(
+            LogLevel::Info,
+            "server.worldserver",
+            format!(
+                "Skills: {count} skill(s), {} weapon row(s), {script_count} script(s) and the fight's numbers from {}.",
+                self.skills
+                    .as_ref()
+                    .map_or(0, |pack| pack.weapons.len()),
+                directory.display()
+            ),
+        );
+        Ok(())
+    }
+
+    /// The skill pack in force, when the world read it.
+    pub fn skills(&self) -> Option<&std::sync::Arc<crate::skills::catalog::Pack>> {
+        self.skills.as_ref()
+    }
+
+    /// The brain's numbers in force, when the world read them.
+    pub fn fight_rules(&self) -> Option<&crate::combat::FightRules> {
+        self.fight_rules.as_ref()
+    }
+
+    /// Put a player's agent in its district's fight, seeding the creatures the first time anyone
+    /// enters (`ASURA/crates/asura-world/src/instance.rs:178-225`, `with_npcs`).
+    pub fn combat_join(
+        &self,
+        map_id: u32,
+        district: u32,
+        agent: u32,
+        player_id: u32,
+        spec: crate::skills::engine::Spec,
+        position: (f32, f32),
+    ) {
+        let fighters = match self.npc_districts.lock() {
+            Ok(copies) => copies.fighters(map_id, district, &self.npcs),
+            Err(_) => Vec::new(),
+        };
+        if let Ok(mut combat) = self.combat.lock()
+            && let Some(combat) = combat.as_mut()
+        {
+            combat.join_player((map_id, district), agent, player_id, spec, position, &fighters);
+            combat.set_charged_deaths((map_id, district), self.death_charges(map_id));
+        }
+    }
+
+    /// Whether a death in this map costs the death penalty. Pre-Searing Ascalon never does
+    /// (`R44`, `E12`). The set is the pack's own `Prophecies/Ascalon (pre-Searing)` folder:
+    /// its maps are 145-151 and 160-166 (`config/World/Vanilla/maps/...`), which are also the
+    /// sixteen maps `party_sizes.json` caps at two.
+    pub fn death_charges(&self, map_id: u32) -> bool {
+        const PRE_SEARING: &[u32] = &[
+            145, 146, 147, 148, 149, 150, 151, 160, 161, 162, 163, 164, 165, 166,
+        ];
+        !PRE_SEARING.contains(&map_id)
+    }
+
+    /// A player's agent left its district's fight.
+    pub fn combat_leave(&self, map_id: u32, district: u32, agent: u32) {
+        if let Ok(mut combat) = self.combat.lock()
+            && let Some(combat) = combat.as_mut()
+        {
+            combat.leave((map_id, district), agent);
+        }
+    }
+
+    /// Replace a player's bar in its district's fight.
+    pub fn combat_set_bar(
+        &self,
+        map_id: u32,
+        district: u32,
+        agent: u32,
+        bar: [(u32, u32); 8],
+    ) {
+        if let Ok(mut combat) = self.combat.lock()
+            && let Some(combat) = combat.as_mut()
+        {
+            combat.set_bar((map_id, district), agent, bar);
+        }
+    }
+
+    /// Replace a player's ranks in its district's fight.
+    pub fn combat_set_ranks(
+        &self,
+        map_id: u32,
+        district: u32,
+        agent: u32,
+        ranks: [u8; crate::skills::engine::ATTRIBUTES],
+    ) {
+        if let Ok(mut combat) = self.combat.lock()
+            && let Some(combat) = combat.as_mut()
+        {
+            combat.set_ranks((map_id, district), agent, ranks);
+        }
+    }
+
+    /// Replace a player's weapon and armor in its district's fight.
+    pub fn combat_set_equipment(
+        &self,
+        map_id: u32,
+        district: u32,
+        agent: u32,
+        weapon: Option<crate::skills::model::Weapon>,
+        armor: i32,
+    ) {
+        if let Ok(mut combat) = self.combat.lock()
+            && let Some(combat) = combat.as_mut()
+        {
+            combat.set_equipment((map_id, district), agent, weapon, armor);
+        }
+    }
+
+    /// Send one fight's deliveries: a slot's lifecycle to its owner, everything drawn to the
+    /// instance. The frames are the engine's own; this is the district's half of ASURA's `deliver`
+    /// (`ASURA/crates/asura-world/src/skill/character.rs:219-226`).
+    fn deliver_combat(
+        &self,
+        map_id: u32,
+        district: u32,
+        deliveries: Vec<(
+            crate::skills::Recipient,
+            Vec<u32>,
+            Vec<Vec<u8>>,
+        )>,
+    ) {
+        let Ok(peers) = self.peers.lock() else {
+            return;
+        };
+        for (recipient, _subjects, frames) in deliveries {
+            match recipient {
+                crate::skills::Recipient::Player(player_id) => peers.send_to(player_id, &frames),
+                crate::skills::Recipient::Everyone => {
+                    peers.broadcast_all(map_id, district, &frames)
+                }
+            }
+        }
+    }
+
+    /// Use a skill in a district's fight, delivering what it produced. Returns the engine's refusal,
+    /// when there was one (`ASURA/crates/asura-world/src/skill/engine.rs:671-689`).
+    pub fn combat_use_skill(
+        &self,
+        map_id: u32,
+        district: u32,
+        agent: u32,
+        skill: u32,
+        copy: u32,
+        target: u32,
+    ) -> Result<(), crate::skills::engine::Refusal> {
+        let (result, deliveries) = match self.combat.lock() {
+            Ok(mut combat) => match combat.as_mut() {
+                Some(combat) => combat.use_skill((map_id, district), agent, skill, copy, target),
+                None => return Ok(()),
+            },
+            Err(_) => return Ok(()),
+        };
+        self.deliver_combat(map_id, district, deliveries);
+        result
+    }
+
+    /// Put a player's ordinary attack on a foe, answering the reach it swings at. Returns the
+    /// refusal, when there was one.
+    pub fn combat_attack(
+        &self,
+        map_id: u32,
+        district: u32,
+        agent: u32,
+        target: u32,
+    ) -> (
+        Result<(), crate::skills::engine::Refusal>,
+        Option<f32>,
+    ) {
+        let (result, reach, deliveries) = match self.combat.lock() {
+            Ok(mut combat) => match combat.as_mut() {
+                Some(combat) => combat.attack((map_id, district), agent, target),
+                None => return (Ok(()), None),
+            },
+            Err(_) => return (Ok(()), None),
+        };
+        self.deliver_combat(map_id, district, deliveries);
+        (result, reach)
+    }
+
+    /// Stop a player's ordinary attack.
+    pub fn combat_stop_attack(&self, map_id: u32, district: u32, agent: u32) {
+        if let Ok(mut combat) = self.combat.lock()
+            && let Some(combat) = combat.as_mut()
+        {
+            combat.stop_attack((map_id, district), agent);
+        }
+    }
+
+    /// Kill an agent outright, as `/resign` does, and deliver the death.
+    pub fn combat_kill(&self, map_id: u32, district: u32, agent: u32) {
+        let deliveries = match self.combat.lock() {
+            Ok(mut combat) => match combat.as_mut() {
+                Some(combat) => combat.kill((map_id, district), agent),
+                None => return,
+            },
+            Err(_) => return,
+        };
+        self.deliver_combat(map_id, district, deliveries);
+    }
+
+    /// Apply a direct loss to an agent, for the operator's `/damage` test.
+    pub fn combat_hurt(&self, map_id: u32, district: u32, agent: u32, amount: f64) {
+        let deliveries = match self.combat.lock() {
+            Ok(mut combat) => match combat.as_mut() {
+                Some(combat) => combat.hurt((map_id, district), agent, amount),
+                None => return,
+            },
+            Err(_) => return,
+        };
+        self.deliver_combat(map_id, district, deliveries);
+    }
+
+    /// Stand an agent up where it is, for the operator's `/revive` test.
+    pub fn combat_revive(&self, map_id: u32, district: u32, agent: u32, position: (f32, f32)) {
+        let deliveries = match self.combat.lock() {
+            Ok(mut combat) => match combat.as_mut() {
+                Some(combat) => combat.revive((map_id, district), agent, position),
+                None => return,
+            },
+            Err(_) => return,
+        };
+        self.deliver_combat(map_id, district, deliveries);
+    }
+
+    /// Clear an agent's death penalty: a resign resets it (`E12`).
+    pub fn combat_clear_penalty(&self, map_id: u32, district: u32, agent: u32) {
+        if let Ok(mut combat) = self.combat.lock()
+            && let Some(combat) = combat.as_mut()
+        {
+            combat.clear_penalty((map_id, district), agent);
+        }
+    }
+
+    /// Whether an agent still stands in its copy.
+    pub fn combat_alive(&self, map_id: u32, district: u32, agent: u32) -> bool {        match self.combat.lock() {
+            Ok(combat) => combat
+                .as_ref()
+                .is_some_and(|combat| combat.alive((map_id, district), agent)),
+            Err(_) => false,
+        }
+    }
+
+    /// The player agents in a copy, as `(player_id, agent)`.
+    pub fn combat_players(&self, map_id: u32, district: u32) -> Vec<(u32, u32)> {
+        match self.combat.lock() {
+            Ok(combat) => combat
+                .as_ref()
+                .map(|combat| combat.players((map_id, district)))
+                .unwrap_or_default(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// The party wipe: when every present member of a party is down, tell the party with
+    /// `0x0180` 0.58 s later and raise it at the map's entry point 10 s after that
+    /// (`E105`-`E106`). A shrine point is not content this world has yet, so the raise is the
+    /// map's first spawn point; the difference is named in `docs/port/09-parity-audit.md`.
+    pub fn death_tick(&self, map_id: u32, district: u32, now: std::time::Instant) {
+        let players: std::collections::HashMap<u32, u32> =
+            self.combat_players(map_id, district).into_iter().collect();
+        if players.is_empty() {
+            return;
+        }
+        let parties: Vec<(u16, Vec<u32>, bool, bool)> = match self.parties.lock() {
+            Ok(parties) => match parties.get(map_id, district) {
+                Some(table) => table
+                    .parties
+                    .values()
+                    .map(|party| {
+                        (
+                            party.party_id,
+                            party.present(),
+                            party.defeated,
+                            !party.resigned.is_empty(),
+                        )
+                    })
+                    .collect(),
+                None => return,
+            },
+            Err(_) => return,
+        };
+        let mut countdowns: Vec<Vec<u32>> = Vec::new();
+        let mut revives: Vec<(u32, u32)> = Vec::new();
+        {
+            let Ok(mut wipes) = self.wipes.lock() else {
+                return;
+            };
+            for (party_id, present, defeated, resigned) in parties {
+                let key = (map_id, district, party_id);
+                if present.is_empty() || defeated || resigned {
+                    wipes.remove(&key);
+                    continue;
+                }
+                let all_dead = present.iter().all(|member| {
+                    players
+                        .get(member)
+                        .is_some_and(|agent| !self.combat_alive(map_id, district, *agent))
+                });
+                if !all_dead {
+                    wipes.remove(&key);
+                    continue;
+                }
+                let wipe = wipes.entry(key).or_insert(Wipe {
+                    started: now,
+                    countdown_sent: false,
+                });
+                let told = wipe.started + std::time::Duration::from_millis(580);
+                if !wipe.countdown_sent && now >= told {
+                    wipe.countdown_sent = true;
+                    countdowns.push(present.clone());
+                }
+                if now
+                    >= wipe.started
+                        + std::time::Duration::from_millis(580 + 10_000)
+                {
+                    revives.extend(
+                        present
+                            .iter()
+                            .filter_map(|member| players.get(member).map(|agent| (*member, *agent))),
+                    );
+                    wipes.remove(&key);
+                }
+            }
+        }
+        if let Ok(peers) = self.peers.lock() {
+            for recipients in countdowns {
+                let one = instance_packets::instance_countdown(0x0575, 5, 0, 10_000);
+                // The tape carries three frames for a two-member party; one per member and one
+                // for the party is the shape that gives that count (`E106`; SLICE-F43).
+                for member in &recipients {
+                    peers.send_to(*member, &[one.clone()]);
+                }
+                if let Some(first) = recipients.first() {
+                    peers.send_to(*first, &[one]);
+                }
+            }
+        }
+        let shrine = self
+            .spawns_of(map_id)
+            .first()
+            .map(|spawn| (spawn.x, spawn.y, spawn.plane as u16, spawn.direction()));
+        for (_player, agent) in revives {
+            let Some((x, y, plane, direction)) = shrine else {
+                continue;
+            };
+            self.combat_revive(map_id, district, agent, (x, y));
+            if let Ok(peers) = self.peers.lock() {
+                let frames = vec![
+                    agent_packets::agent_update_direction_live(agent, direction).1,
+                    agent_packets::agent_update_position(agent, (x, y), plane).1,
+                    agent_packets::agent_stop_moving(agent).1,
+                ];
+                peers.broadcast_all(map_id, district, &frames);
+            }
+            if let Ok(mut placements) = self.placements.lock() {
+                placements.insert(
+                    _player,
+                    crate::districts::Standing {
+                        position: (x, y),
+                        plane,
+                        direction,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Where a risen body now stands, once, for its own session to apply (E114).
+    pub fn take_placement(&self, player: u32) -> Option<crate::districts::Standing> {
+        self.placements.lock().ok()?.remove(&player)
+    }
+
+    /// The vitals a load block states for one agent, as frames (`skill/character.rs:191-199`).
+    pub fn combat_vitals(
+        &self,
+        map_id: u32,
+        district: u32,
+        agent: u32,
+    ) -> Vec<Vec<u8>> {
+        match self.combat.lock() {
+            Ok(combat) => combat
+                .as_ref()
+                .map(|combat| combat.vitals((map_id, district), agent))
+                .unwrap_or_default(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Advance a copy's fight once per period, as the NPC table advances its bodies. The first
+    /// connection to reach a period runs it; the others only record where they stand, so two players
+    /// in one town do not run the fight twice as fast (`game/Districts/Combat.rs`).
+    pub fn combat_tick(
+        &self,
+        map_id: u32,
+        district: u32,
+        now: std::time::Instant,
+    ) {
+        let period = std::time::Duration::from_millis(u64::from(self.settings.simulation_tick_ms));
+        // Every body the engine and the brain share: the players as the peer registry has them and
+        // the creatures as the NPC table has them.
+        let mut positions = match self.npc_districts.lock() {
+            Ok(copies) => copies.positions(map_id, district),
+            Err(_) => Vec::new(),
+        };
+        if let Ok(peers) = self.peers.lock() {
+            for (_player_id, agent, position) in peers.combat_players(map_id, district) {
+                positions.push((agent, position));
+            }
+        }
+        let (walking, deliveries) = match self.combat.lock() {
+            Ok(mut combat) => match combat.as_mut() {
+                Some(combat) => combat.tick((map_id, district), now, period, &positions),
+                None => return,
+            },
+            Err(_) => return,
+        };
+        if !walking.is_empty()
+            && let Ok(mut copies) = self.npc_districts.lock()
+        {
+            for (agent, order) in walking {
+                match order {
+                    crate::combat::Order::Walk { to } => {
+                        copies.order_walk(map_id, district, agent, to, self.graphs.as_ref())
+                    }
+                    crate::combat::Order::Halt => {
+                        copies.order_halt(map_id, district, agent)
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.deliver_combat(map_id, district, deliveries);
+    }
+
+    /// Report whether every placement's behavior tree builds. [`Self::load_npcs`] already refuses a
+    /// pack with a problem, as ASURA does (`npc/mod.rs:74-88`); this is the start-up line that says
+    /// so, and it names any problem should the content be swapped without that check.
     pub fn report_npc_behaviors(&self, log: &Log) {
         let problems = match self.npc_districts.lock() {
             Ok(copies) => copies.check_trees(&self.npcs),
@@ -504,6 +1056,89 @@ impl World {
     /// The pack's NPC content, as read at start-up.
     pub fn npcs(&self) -> &Arc<crate::agents::npc_content::NpcContent> {
         &self.npcs
+    }
+
+    /// Read what the pack's NPCs offer (`vendors.json`; `ASURA/crates/asura-world/src/vendor/content.rs:380-417`).
+    /// A pack without the file has no windows; a file that does not check refuses the start.
+    pub fn load_vendors(
+        &mut self,
+        pack: impl AsRef<std::path::Path>,
+        log: &Log,
+    ) -> Result<(), String> {
+        let pack = pack.as_ref();
+        let vendors = crate::maps::vendor_pack::load(pack)
+            .inspect_err(|error| log.out(LogLevel::Error, "server.worldserver", error))?;
+        log.out(
+            LogLevel::Info,
+            "server.worldserver",
+            format!(
+                "{} merchant(s), {} collector(s) and {} storage NPC name(s) from {}.",
+                vendors.merchants.len(),
+                vendors.collectors.len(),
+                vendors.storage.len(),
+                pack.display()
+            ),
+        );
+        self.vendors = vendors;
+        Ok(())
+    }
+
+    /// What the pack's NPCs offer.
+    pub fn vendors(&self) -> &crate::trader::content::Vendors {
+        &self.vendors
+    }
+
+    /// Read what the pack's NPCs say: `scripts/runtime.lua` and every `dialogs/*.lua`
+    /// (`game/Scripting/NpcScripts.rs`; ASURA reads the same content from `dialogs.json`,
+    /// `ASURA/crates/asura-world/src/dialog.rs:378-383`). A pack without them has no dialogs; a file that
+    /// does not load or check refuses the start, naming it (`AGENTS.md`, rule 7).
+    pub fn load_dialogs(
+        &mut self,
+        pack: impl AsRef<std::path::Path>,
+        log: &Log,
+    ) -> Result<(), String> {
+        let pack = pack.as_ref();
+        let scripts = crate::scripting::npc_scripts::NpcScripts::load(pack)
+            .inspect_err(|error| log.out(LogLevel::Error, "server.worldserver", error))?;
+        match &scripts {
+            Some(scripts) => {
+                let (dialogs, npcs) = scripts.counts();
+                log.out(
+                    LogLevel::Info,
+                    "server.worldserver",
+                    format!(
+                        "Dialogs: {dialogs} dialog(s) for {npcs} NPC name(s), run by {} from {}.",
+                        crate::scripting::npc_scripts::RUNTIME_FILE,
+                        pack.display()
+                    ),
+                );
+            }
+            None => log.out(
+                LogLevel::Info,
+                "server.worldserver",
+                format!("Dialogs: none in {}.", pack.display()),
+            ),
+        }
+        self.npc_scripts = scripts.map(Arc::new);
+        Ok(())
+    }
+
+    /// What the pack's NPCs say, when the world read it.
+    pub fn npc_scripts(&self) -> Option<&Arc<crate::scripting::npc_scripts::NpcScripts>> {
+        self.npc_scripts.as_ref()
+    }
+
+    /// One NPC body of a copy as a talk sees it (`ASURA/crates/asura-world/src/instance.rs:478-488`).
+    pub fn npc_target(
+        &self,
+        map_id: u32,
+        district: u32,
+        agent_id: u32,
+    ) -> Option<crate::handlers::npc::NpcTarget> {
+        self.npc_districts
+            .lock()
+            .ok()?
+            .target(map_id, district, agent_id)
     }
 
     /// A joining player's agent id in its copy: the lowest id no NPC body and no other player of that
@@ -600,6 +1235,37 @@ impl World {
             .lock()
             .ok()
             .and_then(|mut ground| ground.take(map_id, district, agent_id))
+    }
+
+    /// One ground item of a copy without taking it, for a message that only names it
+    /// (`ASURA/crates/asura-world/src/instance.rs:495-498`, `ground_item`).
+    pub fn ground_item(
+        &self,
+        map_id: u32,
+        district: u32,
+        agent_id: u32,
+    ) -> Option<crate::districts::GroundItem> {
+        self.ground
+            .lock()
+            .ok()
+            .and_then(|ground| ground.get(map_id, district, agent_id))
+    }
+
+    /// Whether a copy's agents - its players' bodies and its NPCs - hold `agent_id`
+    /// (`ASURA/crates/asura-world/src/instance.rs:512-517`, `has_agent`). Ground items are not
+    /// agents here; a caller that means a called target asks [`Self::ground_item`] as well.
+    pub fn has_agent(&self, map_id: u32, district: u32, agent_id: u32) -> bool {
+        let by_player = match self.peers.lock() {
+            Ok(peers) => peers.holds_agent(map_id, district, agent_id),
+            Err(_) => false,
+        };
+        if by_player {
+            return true;
+        }
+        match self.npc_districts.lock() {
+            Ok(copies) => copies.holds(map_id, district, agent_id),
+            Err(_) => false,
+        }
     }
 
     /// The ground items a client entering a copy is told about, as the frames of their record and
@@ -790,7 +1456,14 @@ impl World {
             guilds: None,
             npcs: Arc::new(crate::agents::npc_content::NpcContent::default()),
             npc_districts: Mutex::new(crate::districts::npcs::NpcDistricts::new()),
+            vendors: crate::trader::content::Vendors::default(),
+            npc_scripts: None,
             ground: Mutex::new(crate::districts::GroundDistricts::new()),
+            skills: None,
+            fight_rules: None,
+            combat: Mutex::new(None),
+            wipes: Mutex::new(std::collections::HashMap::new()),
+            placements: Mutex::new(std::collections::HashMap::new()),
             sweep_elapsed: Mutex::new(std::time::Duration::ZERO),
             stop: std::sync::atomic::AtomicU8::new(NO_STOP),
         }

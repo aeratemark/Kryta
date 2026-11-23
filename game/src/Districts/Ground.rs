@@ -66,6 +66,15 @@ impl GroundDistricts {
             .and_then(|items| items.remove(&agent_id))
     }
 
+    /// One ground item in one copy, without taking it
+    /// (`ASURA/crates/asura-world/src/instance.rs:495-498`, `ground_item`).
+    pub fn get(&self, map_id: u32, district: u32, agent_id: u32) -> Option<GroundItem> {
+        self.copies
+            .get(&(map_id, district))
+            .and_then(|items| items.get(&agent_id))
+            .cloned()
+    }
+
     /// Every ground item in one copy, by agent id, for a client that is entering the map
     /// (`ASURA/crates/asura-world/src/instance.rs:505-510`, `ground_items`).
     pub fn items(&self, map_id: u32, district: u32) -> Vec<GroundItem> {
@@ -87,7 +96,8 @@ impl GroundDistricts {
 ///
 /// `ASURA/crates/asura-world/src/item.rs:224-234`, `ground_frames`.
 pub fn ground_frames(ground: &GroundItem) -> Vec<Vec<u8>> {
-    let named = crate::creation::named_item(&crate::characters::item_ops::item_of_row(&ground.item));
+    let named =
+        crate::creation::named_item(&crate::characters::item_ops::item_of_row(&ground.item));
     vec![
         if ground.source_item_id.is_some() {
             item_packets::item_update(&named)
@@ -174,7 +184,11 @@ mod tests {
         assert_eq!(&whole[0][..2], &[0x61, 0x01], "create named item");
         assert_eq!(&whole[1][..2], &[0x20, 0x00], "agent created");
         assert_eq!(&whole[1][2..6], &5u32.to_le_bytes(), "the agent");
-        assert_eq!(&whole[1][6..10], &7u32.to_le_bytes(), "its model is the item");
+        assert_eq!(
+            &whole[1][6..10],
+            &7u32.to_le_bytes(),
+            "its model is the item"
+        );
 
         let part = ground_frames(&ground(5, 9, Some(7), 2));
         assert_eq!(&part[0][..2], &[0x62, 0x01], "item update");

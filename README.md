@@ -12,14 +12,15 @@ The live ledger - every row with the test or capture that proves it - is
 |---|---|
 | Login and accounts | file check, version and key exchange, encrypted login, EULA and player status, character list/create/delete, travel hand-off, and the client's own UI layout stored on the account and replayed at the next login |
 | World, maps and movement | 265 map records, outposts and districts, doorways and arrivals, world-map travel, pathfinding over the extracted graphs, click movement and position corrections, and the exploration grid with per-character saved progress and the `0x008C` reveal |
-| Characters and items | starting inventory and equipment, all six item operations (move, equip, unequip, destroy, drop, pickup) through the ported inventory rules and row writes, ground items, experience and levels, titles, unlocks |
+| Characters and items | starting inventory and equipment, all six item operations (move, equip, unequip, destroy, drop, pickup) through the ported inventory rules and row writes, ground items, experience and levels, titles, unlocks, and the character's real skillbar, attributes and health/energy maxima loaded from the pack so the HUD bars draw full |
 | Party | invite, accept with its merge, decline, withdraw, leave and kick; the load's party section; travel as one with the leader's countdown; `/resign`, the party's defeat and the return to the last outpost |
-| NPCs | definitions and per-map placements read at start-up, a copy's agent table, NPC create/properties/name/model frames and the in-range agent list - the first layer; behaviour, dialogue and fights are still to come |
+| NPCs | definitions and per-map placements read at start-up, a copy's agent table, NPC create/properties/name/model frames, the in-range agent list, behaviour trees (patrol, burrow, wait) and the creature combat brain; dialogue and quests are still to come |
+| Skills and combat | the skill catalog, rules, engine and wire read from the pack's `skills.json`, `combat.json` and `attributes.json`; the client's skill use, attacks and bar edits are answered, and creatures fight through the same engine on each copy's tick |
 | Guilds | the registration window, create, invite, leave and announcement, and the guild block in a load and an introduction |
 | Commands and operations | chat with local delivery, `/tp`, `/maps`, `/stuck`, `/resign`, `/guild`, `/.exp`, `/xp`, `/item`, and the loopback operator API and panel |
 
-Not yet: combat and skills, NPC behaviour, dialogue and quests, vendors, trade and storage, heroes and
-henchmen, party search and difficulty, and the remaining directories listed in
+Not yet: NPC dialogue and quests, vendors, trade and storage, heroes and henchmen, party search and
+difficulty, achievements and cinematics, and the remaining directories listed in
 [docs/port/18-kryta-code-feature-inventory.md](docs/port/18-kryta-code-feature-inventory.md).
 
 ## Requirements

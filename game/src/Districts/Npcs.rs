@@ -8,10 +8,12 @@
 //!
 //! **Ported thin** (stages N3-N4 of `docs/asura-port-plan.md`, 2026-11-22): the population, the
 //! agent ids, the load's NPC bursts, the per-client sight with compass churn, the behaviour trees
-//! (`Mind::Tree`, `check_trees`, `BehaviorSource`), the burrow cycle (`table.rs:50-197`) and the walk
-//! half of `tick` (`table.rs:723-822`). Not carried yet: the Script leaf and its Lua source
-//! (`npc/lua.rs`; the pack's `worm_lakeside` and `worm_queen` therefore park and stand until it
-//! arrives), the fight (`fight`, `obey`, `combatants`) and the `/npc` command (`table.rs:531-637`).
+//! (`Mind::Tree`, `check_trees`, `BehaviorSource`), the burrow cycle (`table.rs:50-197`), the
+//! script-owned burrow a Lua leaf starts (`table.rs:347-351`) and the walk half of `tick`
+//! (`table.rs:723-822`). The Lua source is `game/Scripting/NpcBehaviors.rs`. Not carried yet: the
+//! fight (`fight`, `obey`, `combatants`) and the `/npc` command (`table.rs:531-637`); so a script leaf
+//! always reads `ctx.in_combat` as false, and ASURA's "a fight leaves ordinary behavior waiting"
+//! (`table.rs:779-787`) has nothing to wait on yet.
 //!
 //! Agent ids are the copy's own, not the player's (`instance.rs:180-205` and `:307-316`): the bodies
 //! take consecutive ids from 2 in their file's order before any player joins, and a player's agent is
@@ -28,6 +30,7 @@ use std::time::{Duration, Instant};
 use crate::agents::Agent;
 use crate::agents::npc_content::{MapNpcs, NpcContent, NpcPlacement, SightRules};
 use crate::behaviour::{BehaviorSource, BurrowRequest, Ctx, PackBehaviors, Pathing, Status, Tree};
+use crate::terrain::pathfind::{Pos, Walk};
 use crate::server::packets::npc_packets::{self, Msg};
 
 /// The reference's first free agent id; the bodies take the ids from it, in file order
@@ -255,12 +258,12 @@ fn tree_for(
     let spec = behaviors
         .spec(name)
         .ok_or_else(|| format!("behavior {name} is not one the behavior source can build"))?;
-    Tree::build(&spec, placement.route.as_deref(), &map.routes).map(Some)
+    Tree::build(&spec, placement.route.as_deref(), &map.routes, behaviors).map(Some)
 }
 
 /// Build every placement's tree once, so an unknown behavior or a construction error is named before
 /// a body parks on its first district (`table.rs:293-310`). The walk is the same `tree_for` the seed
-/// uses; a pack whose Lua source is not loaded yet reports its script behaviors here.
+/// uses.
 pub fn check_trees(content: &NpcContent, behaviors: &dyn BehaviorSource) -> Vec<String> {
     let mut maps: Vec<&Arc<MapNpcs>> = content.maps.values().collect();
     maps.sort_by_key(|map| map.map_id);
@@ -327,7 +330,8 @@ impl NpcTable {
                 Ok(Some(tree)) => {
                     let burrow = tree
                         .burrow_terms()
-                        .map(|(visible_ms, hidden_ms)| BurrowState::new(visible_ms, hidden_ms));
+                        .map(|(visible_ms, hidden_ms)| BurrowState::new(visible_ms, hidden_ms))
+                        .or_else(|| tree.script_burrow().then(BurrowState::manual));
                     (Mind::Tree(tree), burrow)
                 }
                 Err(err) => {
@@ -404,6 +408,49 @@ impl NpcTable {
             .iter()
             .map(|(agent_id, agent)| (*agent_id, agent.body.position))
             .collect()
+    }
+
+    /// Walk one body to a point, as a fight's brain asks (`fight.rs:373`, `Order::Walk`). The route
+    /// is the map's own finder, the same one a patrol asks (`behavior.rs:478-525`). A map with no
+    /// graph leaves the body where it stands, which is `fight.rs`'s own answer to `NoGraph`.
+    pub fn order_walk(&mut self, agent_id: u32, to: (f32, f32), pathing: &dyn Pathing) -> Vec<Msg> {
+        let map_id = self.map.map_id;
+        let Some(agent) = self.agents.get_mut(&agent_id) else {
+            return Vec::new();
+        };
+        let destination = Pos {
+            x: to.0,
+            y: to.1,
+            plane: agent.body.plane,
+        };
+        let Walk::Found(waypoints) = pathing.leg(map_id, agent.body.here(), destination) else {
+            return Vec::new();
+        };
+        let Some(first) = agent.body.begin_walk(waypoints) else {
+            return Vec::new();
+        };
+        vec![Msg::MoveTo {
+            agent_id,
+            to: (first.pos.x, first.pos.y),
+            plane: first.pos.plane,
+            current_plane: agent.body.plane,
+        }]
+    }
+
+    /// Stop one body where it stands (`fight.rs:117`, `Order::Halt`).
+    pub fn order_halt(&mut self, agent_id: u32) -> Vec<Msg> {
+        let Some(agent) = self.agents.get_mut(&agent_id) else {
+            return Vec::new();
+        };
+        let was_walking = agent.body.motion.speed != 0.0;
+        agent.body.cancel_movement();
+        agent.body.motion.waypoints.clear();
+        agent.body.motion.waypoint_idx = 0;
+        if was_walking {
+            vec![Msg::Stop { agent_id }]
+        } else {
+            Vec::new()
+        }
     }
 
     /// The burst that makes one body appear on one client, with its current walk when it is walking,
@@ -642,8 +689,8 @@ struct Running {
 /// Every running copy's NPCs and agent ids, keyed by map and district.
 pub struct NpcDistricts {
     copies: HashMap<(u32, u32), Running>,
-    /// Where behavior trees come from (`table.rs:26-48`). The built-in source knows `patrol`; the
-    /// Lua source that will own `worm_lakeside` and `worm_queen` is not built yet.
+    /// Where behavior trees come from (`table.rs:26-48`, `npc/mod.rs:55-69`): the pack's
+    /// `npcs/behaviors.lua` when it has one, the built-in `patrol` when it does not.
     behaviors: Arc<dyn BehaviorSource + Send + Sync>,
     /// Lines for the log from a seed or a tick, drained by [`Self::tick`].
     notes: Vec<String>,
@@ -753,6 +800,14 @@ impl NpcDistricts {
         }
     }
 
+    /// Whether one running copy holds this agent id among its NPC bodies
+    /// (`ASURA/crates/asura-world/src/instance.rs:512-517`, `has_agent`).
+    pub fn holds(&self, map_id: u32, district: u32, agent_id: u32) -> bool {
+        self.copies
+            .get(&(map_id, district))
+            .is_some_and(|copy| copy.npcs.holds(agent_id))
+    }
+
     /// The NPC bodies within a loading client's range, each as the frames of its entry burst, by agent
     /// id - the NPC half of the load's agent array (`instance.rs:450-460`).
     pub fn arrival(
@@ -832,6 +887,128 @@ impl NpcDistricts {
                 .extend(npc_packets::frames(&msgs));
         }
         notes
+    }
+
+    /// One body of a copy as a talk sees it: its placement's name and where it stands
+    /// (`ASURA/crates/asura-world/src/instance.rs:478-488`, `npc_target`).
+    pub fn target(
+        &self,
+        map_id: u32,
+        district: u32,
+        agent_id: u32,
+    ) -> Option<crate::handlers::npc::NpcTarget> {
+        let table = &self.copies.get(&(map_id, district))?.npcs;
+        let placement = table.placement_of(agent_id)?;
+        let body = &table.agent(agent_id)?.body;
+        Some(crate::handlers::npc::NpcTarget {
+            agent_id,
+            placement: placement.id.clone(),
+            name: placement.name.clone(),
+            position: body.position,
+            plane: body.plane,
+        })
+    }
+
+    /// Where every body of a copy stands, for the fight's position samples.
+    pub fn positions(&self, map_id: u32, district: u32) -> Vec<(u32, (f32, f32))> {
+        self.copies
+            .get(&(map_id, district))
+            .map(|copy| copy.npcs.positions())
+            .unwrap_or_default()
+    }
+
+    /// The bodies of a copy that carry a combat block, with the agent id the copy gave each one: what
+    /// the fight seeds its engine and its brain with (`instance.rs:178-225`, `with_npcs`).
+    pub fn fighters(
+        &self,
+        map_id: u32,
+        district: u32,
+        content: &NpcContent,
+    ) -> Vec<crate::districts::combat::Fighter> {
+        let Some(copy) = self.copies.get(&(map_id, district)) else {
+            return Vec::new();
+        };
+        let Some(map) = content.map(map_id as i32) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for placement in &map.placements {
+            let Some(combat) = placement.definition.combat.clone() else {
+                continue;
+            };
+            let Some(agent) = copy.npcs.agent_of(&placement.id) else {
+                continue;
+            };
+            let Some(body) = copy.npcs.agent(agent) else {
+                continue;
+            };
+            out.push(crate::districts::combat::Fighter {
+                agent,
+                position: body.body.position,
+                level: placement
+                    .level
+                    .unwrap_or(u32::from(placement.definition.level)),
+                combat,
+            });
+        }
+        out
+    }
+
+    /// Walk one body to a point for the fight, telling every viewer that can see it
+    /// (`fight.rs:373`, `Order::Walk`).
+    pub fn order_walk(
+        &mut self,
+        map_id: u32,
+        district: u32,
+        agent_id: u32,
+        to: (f32, f32),
+        pathing: &dyn Pathing,
+    ) {
+        let Some(copy) = self.copies.get_mut(&(map_id, district)) else {
+            return;
+        };
+        let msgs = copy.npcs.order_walk(agent_id, to, pathing);
+        if msgs.is_empty() {
+            return;
+        }
+        let frames = npc_packets::frames(&msgs);
+        for viewer in copy.viewers.keys() {
+            copy.pending
+                .entry(*viewer)
+                .or_default()
+                .extend(frames.clone());
+        }
+    }
+
+    /// Stop one body where it stands for the fight (`fight.rs:117`, `Order::Halt`).
+    pub fn order_halt(&mut self, map_id: u32, district: u32, agent_id: u32) {
+        let Some(copy) = self.copies.get_mut(&(map_id, district)) else {
+            return;
+        };
+        let msgs = copy.npcs.order_halt(agent_id);
+        if msgs.is_empty() {
+            return;
+        }
+        let frames = npc_packets::frames(&msgs);
+        for viewer in copy.viewers.keys() {
+            copy.pending
+                .entry(*viewer)
+                .or_default()
+                .extend(frames.clone());
+        }
+    }
+
+    /// How one body stands now, for the fight's position sample.
+    pub fn body_position(
+        &self,
+        map_id: u32,
+        district: u32,
+        agent_id: u32,
+    ) -> Option<(f32, f32)> {
+        self.copies
+            .get(&(map_id, district))
+            .and_then(|copy| copy.npcs.agent(agent_id))
+            .map(|agent| agent.body.position)
     }
 
     /// One client's part of a tick, as frames: the body messages queued for it, then the bodies that
@@ -1163,6 +1340,46 @@ mod tests {
         assert!(
             !problems.iter().any(|problem| problem.contains("map 148")),
             "both Ascalon patrols build: {problems:?}"
+        );
+    }
+
+    /// With the pack's own Lua source every placement builds, the worms included
+    /// (`npc/mod.rs:74-88`: ASURA refuses the pack on any problem).
+    #[test]
+    fn the_shipped_packs_trees_all_build_with_its_lua_source() {
+        let pack = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("the crate is in the repository")
+            .join("config")
+            .join("World")
+            .join("Vanilla");
+        let content = crate::agents::npc_file::load(&pack, sight()).expect("the pack loads");
+        let source = crate::scripting::npc_behaviors::source(&pack)
+            .expect("the committed script loads")
+            .expect("the pack has a behavior script");
+        let problems = check_trees(&content, &source);
+        assert!(problems.is_empty(), "{problems:?}");
+
+        // Lakeside County's worms seed with a script-owned burrow and none parks (`table.rs:347-351`).
+        let (table, notes) = NpcTable::seed(
+            content.map(146).expect("map 146"),
+            sight(),
+            &source,
+            FIRST_AGENT_ID,
+        );
+        assert!(notes.is_empty(), "{notes:?}");
+        let manual = table
+            .agents
+            .values()
+            .filter(|agent| agent.burrow.is_some_and(|burrow| burrow.manual))
+            .count();
+        assert_eq!(manual, 19, "every worm placement owns its burrow through its script");
+        assert!(
+            table
+                .agents
+                .values()
+                .all(|agent| !matches!(agent.mind, Mind::Parked)),
+            "no body parks"
         );
     }
 

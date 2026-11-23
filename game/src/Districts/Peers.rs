@@ -88,6 +88,8 @@ pub struct Peers {
     characters: HashMap<[u8; 16], u32>,
     /// The next session number, so a slot can tell the connection that filled it from one that did not.
     next_session: u64,
+    /// The next agent id. A body is new to every map load, while the player id stays the character's.
+    next_agent: u32,
     /// The local ids each running copy names guilds by, keyed by map and district
     /// (`ASURA/crates/asura-world/src/instance.rs:154-155`, `guild_ids`: one table per instance).
     guild_ids: HashMap<(u32, u32), crate::guilds::LocalIds>,
@@ -119,6 +121,13 @@ impl Peers {
         self.characters.insert(character, id);
         eprintln!("world: peers: character {character:02X?} is drawn player id {id}");
         id
+    }
+
+    /// A fresh body id for one map load. Player ids survive a travel; agent ids must not, because the
+    /// client initialises a new agent's own health and energy when it is created.
+    pub fn allocate_agent(&mut self) -> u32 {
+        self.next_agent += 1;
+        self.next_agent
     }
 
     /// Register a loaded player and answer **everyone else in that map and district**, which is who it
@@ -157,6 +166,16 @@ impl Peers {
     /// One player's view, when it is loaded.
     pub fn view(&self, player_id: u32) -> Option<PeerView> {
         self.slots.get(&player_id).map(|slot| slot.view.clone())
+    }
+
+    /// Whether one running copy holds this agent id among the players' bodies
+    /// (`ASURA/crates/asura-world/src/instance.rs:512-517`, `has_agent`).
+    pub fn holds_agent(&self, map_id: u32, district: u32, agent_id: u32) -> bool {
+        self.slots.values().any(|slot| {
+            slot.view.map_id == map_id
+                && slot.view.district == district
+                && slot.view.agent_id == agent_id
+        })
     }
 
     /// Take a player back out, answering its view when it was there.
@@ -232,6 +251,53 @@ impl Peers {
                 let _ = slot.outbox.send(frame.clone());
             }
         }
+    }
+
+    /// Push frames to everyone in the same map and district, the sender included. A fight's messages
+    /// are drawn by the whole instance, and the sender is one of the instance's clients
+    /// (`ASURA/crates/asura-world/src/instance.rs:266-276`).
+    pub fn broadcast_all(&self, map_id: u32, district: u32, frames: &[Vec<u8>]) {
+        for slot in self.slots.values().filter(|slot| {
+            slot.view.map_id == map_id && slot.view.district == district
+        }) {
+            for frame in frames {
+                let _ = slot.outbox.send(frame.clone());
+            }
+        }
+    }
+
+    /// Where every loaded player in one copy stands, by agent: the fight's sample of the players it
+    /// may notice or swing at (`ASURA` `npc/fight.rs:236-237`).
+    pub fn combat_players(&self, map_id: u32, district: u32) -> Vec<(u32, u32, (f32, f32))> {
+        self.slots
+            .values()
+            .filter(|slot| slot.view.map_id == map_id && slot.view.district == district)
+            .map(|slot| {
+                (
+                    slot.view.player_id,
+                    slot.view.agent_id,
+                    slot.view.standing.position,
+                )
+            })
+            .collect()
+    }
+
+    /// Where the player driving `agent_id` in one copy stands: a follow's target
+    /// (`ASURA/crates/asura-world/src/instance.rs:900-902`).
+    pub fn standing_of_agent(&self, map_id: u32, district: u32, agent_id: u32) -> Option<Standing> {
+        self.slots
+            .values()
+            .find(|slot| {
+                slot.view.map_id == map_id
+                    && slot.view.district == district
+                    && slot.view.agent_id == agent_id
+            })
+            .map(|slot| slot.view.standing)
+    }
+
+    /// One player's agent id, when it is loaded.
+    pub fn agent_of(&self, player_id: u32) -> Option<u32> {
+        self.slots.get(&player_id).map(|slot| slot.view.agent_id)
     }
 
     /// Push frames to one player's own session (`ASURA/crates/asura-world/src/instance.rs:584-590`,

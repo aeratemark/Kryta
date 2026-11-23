@@ -1051,8 +1051,7 @@ pub enum ChunkId {
 pub const PATH_CHUNK_ID: u32 = (STAGE_MAP << STAGE_SHIFT) | ChunkId::Path as u32;
 
 /// The id of the stage-2 Map Parameters chunk, which carries the map's own world rect.
-pub const MAP_PARAMETERS_CHUNK_ID: u32 =
-    (STAGE_MAP << STAGE_SHIFT) | ChunkId::MapParameters as u32;
+pub const MAP_PARAMETERS_CHUNK_ID: u32 = (STAGE_MAP << STAGE_SHIFT) | ChunkId::MapParameters as u32;
 
 /// The Map Parameters signature (`mapbuild.MAP_PARAMS_SIG`).
 pub const MAP_PARAMETERS_SIGNATURE: u32 = 0x5943_EEEF;

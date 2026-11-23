@@ -552,11 +552,21 @@ mod tests {
     fn an_item_is_its_base_plus_its_fitted_upgrades() {
         // "Knight's Wyvern Boots of Superior Absorption", as the probe read it.
         let words = [
-            0x2408_01F9, 0x2408_00FE, 0x2530_01FD, 0x27EA_02EA, 0xA3C8_5000, 0x8040_0000,
-            0xA0F8_1400, 0xA530_03F2, 0xA7F8_0300,
+            0x2408_01F9,
+            0x2408_00FE,
+            0x2530_01FD,
+            0x27EA_02EA,
+            0xA3C8_5000,
+            0x8040_0000,
+            0xA0F8_1400,
+            0xA530_03F2,
+            0xA7F8_0300,
         ];
         assert_eq!(fitted_upgrades(&words), vec![0x1F9, 0xFE]);
-        assert_eq!(fitted_upgrades(&[0xA3C8_3200, 0x8040_0000]), Vec::<u16>::new());
+        assert_eq!(
+            fitted_upgrades(&[0xA3C8_3200, 0x8040_0000]),
+            Vec::<u16>::new()
+        );
     }
 
     #[test]

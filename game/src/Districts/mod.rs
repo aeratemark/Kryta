@@ -16,6 +16,9 @@
 //! `kryta_world.instance` is what says which district holds which number and when it last emptied
 //! (`Instances.rs`, `data/sql/base/db_world/0003-instances.sql`).
 
+#[path = "Combat.rs"]
+pub mod combat;
+
 #[path = "Instances.rs"]
 pub mod instances;
 

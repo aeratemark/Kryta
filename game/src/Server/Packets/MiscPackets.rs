@@ -253,6 +253,91 @@ pub fn agent_display_cape(agent: u32, status: u8) -> Vec<u8> {
     frame(AGENT_DISPLAY_CAPE, &body)
 }
 
+// ---- compass strokes and called targets ---------------------------------------------------------
+//
+// Ported from `ASURA/crates/asura-protocol/src/game/mod.rs:299-363`, the protocol half of
+// `ASURA/crates/asura-world/src/compass.rs`. Neither relay is in an ASURA capture: ASURA took the
+// four rows from preforged (`gw_compass_wire.h`, 37130 CMSG 41 / SMSG 144; `gw_callout.h`, CMSG 33 /
+// SMSG 52) and its own packet table, and `docs/51-compass-and-chat.md` section 3 lists what a live
+// recording still has to confirm.
+
+/// `GAME_CMSG_DRAW_MAP` (`0x802B`): one stroke segment the client drew on its compass.
+pub const CLIENT_DRAW_MAP: u16 = 0x802B;
+/// `GAME_SMSG_COMPASS_DRAWING` (`0x0091`): a party member's stroke, repeated to the others.
+pub const COMPASS_DRAWING: u16 = 0x0091;
+/// `GAME_CMSG_TARGET_CALL` (`0x8023`): a callout - the kind byte and its argument.
+pub const CLIENT_TARGET_CALL: u16 = 0x8023;
+/// `GAME_SMSG_AGENT_PINGED` (`0x0034`): a player calls an agent as its target.
+pub const AGENT_PINGED: u16 = 0x0034;
+
+/// The most points one compass stroke message carries: the `Array32` capacity of `0x802B` and
+/// `0x0091` (`ASURA/crates/asura-protocol/src/game/mod.rs:299-300`).
+pub const COMPASS_POINTS: usize = 16;
+
+/// One stroke segment a client drew on its compass: `GAME_CMSG_DRAW_MAP` (`0x802B`) without its
+/// header, and what `GAME_SMSG_COMPASS_DRAWING` (`0x0091`) repeats to the rest of the party
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs:302-314`). The dwords are relayed as they arrive
+/// and never interpreted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompassStroke {
+    /// The stroke the points belong to, as the drawing client numbers it.
+    pub stroke: u32,
+    /// The points, each a packed pair of shorts; 1 to [`COMPASS_POINTS`] of them.
+    pub points: Vec<u32>,
+}
+
+/// Read `GAME_CMSG_DRAW_MAP`'s body: a dword, a `u16` count and exactly that many dwords. `None`
+/// for a body of any other shape, an empty stroke or one over [`COMPASS_POINTS`]
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs:316-329`).
+pub fn read_draw_map(body: &[u8]) -> Option<CompassStroke> {
+    let stroke = u32::from_le_bytes(body.get(..4)?.try_into().ok()?);
+    let count = usize::from(u16::from_le_bytes(body.get(4..6)?.try_into().ok()?));
+    if !(1..=COMPASS_POINTS).contains(&count) || body.len() != 6 + 4 * count {
+        return None;
+    }
+    let points = body[6..]
+        .chunks_exact(4)
+        .map(|point| u32::from_le_bytes([point[0], point[1], point[2], point[3]]))
+        .collect();
+    Some(CompassStroke { stroke, points })
+}
+
+/// `GAME_SMSG_COMPASS_DRAWING` (`0x0091`): the player who drew, then the stroke as it was sent
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs:331-339`).
+pub fn compass_drawing(player_id: u16, stroke: &CompassStroke) -> Vec<u8> {
+    let mut body = Vec::with_capacity(8 + 4 * stroke.points.len().min(COMPASS_POINTS));
+    body.extend_from_slice(&player_id.to_le_bytes());
+    body.extend_from_slice(&stroke.stroke.to_le_bytes());
+    body.extend_from_slice(&dwords(
+        &stroke.points[..stroke.points.len().min(COMPASS_POINTS)],
+    ));
+    frame(COMPASS_DRAWING, &body)
+}
+
+/// The `kind` byte of `GAME_CMSG_TARGET_CALL` for a called target (Ctrl+click on an agent). The other
+/// kinds name the caller's own health, energy, experience, morale or a skill, per preforged's
+/// `gw_callout.h`; none of them is modelled here
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs:341-344`).
+pub const TARGET_CALL_TARGET: u8 = 10;
+
+/// Read `GAME_CMSG_TARGET_CALL`'s body (`0x8023`): a kind byte and a dword whose meaning the kind
+/// decides (`ASURA/crates/asura-protocol/src/game/mod.rs:346-353`).
+pub fn read_target_call(body: &[u8]) -> Option<(u8, u32)> {
+    let [kind, a, b, c, d] = *body else {
+        return None;
+    };
+    Some((kind, u32::from_le_bytes([a, b, c, d])))
+}
+
+/// `GAME_SMSG_AGENT_PINGED` (`0x0034`): a player calls an agent as its target
+/// (`ASURA/crates/asura-protocol/src/game/mod.rs:355-363`).
+pub fn agent_pinged(player_id: u16, agent_id: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(6);
+    body.extend_from_slice(&player_id.to_le_bytes());
+    body.extend_from_slice(&agent_id.to_le_bytes());
+    frame(AGENT_PINGED, &body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,6 +402,50 @@ mod tests {
         assert_eq!(
             map_update_current(146, 0),
             vec![0x99, 0x00, 0x92, 0x00, 0x00]
+        );
+    }
+
+    /// `ASURA/crates/asura-protocol/src/game/mod.rs:3000-3023`: a stroke is read from
+    /// `0x802B`'s body and repeated with its drawer in front.
+    #[test]
+    fn a_compass_stroke_is_relayed_with_its_drawer_in_front() {
+        // CMSG body: stroke 7, two points. The reply is the table's shape: word, dword, counted dwords.
+        let body = [
+            7, 0, 0, 0, 2, 0, 0x10, 0x00, 0x20, 0x00, 0xF0, 0xFF, 0x05, 0x00,
+        ];
+        let stroke = read_draw_map(&body).expect("a well-formed stroke");
+        assert_eq!(stroke.points, vec![0x0020_0010, 0x0005_FFF0]);
+        assert_eq!(
+            compass_drawing(0x0102, &stroke),
+            [&[0x91, 0x00, 0x02, 0x01][..], &body].concat()
+        );
+        // Sixteen points are 74 bytes on the wire; the table's declared 76 counts the array's count
+        // as four bytes.
+        let full = CompassStroke {
+            stroke: 1,
+            points: vec![0; COMPASS_POINTS],
+        };
+        assert_eq!(compass_drawing(1, &full).len(), 74);
+        // An empty stroke, a count that disagrees with the body, and 17 points are not strokes.
+        assert_eq!(read_draw_map(&[7, 0, 0, 0, 0, 0]), None);
+        assert_eq!(read_draw_map(&body[..10]), None);
+        let mut long = vec![0, 0, 0, 0, 17, 0];
+        long.extend([0; 68]);
+        assert_eq!(read_draw_map(&long), None);
+    }
+
+    /// `ASURA/crates/asura-protocol/src/game/mod.rs:3025-3036`: kind 10 names an agent, and the
+    /// reply is the caller word and that agent.
+    #[test]
+    fn a_target_call_becomes_an_agent_ping() {
+        assert_eq!(
+            read_target_call(&[TARGET_CALL_TARGET, 0x29, 0, 0, 0]),
+            Some((10, 0x29))
+        );
+        assert_eq!(read_target_call(&[10, 0x29, 0, 0]), None);
+        assert_eq!(
+            agent_pinged(3, 0x29),
+            vec![0x34, 0x00, 0x03, 0x00, 0x29, 0x00, 0x00, 0x00]
         );
     }
 }
