@@ -10,6 +10,9 @@ Vanilla/
   vanilla-title-wire.json   captured vanilla title packet records
   experience.json     the experience curve and the skill points a level grants (ASURA's own file;
                       game/Characters/Experience.rs)
+  cartography.json    the continent exploration grids and each map's rect and world bounds
+                      (Preforged's generated 2022 tables, with Map Parameters bounds where the
+                      archive has them; game/Maps/Cartography.rs)
   items.json          the static item definitions an owned item may name (ASURA's own file;
                       game/DataStores/ItemCatalogue.rs)
   upgrades.json       the insignias, runes and weapon mods a definition's words may carry (ASURA's
@@ -37,6 +40,13 @@ Vanilla/
   regenerates them from ASURA's generated equipment table, which came from the reference's own
   `GetDefaultEquipments`. `worn_slots.json` is written by hand, because its order is a measurement and
   its two numberings must agree with a capture (`docs/game-rules.md` E234).
+- `cartography.json` carries the nine continent grids and the rect that places each map on one,
+  imported from Preforged's generated 2022 tables (`gw_map_catalog_generated.h`,
+  `gw_exploration_rects_generated.h`, `gw_world_map_dimensions_generated.h`). Its `bounds` values
+  come from each map file's Map Parameters chunk when the client archive on the machine still has
+  that map; a map without bounds keeps its grid and gets no position-based reveal, which is
+  Preforged's own rule for a map it cannot place. The modern wire is `0x008B` / `0x008A` / `0x008C`
+  (`game/Maps/Cartography.rs`).
 - `items.json` and `upgrades.json` are ASURA's files, copied unchanged. A definition with `live: true`
   is one whose exact wire identity the client's own item probe showed; the rest come from the
   reference's seed and ASURA's curated rows. The world reads both at start-up and refuses the whole

@@ -231,6 +231,18 @@ One block, in this order, ported from the working implementation's own
   `recordings/client/feature/travel/doors-20261031-095754.jsonl` seq 319-322 (`d3 01 | 01 00`,
   `cc 01 | 01 00 | 01 00 | 01`, `d4 01 | 01 00`, `b3 01 | 01 00 | 01`) and
   `game/src/Server/Packets/PartyPackets.rs`.
+- **The exploration grid is the character's own.** `0x008B` announces `{dims.x, dims.y, byte count}`,
+  `0x008A` carries the run-length stream, and `0x008C` is the 11-byte reveal mark
+  `{x, y, half-span}` - one mark with half-span 1 reveals a 3 x 3 window. The client sniffer records
+  a 16-byte struct (four-byte header and fields), not the wire; the table's 11 is the frame. A load
+  sends the **empty** grid; the character's saved blocks follow as marks, filtered to the loaded
+  map's rect. A stored non-empty init corrupted the agent block (health/mana) and was refused with
+  007 on this client, even though retail's own stored init is a valid stream. A walking character
+  sends a mark when its block is new, at most every 200 ms. The stream is 16-row bands with a `u16` byte length and
+  alternating runs (fog-first, the first run actual and every later one shorter, `0xFF` additive);
+  an all-fog band is an empty header. The client drops a band's trailing partial dword
+  (`game/Maps/Cartography.rs`; ArenaNet's 38-byte payload is the test, and it decodes to the two
+  blocks the client proved).
 - The position is a point of the map's own list, scattered per R13 (`docs/game-rules.md`), so
   `0x0196`'s x and y differ from run to run; the file id and plane are the map's, from its row.
 - **The file id is the one thing in this block the client cannot be wrong about.** It is an entry in

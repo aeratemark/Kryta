@@ -180,6 +180,9 @@ pub struct World {
     /// (`ASURA/crates/asura-world/src/party.rs:46-108`). A map the file does not list falls back to the
     /// world's own `PartySizeCap` (R15) - see [`Self::max_party_size`].
     party_sizes: std::collections::HashMap<u32, u32>,
+    /// The exploration content: continent grids and the rect and bounds that place each map on one
+    /// (`config/World/Vanilla/cartography.json`, `game/Maps/Cartography.rs`).
+    cartography: crate::maps::cartography::Cartography,
     /// The scripts this world runs, shared the way the copies are: the program registers them before
     /// the world serves anything, and the world's own moments raise them
     /// (`game/Scripting/mod.rs`, the reference's `sScriptMgr`).
@@ -437,6 +440,42 @@ impl World {
         Ok(())
     }
 
+    /// Report every placement whose behavior tree this world cannot build yet. The built-in source
+    /// knows `patrol`; the pack's `worm_lakeside` and `worm_queen` are Lua script entries, so they are
+    /// named here and then stand until `game/Scripting/` arrives. ASURA refuses the pack on any
+    /// `check_trees` problem (`npc/mod.rs:74-88`); this tree reports first, because the Lua source is
+    /// the one missing part and the rest of the world is serviceable without it.
+    pub fn report_npc_behaviors(&self, log: &Log) {
+        let problems = match self.npc_districts.lock() {
+            Ok(copies) => copies.check_trees(&self.npcs),
+            Err(_) => return,
+        };
+        if problems.is_empty() {
+            log.out(
+                LogLevel::Info,
+                "server.worldserver",
+                "NPC behaviour: every placement's tree builds.",
+            );
+            return;
+        }
+        let mut reasons: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        for problem in problems {
+            let reason = problem
+                .split_once(": ")
+                .map(|(_, reason)| reason.to_string())
+                .unwrap_or(problem);
+            *reasons.entry(reason).or_default() += 1;
+        }
+        for (reason, count) in reasons {
+            log.out(
+                LogLevel::Info,
+                "server.worldserver",
+                format!("NPC behaviour: {count} placement(s) will stand: {reason}"),
+            );
+        }
+    }
+
     /// Check every NPC position against the graphs this world installed: a placement that moves, or a
     /// route point, off the walkable surface refuses the start; a standing one, or a map without a
     /// graph, is noted and passes (`ASURA/crates/asura-world/src/npc/mod.rs:117-135`,
@@ -496,6 +535,33 @@ impl World {
     ) -> Vec<(u32, Vec<Vec<u8>>)> {
         match self.npc_districts.lock() {
             Ok(mut copies) => copies.arrival(map_id, district, &self.npcs, player_id, position),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Advance a copy's NPC bodies when its own period has passed, and record where this client
+    /// stands for the tick's viewers (`ASURA/crates/asura-world/src/npc/table.rs:720-879`). The first
+    /// connection to reach a period advances the bodies for every client; the others only record
+    /// their position, so a district does not run once per connected player. The lines returned are
+    /// the bodies a failing tree parked.
+    pub fn npc_tick(
+        &self,
+        map_id: u32,
+        district: u32,
+        player_id: u32,
+        position: (f32, f32),
+        now: std::time::Instant,
+    ) -> Vec<String> {
+        let period = std::time::Duration::from_millis(u64::from(self.settings.simulation_tick_ms));
+        match self.npc_districts.lock() {
+            Ok(mut copies) => copies.tick(
+                (map_id, district),
+                player_id,
+                position,
+                now,
+                period,
+                self.graphs.as_ref(),
+            ),
             Err(_) => Vec::new(),
         }
     }
@@ -604,6 +670,23 @@ impl World {
         )
     }
 
+    /// Read the pack's cartography content (`cartography.json`): the continent grids and the rect
+    /// that places each map on one (`game/Maps/Cartography.rs`). A missing or malformed file refuses
+    /// the start, as every reader of this tree's content does (AGENTS.md, rule 7).
+    pub fn load_cartography(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        log: &Log,
+    ) -> Result<usize, String> {
+        self.cartography = crate::maps::cartography::Cartography::load(path, log)?;
+        Ok(self.cartography.maps().len())
+    }
+
+    /// The exploration content a load and a tick read.
+    pub fn cartography(&self) -> &crate::maps::cartography::Cartography {
+        &self.cartography
+    }
+
     /// The parties of every running copy (`game/Parties/mod.rs`).
     pub fn parties(&self) -> Arc<Mutex<crate::parties::Parties>> {
         Arc::clone(&self.parties)
@@ -700,6 +783,7 @@ impl World {
             next_held_party: std::sync::atomic::AtomicU64::new(0),
             cancelled_countdowns: Arc::new(Mutex::new(std::collections::HashSet::new())),
             party_sizes: std::collections::HashMap::new(),
+            cartography: crate::maps::cartography::Cartography::default(),
             scripts: Arc::new(Mutex::new(crate::scripting::ScriptMgr::new())),
             experience: None,
             item_catalogue: None,

@@ -463,7 +463,11 @@ fn an_end_to_end_creation_and_load_against_the_live_program() {
         // The block: head, player-data start, the name, the instance's record, the exploration grid
         // and the instance table - right after the record, which is where a live server sends them
         // (`ASURA/crates/asura-world/src/map.rs:22-58`).
-        let grid = game::maps::cartography::init_frames(game::maps::cartography::grid_for(148));
+        let grid = game::maps::cartography::Grid::empty(
+            game::maps::cartography::TYRIA.0,
+            game::maps::cartography::TYRIA.1,
+        )
+        .frames();
         let hosted = game::maps::DatabaseMaps::new(Arc::clone(&world_pool), Log::new())
             .load()
             .expect("the maps are readable")

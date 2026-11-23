@@ -696,6 +696,81 @@ impl DatabaseCharacters {
         }
     }
 
+    /// A character's exploration bits for one continent, or `None` when it has never explored there.
+    ///
+    /// The column is raw words, one bit per 32-unit block, in the order the client's grid uses
+    /// (`game/Maps/Cartography.rs`). Hex is the wire between this process and the database worker,
+    /// the same shape `Accounts` uses for the UI settings blob.
+    pub fn exploration(&self, uuid: &str, continent: u8) -> Result<Option<Vec<u8>>, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "SELECT encode(\"bits\", 'hex') FROM \"character_exploration\" \
+                 WHERE \"character_uuid\" = $1 AND \"continent\" = $2::bigint",
+                vec![
+                    Param::Text(uuid.to_string()),
+                    Param::Integer(i64::from(continent)),
+                ],
+            ),
+            Err(_) => {
+                return Err(
+                    "the character database pool is poisoned; no exploration can be read".to_string(),
+                );
+            }
+        };
+        let rows = match reply.recv() {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(error)) => return Err(format!("the exploration row cannot be read: {error}")),
+            Err(_) => {
+                return Err(
+                    "the character database answered no query: it is shutting down".to_string(),
+                );
+            }
+        };
+        let Some(row) = rows.first() else {
+            return Ok(None);
+        };
+        let hex: String = row.get(0);
+        decode_hex(&hex)
+            .map(Some)
+            .map_err(|error| format!("the exploration row is not hex: {error}"))
+    }
+
+    /// Keep a character's exploration bits for one continent. The row is replaced, because it is the
+    /// whole grid rather than an increment.
+    pub fn record_exploration(
+        &self,
+        uuid: &str,
+        continent: u8,
+        bits: &[u8],
+    ) -> Result<bool, String> {
+        let reply = match self.pool.lock() {
+            Ok(pool) => pool.query_reply(
+                "INSERT INTO \"character_exploration\" (\"character_uuid\", \"continent\", \"bits\") \
+                 VALUES ($1, $2::bigint, decode($3, 'hex')) \
+                 ON CONFLICT (\"character_uuid\", \"continent\") \
+                 DO UPDATE SET \"bits\" = EXCLUDED.\"bits\", \"updated_at\" = now() RETURNING 1",
+                vec![
+                    Param::Text(uuid.to_string()),
+                    Param::Integer(i64::from(continent)),
+                    Param::Text(encode_hex(bits)),
+                ],
+            ),
+            Err(_) => {
+                return Err(
+                    "the character database pool is poisoned; the exploration was not recorded"
+                        .to_string(),
+                );
+            }
+        };
+        match reply.recv() {
+            Ok(Ok(rows)) => Ok(!rows.is_empty()),
+            Ok(Err(error)) => Err(format!("the exploration was not recorded: {error}")),
+            Err(_) => {
+                Err("the character database answered no query: it is shutting down".to_string())
+            }
+        }
+    }
+
     /// One query, and the characters it answered.
     fn read(&self, sql: &str, params: Vec<Param>) -> Vec<Character> {
         let reply = match self.pool.lock() {
@@ -1670,5 +1745,112 @@ mod tests {
                 .is_empty(),
             "its unlocks are gone"
         );
+    }
+
+    /// The exploration row is per character and continent, and it keeps the whole grid: a second
+    /// save replaces the first. The table is the one `0012-character-exploration.sql` creates.
+    #[test]
+    #[ignore = "needs the character database"]
+    fn an_exploration_grid_is_stored_and_read_back() {
+        use crate::maps::cartography::Grid;
+
+        let _serial = database::updater::apply::test_lock("characters");
+        let Some(source) = source() else {
+            panic!("the character database is not reachable");
+        };
+        let account = "00000000-0000-0000-0000-00000000C10E";
+        let uuid = "00000000-0000-0000-0000-00000000E001";
+        let pool = Arc::clone(&source.pool);
+        {
+            let mut pool = pool.lock().unwrap();
+            pool.query_with(
+                "DELETE FROM \"character_exploration\" WHERE \"character_uuid\" = $1",
+                &[&uuid],
+            )
+            .unwrap();
+            pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&uuid])
+                .unwrap();
+            pool.query_with(
+                "INSERT INTO \"characters\" (\"uuid\", \"account_uuid\", \"name\", \"appearance\", \"primary_profession\", \"unlocked_professions\", \"campaign\", \"level\") \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                &[&uuid, &account, &"Explorer One", &0i64, &1i64, &2i64, &0i64, &1i64],
+            )
+            .unwrap();
+        }
+
+        let mut grid = Grid::empty(64, 128);
+        assert_eq!(grid.mark(10, 10), 9, "one mark is a 3 x 3 window");
+        assert!(
+            source
+                .record_exploration(uuid, 1, &grid.bytes())
+                .expect("the grid is written")
+        );
+        assert_eq!(
+            source.exploration(uuid, 1).expect("the grid is read"),
+            Some(grid.bytes()),
+            "the row keeps the words the model produced"
+        );
+        assert_eq!(
+            source.exploration(uuid, 2).expect("another continent is read"),
+            None,
+            "a continent the character never explored has no row"
+        );
+
+        grid.mark(20, 20);
+        assert!(
+            source
+                .record_exploration(uuid, 1, &grid.bytes())
+                .expect("the grid is replaced")
+        );
+        assert_eq!(
+            source.exploration(uuid, 1).expect("the grid is read again"),
+            Some(grid.bytes()),
+            "a second save replaces the first, because it is the whole grid"
+        );
+
+        {
+            let mut pool = pool.lock().unwrap();
+            pool.query_with(
+                "DELETE FROM \"character_exploration\" WHERE \"character_uuid\" = $1",
+                &[&uuid],
+            )
+            .unwrap();
+            pool.query_with("DELETE FROM \"characters\" WHERE \"uuid\" = $1", &[&uuid])
+                .unwrap();
+        }
+    }
+}
+
+/// A byte string as lower-case hex, which is how a bytea crosses to a database worker here.
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(text, "{byte:02x}");
+    }
+    text
+}
+
+/// The inverse of [`encode_hex`]; an odd length or a non-hex digit is refused rather than guessed.
+fn decode_hex(text: &str) -> Result<Vec<u8>, String> {
+    if text.len() % 2 != 0 {
+        return Err(format!("{} hex digits is an odd number", text.len()));
+    }
+    let mut bytes = Vec::with_capacity(text.len() / 2);
+    let digits = text.as_bytes();
+    for pair in digits.chunks_exact(2) {
+        let high = hex_digit(pair[0])?;
+        let low = hex_digit(pair[1])?;
+        bytes.push((high << 4) | low);
+    }
+    Ok(bytes)
+}
+
+fn hex_digit(digit: u8) -> Result<u8, String> {
+    match digit {
+        b'0'..=b'9' => Ok(digit - b'0'),
+        b'a'..=b'f' => Ok(digit - b'a' + 10),
+        b'A'..=b'F' => Ok(digit - b'A' + 10),
+        _ => Err(format!("'{}' is not a hex digit", digit as char)),
     }
 }

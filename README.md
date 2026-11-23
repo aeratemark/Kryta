@@ -11,7 +11,7 @@ The live ledger - every row with the test or capture that proves it - is
 | area | today |
 |---|---|
 | Login and accounts | file check, version and key exchange, encrypted login, EULA and player status, character list/create/delete, travel hand-off, and the client's own UI layout stored on the account and replayed at the next login |
-| World, maps and movement | 265 map records, outposts and districts, doorways and arrivals, world-map travel, pathfinding over the extracted graphs, click movement and position corrections |
+| World, maps and movement | 265 map records, outposts and districts, doorways and arrivals, world-map travel, pathfinding over the extracted graphs, click movement and position corrections, and the exploration grid with per-character saved progress and the `0x008C` reveal |
 | Characters and items | starting inventory and equipment, all six item operations (move, equip, unequip, destroy, drop, pickup) through the ported inventory rules and row writes, ground items, experience and levels, titles, unlocks |
 | Party | invite, accept with its merge, decline, withdraw, leave and kick; the load's party section; travel as one with the leader's countdown; `/resign`, the party's defeat and the return to the last outpost |
 | NPCs | definitions and per-map placements read at start-up, a copy's agent table, NPC create/properties/name/model frames and the in-range agent list - the first layer; behaviour, dialogue and fights are still to come |

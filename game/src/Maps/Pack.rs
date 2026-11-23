@@ -289,6 +289,40 @@ mod tests {
         Pack::load("../config/World/Vanilla", &log).expect("the shipped pack reads")
     }
 
+    /// One-off content extraction: every map's own world rect out of the client archive, so the
+    /// cartography content can place a player on the continent's exploration grid. Not part of the
+    /// suite; run with `KRYTA_GW_DAT` set (or the default path) and `--ignored --nocapture`.
+    #[test]
+    #[ignore = "reads Gw.dat; regenerates the cartography content's bounds"]
+    fn dump_map_rects_for_the_cartography_content() {
+        let path =
+            std::env::var("KRYTA_GW_DAT").unwrap_or_else(|_| "D:/GWClone/Gw.dat".to_string());
+        let mut dat = crate::pack::GwDat::open(&path).expect("the client archive opens");
+        let cache = std::fs::read("../data/path-graphs.bin").expect("the graph cache");
+        let graphs = crate::terrain::graph_dump::decode(&cache).expect("the graph cache decodes");
+        for graph in graphs {
+            if graph.map_file_id == 0 {
+                continue;
+            }
+            let Ok(Some((_, bytes))) = crate::terrain::pathfind::find_path_blob(
+                &mut dat,
+                graph.map_file_id,
+                graph.map_id,
+            ) else {
+                eprintln!("map {} file {} cannot be read", graph.map_id, graph.map_file_id);
+                continue;
+            };
+            let Some(rect) = crate::terrain::map_data::map_rect(&bytes) else {
+                eprintln!("map {} file {} states no map rect", graph.map_id, graph.map_file_id);
+                continue;
+            };
+            println!(
+                "{}|{}|{}|{}|{}|{}",
+                graph.map_id, graph.map_file_id, rect[0], rect[1], rect[2], rect[3]
+            );
+        }
+    }
+
     #[test]
     fn the_shipped_pack_is_the_whole_catalogue() {
         let pack = shipped();

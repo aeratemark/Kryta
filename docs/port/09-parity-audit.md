@@ -553,43 +553,62 @@ batch's server chat line, the invitee's `0x0123` and the accept, kicks, promotio
 capes, the roster and history a load carries beyond the founder's row, telling other members of an
 announcement, and experience from kills or quests.
 
-## 7d. The cartography subject, surveyed for the next round
+## 7d. The cartography subject
 
-**Opened:** `ASURA/crates/asura-world/src/cartography.rs`, 1,968 lines at ASURA `071735e`, against the
-219 lines of `ca9f532` that `game/Maps/Cartography.rs` ports (the announcement and empty bands only).
-**Carried:** none yet. Why the world map neither fills in nor follows the player here: this tree sends
-an all-fogged grid on every load and never sends `0x008C`, the mark that reveals a block as a character
-walks, and nothing keeps a character's explored blocks.
+**Opened:** Preforged's exploration implementation (`docs/exploration.txt`,
+`src/runtime/gw_exploration.h`, `gw_exploration_rects_generated.h`,
+`gw_world_map_dimensions_generated.h` and `tests/exploration.cpp`) for the feature, and Rurik's
+`toolkit/authsrv/fogrle.py` with ASURA's `cartography.rs` for the modern wire. **Carried:** the
+content, the grid, the run-length stream, the load pair, the reveal mark, the per-character save and
+the walk sample. **Verdict: ported for the maps the content can place**, thin where a map has no world
+bounds yet.
 
-| `cartography.rs` lines | what | needs |
+| piece | what | this tree |
 |---|---|---|
-| 1-165 | the format's reading (bands of 16 rows, byte-sum runs, revealed first, full-dword flush), `TYRIA` dims, `RETAIL_STREAM`, `FULL_STREAM`, `grid_for`, `continent_for` | nothing new |
-| 166-320 | `Grid`: a byte per block, `explore`, `explore_span`, `explore_disc`, `packed`/`from_packed` (LSB-first, row-major) | nothing new |
-| 322-440 | `encode_grid`, `decode_grid`: the two halves of the stream; round-trip ArenaNet's own 38 bytes | nothing new |
-| 443-600 | `startup_blob`, `override_blob`, `stream_for`, `init_carries_stored`, the in-memory refused-init set, `left_out_of_init`, `init_safe` (each band's last 32 blocks cleared), `init_frames_for`, `frames_for` | ASURA's `ASURA_CARTOGRAPHY*` switches would be settings here (`docs/port/04-configuration.md`), not environment variables |
-| 610-640 | `mark_frames`: `0x008C {x, y, 1}` windows of 3 x 3 | the `0x008C` builder (`game/mod.rs:1204-1211`, `map_exploration_mark`, 11 bytes) |
-| 641-760 | `map_rect` (the client's world-map rectangles, upper bounds exclusive; a mark outside one is an immediate `007`), `PRE_SEARING_MAPS`, `pre_searing_union`, `reveal_centres`, `pre_searing_footprint`, `map_shift` (keyed by map), the 96 and 32 unit constants, `LAKESIDE_ANCHOR` | only the pre-Searing rectangles are known; every other map reveals nothing, in ASURA too |
-| 761-822 | `block_at` (WorldCompletion's transform, y flipped, `ceil - 1`), `mark_centre` (clamped to the proven-safe envelope) | nothing new |
-| 824-1090 | `mark_interval`, `replay_start_delay` (ASURA's `intervals.json`), `Walker` (`replay`, `advance`, `queue`, `halt`), `Marker`, `replay_centres`, `spawn_marker` (a paced task, one mark per interval), `footprint_marks` | two settings, a per-session marker task fed from the movement handler, and halting it on travel |
-| 1092-1968 | 45 tests, ArenaNet's stream and the client's two proven blocks among them | ported with the code |
+| content | nine continent grids and each map's rect in terrain cells; optional world bounds from the map's Map Parameters chunk | `config/World/Vanilla/cartography.json` (492 map rects, 31 with bounds), `Cartography::load` |
+| grid | one bit per 32-unit block, row-major, LSB-first | `Grid` in `game/Maps/Cartography.rs` |
+| stream | 16-row bands, `u16` byte length, empty all-fog bands, fog-first, the first run actual and every later one shorter, `0xFF` additive, every non-empty band written to its full width | `Grid::encode` / `Grid::decode`; retail's own stored init (`maps-live-20261123-022154.jsonl` seq 654-655: 55 bytes, bands 0/27/12/0..., 107 cells) is reproduced **byte for byte** |
+| load | `0x008B` dims and byte count, then `0x008A` slices of at most 64 dwords | the **empty** grid's frames right after `0x019A`; the character's saved blocks replay as `0x008C` marks after the load, filtered to the loaded map's rect. A stored non-empty init corrupted the agent block (health/mana) and was refused with 007 on this client |
+| reveal | `0x008C {x, y, half-span}` - 11 bytes on the wire, byte span; not the 2022 10-byte mark and not the client sniffer's 16-byte struct (four-byte header and fields) | `instance_packets::cartography_mark`; the session sends one mark per changed 3 x 3 window, clamped to the map's own rect |
+| sample | authoritative position every 200 ms; one cell per 96 game units; y inverted | `WorldSession::sample_exploration`, `MapArea::cell` |
+| save | one row per character and continent, raw words | `data/sql/base/db_characters/0012-character-exploration.sql`, `DatabaseCharacters::{exploration, record_exploration}` |
 
-Beside it: `asura-db/src/cartography.rs` (145 lines) and migration `0027_character_cartography.sql` - one
-row per character and continent, `dims_x`, `dims_y` and the packed bits, read when a connection is built
-and written beside the position when it ends (`connection.rs:357-371`, `player.rs:630-648`); the load's
-call (`map.rs:36-60`, `init_frames_for`); the replay after `INSTANCE_LOAD_FINISH` (`player.rs:890-905`);
-the spawn that clears a refused init (`dispatch.rs:32`); and the titles' exploration sync, which reads the
-same grid. The order for the round: the grid and its stream (1-600, with the tests), then the schema and
-its read and write, then `0x008C` and the walker wired into the movement handler and the travel halt.
+The direct evidence for the load is the retail capture of 2026-11-23
+(`D:\ASURA-main\recordings\client\feature\maps\maps-live-20261123-022154.jsonl`): `0x008B` seq 654
+declares `64 x 128` and 55 bytes, `0x008A` seq 655 carries that non-empty stream, and the `0x008C`
+marks land on cells it decodes. The stream's bands are `0, 27, 12, 0, 0, 0, 0, 0`; under fog-first
++1 it is 107 cells, every retail mark checked is set, and `Grid::encode` reproduces the 55 bytes
+exactly. The later loads in the same capture grow the grid 107 -> 111 -> 115 with no shrink, so the
+init is the character's stored state, not a constant. **This tree does not send that stored init on
+this client yet:** a non-empty init corrupted the agent block (the health/mana bars) and the sparse
+grid was refused with 007, while the same saved blocks arrived as marks and the empty init loaded.
+The accepted path here is therefore the empty init plus filtered replay marks; the byte-for-byte
+stored-init codec stays tested for the day the client-side condition is understood.
+
+A map whose `cartography.json` row has no `bounds` still gets the grid (the client asserts without the
+pair), but the session does not invent a position for it: nothing is revealed until its Map Parameters
+rect is read from an archive that still holds the map. The start-up line states how many maps are
+placed; the load's log names the grid size and explored cells.
+
+**Not carried:** the client's per-map explorable mask (the server cannot mark a block the loaded map
+refuses, and what produces that mask is not read); the Cartographer title's percent sync; merged
+horizontal spans (`span` is always 1); and the exploration of a continent whose grid dimensions the
+content has not measured. The last is why an unlisted map falls back to Tyria's 64 x 128 grid instead
+of guessing another continent's.
 
 ## 7g. The NPC subject: stages N1 and N2 of `docs/asura-port-plan.md`
 
 **Opened (2026-11-22, the local ASURA repository as it stands on disk):** `crates/asura-world/src/npc/`,
 nine files - `table.rs` 1,255 lines, `behavior.rs` 840, `content.rs` 832, `fight.rs` 663, `file.rs` 486,
 `burst.rs` 439, `lua.rs` 481, `mod.rs` 169, `frames.rs` 135 - and the NPC builders of
-`crates/asura-protocol/src/game/mod.rs`. **Carried this round:** `burst.rs` 1-439, `frames.rs` 1-135,
+`crates/asura-protocol/src/game/mod.rs`. **Carried:** `burst.rs` 1-439, `frames.rs` 1-135,
 `content.rs` 1-832, `file.rs` 1-486 (whole, each with its tests), `mod.rs` 90-135 (the start-up read
-and the ground check) and `pathfind.rs` 1682-1686 (`on_ground`). **Left:** `table.rs`, `behavior.rs`,
-`lua.rs`, `fight.rs`, `mod.rs` 1-89 (`NpcWorld`, the behaviour source), and the pack content itself.
+and the ground check) and `pathfind.rs` 1682-1686 (`on_ground`). **Carried with N4 (2026-11-22):**
+`behavior.rs` 1-840 except the Script leaf and its Lua state, `table.rs` 26-48 (`BehaviorSource`,
+`PackBehaviors`), 50-197 (the burrow cycle), 278-310 (`tree_for`, `check_trees`), 639-718 (status,
+created set, hidden bodies) and 720-879 (the body tick, walks and per-viewer deliveries), each with
+its tests. **Left:** `lua.rs`, `fight.rs`, `table.rs` 531-637 (`/npc`), `mod.rs` 1-89 (`NpcWorld`),
+and the pack content itself.
 
 | ASURA | this tree | verdict |
 |---|---|---|
@@ -599,10 +618,27 @@ and the ground check) and `pathfind.rs` 1682-1686 (`on_ground`). **Left:** `tabl
 | `npc/file.rs` (the pack's `npcs/definitions.json` and each map folder's `npcs.json`, every refusal) | `game/Maps/NpcPack.rs`, re-exported at `game/Agents/NpcFile.rs` | ported, this tree's arrangement: rows are read from `serde_json::Value` with ASURA's unknown-key refusal kept (this tree's four commentary names are walked past); **`npcs/sight.json` is not read** - the compass range is `World.CompassRange` (R34, the same 10,000), handed to `load`. The reader lives beside `Maps/Pack.rs` because it reads the disk at start-up, which `worldserver/tests/content_is_held.rs` forbids inside a connection-serving folder |
 | `npc/mod.rs` 90-135 (`current`, `check_ground`), `main.rs` 403-412 and 479-485 | `World::load_npcs` (after the settings), `World::check_npc_ground` (after `set_graphs`), `worldserver/src/main.rs` | ported: a bad row refuses the start naming the row; a moving body or route point off the surface refuses it; a standing one or a graphless map is a note |
 | `pathfind.rs` 1682-1686 `on_ground` | `PathGraphs::on_ground`, `game/Terrain/Pathfind.rs` | ported |
-| `npc/table.rs` (per-instance table, ids before players, sight churn, dormancy, the tick) and the NPC half of `instance.rs` (`with_npcs` 178-225, `join`'s agent id 307-316, `npc_arrival` 450-460, `leave` 424) | `game/Districts/Npcs.rs` (`NpcTable`, `NpcDistricts`), `World::allocate_agent`/`release_agent`/`npc_arrival`/`npc_sweep`, the load's agent array and the session tick in `WorldSession.rs` | **ported thin (N3, 2026-11-22):** a copy's bodies are seeded from agent id 2 the first time it hands out an agent; a player's agent is the copy's lowest free id, **separate from its player id** (retail: `pre-searing-load-3.jsonl` seq 221, player 0x35 is agent 40); the load's agent array is other players and NPCs in range sorted by agent id (`player.rs:784-818`); each tick sweeps the client's compass range. Not here: behaviour trees (N4), the burrow cycle, the fight, `/npc`, the walk half of `tick`, quest markers. Every place that named the player id where an agent was meant now names the agent: `0x019A`, the load's `0x0020`, the travel's `0x00F1`/`0x0028`, `0x006E`, the guild badge and property 30, the registrar window. Client proof pending |
-| `npc/behavior.rs`, `PackBehaviors` | `game/Behaviour/` | missing - stage N4 |
-| `npc/lua.rs` | `game/Scripting/` | missing - needs the Lua runtime |
+| `npc/table.rs` (per-instance table, ids before players, sight churn, dormancy, the burrow cycle, the tick) and the NPC half of `instance.rs` (`with_npcs` 178-225, `join`'s agent id 307-316, `npc_arrival` 450-460, `leave` 424) | `game/Districts/Npcs.rs` (`NpcTable`, `NpcDistricts`), `World::allocate_agent`/`release_agent`/`npc_arrival`/`npc_tick`/`npc_sweep`, the load's agent array and the session tick in `WorldSession.rs` | **ported thin (N3-N4, 2026-11-22):** a copy's bodies are seeded from agent id 2 the first time it hands out an agent; a player's agent is the copy's lowest free id, **separate from its player id** (retail: `pre-searing-load-3.jsonl` seq 221, player 0x35 is agent 40); the load's agent array is other players and NPCs in range sorted by agent id (`player.rs:784-818`); the burrow cycle, the status word, the created set, dormant bodies and the walk half of `tick` are carried. The clock is adapted to this tree's per-connection loops: a copy stores its last body tick and only the first connection to reach `SimulationTickMs` advances the bodies, so two players do not run the town twice as fast. Not here: the Script leaf, the fight, `/npc`, quest markers. Every place that named the player id where an agent was meant now names the agent: `0x019A`, the load's `0x0020`, the travel's `0x00F1`/`0x0028`, `0x006E`, the guild badge and property 30, the registrar window. Client proof pending |
+| `npc/behavior.rs`, `PackBehaviors` | `game/Behaviour/mod.rs` (`Tree`, `Spec`, `Ctx`, `Patrol`, `PackBehaviors`) | **ported thin (N4, 2026-11-22):** `Sequence`, `Fallback`, `Wait`, `Stand`, `Patrol`, `Burrow`, the clock, the failure reasons and the 7 tests. The Script leaf and its per-agent Lua state are the missing part (`behavior.rs:72-79`, 93-111, 168-169, 244-250, 300, 358-398); `lua.rs` builds them when its runtime arrives. No `Script` node is built yet, so a pack behavior of that form parks its body |
+| `npc/lua.rs` | `game/Scripting/` | missing - needs the Lua runtime (planned `mlua`, lua54, vendored). The pack's `worm_lakeside` and `worm_queen` are script behaviors: until this arrives they park with a log line and stand. `table.rs` `check_trees`/`tree_for` are ported and `World::report_npc_behaviors` runs them at start-up; it reports the unknown script entries instead of refusing, because they are the one missing part, and `NpcTable::seed` names every parked body again on its district's first tick |
 | `npc/fight.rs` | `game/Combat/` | missing - after skills |
+
+**`behavior.rs` function by function (840 lines), so the next session starts from the map:** 33-42
+`Status`; 44-80 `Spec` (six node kinds); 82-91 `BurrowRequest`; 93-111 `Script` (the Lua leaf, still
+missing); 113-117 `Pathing`; 119-140 `Ctx`; 142-170 `Tree`, `Node`, `Kind`; 172-265 `Tree::build` and
+`add` (route resolution, one `Burrow`, empty control nodes refused); 267-356 `tick`, `tick_node`,
+`tick_control`, `halt_node`; 358-398 `tick_script` (missing with `Script`); 400-410 `stop_walk`;
+412-432 `Patrol` and `Phase`; 434-584 `Patrol::new`, `pick_other`, `tick`, `advance`, `start_leg`,
+`halt`; 586-840 the seven tests. The port keeps every line of 33-356 and 400-584; 93-111 and 358-398
+are the only missing region.
+
+**The action vocabulary, mapped to ASURA rather than invented.** An idle body is a placement with no
+`behavior` (`Mind::Still`) or a Lua tree's `{ kind = "stand" }`; a patroller is `{ kind = "patrol" }`
+over a route; a burrower is `{ kind = "burrow" }` or a script-owned cycle. Combat is **not** a tree
+node: ASURA's `fight.rs` owns `State::Idle`/`Engaged`/`Returning`/`Dead` (`fight.rs:130-141`) and the
+attacks on `crate::skill::engine::Engine`, and it pauses an ordinary tree while it drives
+(`table.rs:778-788`). ASURA has **no flee state** and this tree has invented none; a Lua script can
+decide to walk away once the Script leaf exists.
 
 **The pack content is carried.** `config/World/Vanilla/npcs/definitions.json` holds ASURA's 114
 definitions from preforged's gw-npcs catalogue (35 with a combat block), and eleven map folders carry
@@ -614,6 +650,13 @@ its own file says. Each file under `config/` is classified in `04-configuration.
 **Not carried, as the plan says:** `walk_speed` (`0x0027` + `0x002B` before a leg; it caused `007` on
 client 39167) - the builder and the `Pace` message are ported, nothing emits them; `h003B` goes out as 0
 where the live load varies.
+
+**What walks now:** the two map 148 placements whose `behavior` is `patrol` walk their authored routes
+while a client is inside `World.CompassRange`; a body with no behavior still stands. The nineteen
+Lakeside worm placements name `worm_lakeside` and `worm_queen`, which are Lua script entries, so the
+built-in source cannot build them: they park once, log the reason, and stand until `lua.rs` arrives
+(the Lua source). This is the one visible thinness of N4 and is why start-up does not yet refuse on
+`check_trees`.
 
 ## 7h. The item catalogue and inventory rules, from the local ASURA tree
 

@@ -43,7 +43,7 @@ Kryta has ported the whole spine (login to walking through a door) and three lat
 | Cartography | `cartography.rs` (1,968 lines) | `[~]` | Announcement only; surveyed | port |
 | Titles | `titles.rs` | `[x]` / `[~]` | Not started | on hold: apoguita is working on titles |
 | Account settings blob | `connection.rs` | `[x]` | Not checked | audit |
-| **NPCs** | `npc/` (9 files, ~205 KB) | `[~]` | N1-N3 ported (audit 7g): ASURA's 11 maps of NPCs load and stand; no behaviour yet | client proof, then N4 |
+| **NPCs** | `npc/` (9 files, ~205 KB) | `[~]` | N1-N3 ported and N4 ported thin (audit 7g): ASURA's 11 maps of NPCs load; the two authored patrols walk; the Script leaf and its Lua source wait | client proof, then the Lua source and the fight |
 | **NPC dialogs** | `dialog.rs` | `[~]` | Not started | see NPCs |
 | Vendors, collectors, storage | `vendor/` | `[~]` | Not started (`game/Trader/` stub) | after NPCs |
 | Interact / walk to target | `approach.rs` | built | Not started | with NPCs |
@@ -138,7 +138,7 @@ NPCs are the next big subject: Kryta has none in Rust, while ASURA stands 79 bod
 1. **N1 Wire.** *(ported 2026-11-22, audit 7g.)* Port the builders (`0x0056`, `0x0057`, `0x009A`, `0x009B`, `0x009F`, `0x00A2`, `0x00F0`, `0x006D`, NPC create) and the burst order, with ASURA's capture-byte tests.
 2. **N2 Content.** *(loader and every refusal ported 2026-11-22, audit 7g; the pack files are next.)* Port the loader and every refusal rule, with pack files built on the model / record / reference idea (the `pseudo_lua` files are reworked into whatever shape the loader needs). Start with the evidence-backed bodies (ASURA's captured map 148 load, then the catalogue rows ASURA tested) and grow towards the goal's 491 as captures back each one; ground-check against Kryta's graph cache.
 3. **N3 Population.** *(ported thin 2026-11-22, audit 7g: standing bodies, per-copy agent ids, load and sight; client proof pending.)* NPC table per district, seeded before players; ids in file order; the load's agent array in id order; per-viewer sight with compass churn and dormancy. **First client proof:** 23 bodies in Ascalon City, a second client sees the same ones, leaving and returning does not duplicate them.
-4. **N4 Behaviour.** The tree runtime with `Stand`, `Patrol`, `Wait`, `Sequence`, `Fallback`, `Burrow`, using ASURA's built-in fallback (`PackBehaviors`) so it runs without Lua. Then the Lua source once `game/Scripting/` has its runtime.
+4. **N4 Behaviour.** *(runtime ported thin 2026-11-22, audit 7g: `Stand`, `Patrol`, `Wait`, `Sequence`, `Fallback`, `Burrow`, the burrow cycle and the body tick, with ASURA's tests and built-in `PackBehaviors`; the two map 148 patrols walk. The Script leaf is the one part left.)* Then the Lua source once `game/Scripting/` has its runtime: it builds the script entries, `worm_lakeside` and `worm_queen` among them, which currently park and stand.
 5. **N5 Armed bodies.** `0x0161` items before `0x006D`, item ids allocated per body.
 6. **N6 Interaction.** `approach.rs` (walk to the NPC) and `dialog.rs` (greeting and choices). Vendors and combat follow as their own subjects.
 

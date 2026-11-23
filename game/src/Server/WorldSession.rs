@@ -106,6 +106,23 @@ pub(crate) struct PortalStep {
     pub(crate) last_step: Option<((f32, f32), (f32, f32))>,
 }
 
+/// This connection's exploration state: the character's saved bits for the continent its map is on,
+/// the map's place on that grid, and when the position was last sampled.
+struct Exploration {
+    map_id: u32,
+    continent: u8,
+    area: crate::maps::cartography::MapArea,
+    grid: crate::maps::cartography::Grid,
+    last_sample: std::time::Instant,
+    /// Saved blocks still to replay as `0x008C` marks after the load. The load itself sends the
+    /// empty init, which the client accepts without disturbing the agent block; a stored init on
+    /// this build corrupted the health/mana bars or 007'd. The marks are filtered to this map's rect.
+    replay: std::collections::VecDeque<(u32, u32)>,
+    /// How many marks this connection has sent, so the log names the first one without one line per
+    /// 200 ms.
+    marks: u64,
+}
+
 /// `GAME_CMSG_ITEM_MOVE` (`0x8072`): a drag in the inventory - the item, the bag and the slot.
 const CLIENT_ITEM_MOVE: u16 = 0x8072;
 /// `GAME_CMSG_DROP_ITEM` (`0x802C`): an item and a count.
@@ -190,6 +207,9 @@ pub struct WorldSession {
     /// `record_portal_step`). Simulation ticks never move it - a tick can cross a wall between
     /// reports, and that movement must remain in the next check.
     pub(crate) portal: std::sync::Mutex<PortalStep>,
+    /// The character's exploration grid for the map it is on (`game/Maps/Cartography.rs`). `None`
+    /// until a map load has read the content and the character's row.
+    exploration: std::sync::Mutex<Option<Exploration>>,
     /// The character database, when the program opened one: a creation screen's confirm writes a row
     /// there. A session without it can draw the screen but cannot finish it.
     pub(crate) characters:
@@ -288,6 +308,7 @@ impl WorldSession {
             character: std::sync::Mutex::new(None),
             landing: std::sync::Mutex::new(None),
             portal: std::sync::Mutex::new(PortalStep::default()),
+            exploration: std::sync::Mutex::new(None),
             characters: None,
             login: None,
             districts: world.districts(),
@@ -833,10 +854,10 @@ impl WorldSession {
             // The exploration grid, right after the instance's record: that is where a live server
             // sends it, once per instance (`ASURA/crates/asura-world/src/map.rs:22-48`), and a client
             // without it asserts on its own world map the first time the map view opens
-            // (`GmMapView.cpp(1731)`, client build 39112).
-            let grid =
-                crate::maps::cartography::init_frames(crate::maps::cartography::grid_for(map.id));
-            frames.extend(grid);
+            // (`GmMapView.cpp(1731)`, client build 39112). The bits are the character's own saved
+            // exploration for the continent this map is on (`config/World/Vanilla/cartography.json`).
+            let (grid_frames, grid_dims, explored) = self.begin_exploration(map.id, sheet.uuid);
+            frames.extend(grid_frames);
             // And the destinations it can resolve, in the batches a load uses - the working
             // implementation sends these in the same phase (`ASURA/crates/asura-world/src/map.rs:49-58`).
             let (table, notes) = crate::maps::instance_table::table_for(&self.maps);
@@ -856,13 +877,14 @@ impl WorldSession {
                 Ok(()) => self.say(
                     LogLevel::Debug,
                     format!(
-                        "Gameplay connection from {peer}: {} is loading - {} message(s), {} bytes: the load head, the player-data start, the name '{}', the instance's record (district {district}, language {language}), the exploration grid ({} x {}, nothing explored) and the instance table ({} pair(s)).",
+                        "Gameplay connection from {peer}: {} is loading - {} message(s), {} bytes: the load head, the player-data start, the name '{}', the instance's record (district {district}, language {language}), the exploration grid ({} x {}, {} cell(s) explored) and the instance table ({} pair(s)).",
                         map.label(),
                         frames.len(),
                         block.len(),
                         sheet.name,
-                        crate::maps::cartography::grid_for(map.id).0,
-                        crate::maps::cartography::grid_for(map.id).1,
+                        grid_dims.0,
+                        grid_dims.1,
+                        explored,
                         table.pairs.len()
                     ),
                 ),
@@ -1339,6 +1361,13 @@ impl WorldSession {
         // The entry point's own facing (its spawn point's angle, or a doorway arrival's), and
         // `(1, 0)` when it states none - `map_spawns.rs:44-53`.
         let direction = entry.map(|point| point.3).unwrap_or((1.0, 0.0));
+        self.say(
+            LogLevel::Info,
+            format!(
+                "exploration: map {} entry at ({:.1}, {:.1}) plane {plane}, facing ({:.2}, {:.2}).",
+                map.id, position.0, position.1, direction.0, direction.1
+            ),
+        );
         // The look the client builds the model from: the character's own bits, or the world's default
         // when its row carries none (an all-zero word is `Profession_None`, which the client cannot
         // draw).
@@ -2041,9 +2070,13 @@ impl WorldSession {
                         if let Some(walk) = walk {
                             frames.push(walk);
                         }
+                        // The block this agent stands on, when it is new: one `0x008C` mark every
+                        // 200 ms at most (`game/Maps/Cartography.rs`).
+                        frames.extend(self.sample_exploration());
                         // The NPCs that came into or left this client's compass range since the last
-                        // tick (`ASURA/crates/asura-world/src/npc/table.rs:871-873`). Bodies do not
-                        // walk yet (stage N4), so only this client's own movement changes its view.
+                        // tick, and the walk or burrow messages queued for it
+                        // (`ASURA/crates/asura-world/src/npc/table.rs:720-879`). The bodies think on
+                        // the copy's clock in `World::npc_tick`, once per period for every client.
                         let standing = self
                             .agent
                             .lock()
@@ -2051,6 +2084,17 @@ impl WorldSession {
                             .and_then(|agent| agent.as_ref().map(|agent| agent.position));
                         let copy = self.entered.lock().ok().and_then(|entered| *entered);
                         if let (Some(position), Some((map_id, district))) = (standing, copy) {
+                            // The bodies think on the copy's own clock, once per period, not once per
+                            // connection (`ASURA/crates/asura-world/src/npc/table.rs:720-879`).
+                            for note in self.world.npc_tick(
+                                map_id,
+                                district,
+                                self.player_id(),
+                                position,
+                                now,
+                            ) {
+                                self.say(LogLevel::Info, format!("NPC: {note}"));
+                            }
                             frames.extend(self.world.npc_sweep(
                                 map_id,
                                 district,
@@ -2533,6 +2577,164 @@ impl WorldSession {
         .unwrap_or((None, None))
     }
 
+    /// Read the character's exploration bits for the map's continent and answer the frames that
+    /// replace the client's grid.
+    ///
+    /// The bits are per character and per continent, kept in `character_exploration`; a map the
+    /// content cannot place still gets the grid (the client asserts without one) but no reveal.
+    fn begin_exploration(
+        &self,
+        map_id: u32,
+        character: [u8; 16],
+    ) -> (Vec<crate::maps::cartography::Frame>, (u32, u32), usize) {
+        let dims = self.world.cartography().dims(map_id);
+        let area = self.world.cartography().area(map_id).copied();
+        let mut grid = crate::maps::cartography::Grid::empty(dims.0, dims.1);
+        if let Some(area) = area {
+            let uuid = crate::characters::uuid_text(&character);
+            if let Some(pool) = self.characters.as_ref() {
+                let characters = crate::characters::DatabaseCharacters::new(
+                    std::sync::Arc::clone(pool),
+                    self.log.clone(),
+                );
+                match characters.exploration(&uuid, area.continent) {
+                    Ok(Some(bytes)) => match crate::maps::cartography::Grid::from_bytes(
+                        dims.0, dims.1, &bytes,
+                    ) {
+                        Ok(saved) => grid = saved,
+                        Err(error) => self.say(
+                            LogLevel::Warn,
+                            format!(
+                                "Gameplay connection: the character's exploration row does not fit map {map_id}'s {} x {} grid ({error}); the load starts empty.",
+                                dims.0, dims.1
+                            ),
+                        ),
+                    },
+                    Ok(None) => {}
+                    Err(error) => self.say(
+                        LogLevel::Warn,
+                        format!(
+                            "Gameplay connection: the character's exploration row cannot be read ({error}); the load starts empty."
+                        ),
+                    ),
+                }
+            }
+        } else {
+            self.say(
+                LogLevel::Debug,
+                format!(
+                    "Gameplay connection: map {map_id} has no cartography area; its grid is empty and nothing will be revealed by walking."
+                ),
+            );
+        }
+        let explored = grid.explored();
+        let replay = area
+            .map(|area| grid.replay_centres(area.rect))
+            .unwrap_or_default();
+        self.say(
+            LogLevel::Info,
+            format!(
+                "exploration: map {map_id} grid {} x {}, {explored} cell(s) explored, {} replay mark(s){}.",
+                dims.0,
+                dims.1,
+                replay.len(),
+                if area.is_some() {
+                    ""
+                } else {
+                    " (no cartography area; nothing will be revealed)"
+                }
+            ),
+        );
+        // The load sends the empty grid; the saved blocks follow as marks. A stored init on this
+        // client corrupted the agent block (health/mana) or was refused; the empty init is the path
+        // that loads, and the marks restore the character's own blocks.
+        let frames = crate::maps::cartography::Grid::empty(dims.0, dims.1).frames();
+        let state = area.map(|area| Exploration {
+            map_id,
+            continent: area.continent,
+            area,
+            grid,
+            last_sample: std::time::Instant::now(),
+            replay: replay.into(),
+            marks: 0,
+        });
+        if let Ok(mut slot) = self.exploration.lock() {
+            *slot = state;
+        }
+        (frames, dims, explored)
+    }
+
+    /// Reveal the block the agent stands on, at most every 200 ms, and answer the `0x008C` mark when
+    /// a block is new. The bit is also written to the character's row, so the next login sees it.
+    fn sample_exploration(&self) -> Vec<crate::maps::cartography::Frame> {
+        let position = self
+            .agent
+            .lock()
+            .ok()
+            .and_then(|agent| agent.as_ref().map(|agent| agent.position));
+        let Some(position) = position else {
+            return Vec::new();
+        };
+        let Some(mut slot) = self.exploration.lock().ok() else {
+            return Vec::new();
+        };
+        let Some(state) = slot.as_mut() else {
+            return Vec::new();
+        };
+        if let Some((x, y)) = state.replay.pop_front() {
+            return vec![crate::server::packets::instance_packets::cartography_mark(
+                x, y, 1,
+            )];
+        }
+        if state.last_sample.elapsed() < std::time::Duration::from_millis(200) {
+            return Vec::new();
+        }
+        state.last_sample = std::time::Instant::now();
+        let Some((x, y)) = state.area.cell(state.grid.dims(), position.0, position.1) else {
+            return Vec::new();
+        };
+        if state.grid.mark(x, y) == 0 {
+            return Vec::new();
+        }
+        let bytes = state.grid.bytes();
+        let continent = state.continent;
+        let first = state.marks == 0;
+        let map_id = state.map_id;
+        state.marks += 1;
+        drop(slot);
+        if first {
+            self.say(
+                LogLevel::Info,
+                format!(
+                    "exploration: map {map_id}'s first mark is block ({x}, {y}) on continent {continent}."
+                ),
+            );
+        }
+        if let Some(uuid) = self.character.lock().ok().and_then(|character| *character) {
+            if let Some(pool) = self.characters.as_ref() {
+                let characters = crate::characters::DatabaseCharacters::new(
+                    std::sync::Arc::clone(pool),
+                    self.log.clone(),
+                );
+                if let Err(error) = characters.record_exploration(
+                    &crate::characters::uuid_text(&uuid),
+                    continent,
+                    &bytes,
+                ) {
+                    self.say(
+                        LogLevel::Warn,
+                        format!(
+                            "Gameplay connection: the exploration block ({x}, {y}) was revealed but not saved: {error}"
+                        ),
+                    );
+                }
+            }
+        }
+        vec![crate::server::packets::instance_packets::cartography_mark(
+            x, y, 1,
+        )]
+    }
+
     /// Save where the character stood, so a later load resumes there (R14).
     ///
     /// `ASURA/crates/asura-world/src/connection.rs:405-423`: written when the player leaves, and **not**
@@ -2605,6 +2807,43 @@ mod tests {
     /// The world a test serves: world 2, the character-creation instance and one outpost.
     fn world() -> World {
         world_with(map_kind::OUTPOST)
+    }
+
+    /// A load takes the grid of the map's own continent from the content, not a hard-coded Tyria
+    /// size. Ascalon City is on continent 1, whose grid the live client declares as 64 x 128.
+    #[test]
+    fn a_load_uses_the_maps_continent_grid() {
+        let log = Log::new();
+        let mut world = World::new(2);
+        world
+            .load_cartography("../config/World/Vanilla/cartography.json", &log)
+            .expect("the shipped cartography content reads");
+        let session = WorldSession::new(log, &Arc::new(world));
+        let (frames, dims, explored) = session.begin_exploration(148, [0u8; 16]);
+        assert_eq!(dims, (64, 128), "Ascalon City is on Tyria's grid");
+        assert_eq!(explored, 0, "a character with no saved row starts all-fogged");
+        assert_eq!(&frames[0][..2], &[0x8B, 0x00], "the announcement");
+        assert_eq!(
+            u32::from_le_bytes([frames[0][2], frames[0][3], frames[0][4], frames[0][5]]),
+            64
+        );
+        assert_eq!(
+            u32::from_le_bytes([frames[0][6], frames[0][7], frames[0][8], frames[0][9]]),
+            128
+        );
+        assert_eq!(
+            u32::from_le_bytes([
+                frames[0][10], frames[0][11], frames[0][12], frames[0][13]
+            ]),
+            16,
+            "eight empty bands"
+        );
+        assert_eq!(frames.len(), 2, "the announcement and one 0x008A slice");
+        assert_eq!(frames[1].len(), 260);
+        assert!(
+            session.world.cartography().area(148).is_some(),
+            "the map's rect is in the content"
+        );
     }
 
     /// The same world with map 148's kind stated: a test that has to drop an item states
@@ -3262,7 +3501,11 @@ Logger.root = 6,Console
 
         // 3. The head block: load head, player-data start, the name, the instance's record, and the
         // exploration grid a live server sends right after it.
-        let grid = crate::maps::cartography::init_frames(crate::maps::cartography::grid_for(148));
+        let grid = crate::maps::cartography::Grid::empty(
+            crate::maps::cartography::TYRIA.0,
+            crate::maps::cartography::TYRIA.1,
+        )
+        .frames();
         let mut expected = vec![
             instance_packets::instance_load_head(),
             instance_packets::instance_player_data_start(),
@@ -3890,7 +4133,8 @@ Logger.root = 6,Console
         // exercised through the real chat path below. The map is an explorable so a drop is allowed
         // (`docs/game-rules.md` E51); the rest of the test is the same load either way.
         let mut operations = crate::chat::operations::Registry::new();
-        crate::chat::operations::register_chat(&mut operations).expect("the chat operations register");
+        crate::chat::operations::register_chat(&mut operations)
+            .expect("the chat operations register");
         // The shipped table also names the console rows. Their real handlers live in the world
         // program; this test only needs every row to bind, so one harmless handler stands in.
         for name in ["world.status", "world.exit", "world.restart"] {
@@ -3999,7 +4243,11 @@ Logger.root = 6,Console
         // 3. The block: the outpost's load, not the creation instance's, with the record's district
         // and language, and the character's own name. The block carries the exploration grid and the
         // instance table after the instance's record, so it is read frame by frame up to the table.
-        let grid = crate::maps::cartography::init_frames(crate::maps::cartography::grid_for(148));
+        let grid = crate::maps::cartography::Grid::empty(
+            crate::maps::cartography::TYRIA.0,
+            crate::maps::cartography::TYRIA.1,
+        )
+        .frames();
         let (table, notes) = crate::maps::instance_table::table_for(world.maps());
         assert!(
             notes.is_empty(),
@@ -4122,11 +4370,7 @@ Logger.root = 6,Console
             "the stream"
         );
         assert_eq!(&moved[4..8], &movable.id.to_le_bytes(), "the item");
-        assert_eq!(
-            &moved[8..10],
-            &backpack.id.to_le_bytes(),
-            "the bag"
-        );
+        assert_eq!(&moved[8..10], &backpack.id.to_le_bytes(), "the bag");
         assert_eq!(moved[10], free, "the slot");
         let held = crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
             .items_of(&character_text)
@@ -4239,7 +4483,11 @@ Logger.root = 6,Console
         reading.apply(&mut off_move);
         assert_eq!(&off_move[..2], &[0x4B, 0x01], "the unequip's move");
         assert_eq!(&off_move[4..8], &worn.id.to_le_bytes(), "the piece");
-        assert_eq!(&off_move[8..10], &backpack.id.to_le_bytes(), "into the backpack");
+        assert_eq!(
+            &off_move[8..10],
+            &backpack.id.to_le_bytes(),
+            "into the backpack"
+        );
         assert_eq!(off_move[10], free, "into the free slot");
         let mut off_clear = vec![0u8; 14];
         client.read_exact(&mut off_clear).unwrap();
@@ -4250,7 +4498,11 @@ Logger.root = 6,Console
             &u32::from(item_packets::visual_equipment_slot(worn_slot)).to_le_bytes(),
             "the slot cleared"
         );
-        assert_eq!(&off_clear[10..14], &0u32.to_le_bytes(), "nothing worn there now");
+        assert_eq!(
+            &off_clear[10..14],
+            &0u32.to_le_bytes(),
+            "nothing worn there now"
+        );
 
         // 4d3. A destroy (`0x8069`): the row goes and the client is told `ITEM_REMOVE` with the same
         // id (`ASURA/crates/asura-world/src/item.rs:830-858`).
@@ -4300,15 +4552,13 @@ Logger.root = 6,Console
         reading.apply(&mut seat);
         assert_eq!(&seat[..2], &[0x4B, 0x01], "where it went");
         assert_eq!(&seat[4..8], &granted_id.to_le_bytes(), "the granted item");
-        let granted = crate::characters::DatabaseCharacters::new(
-            Arc::clone(&characters),
-            log.clone(),
-        )
-        .items_of(&character_text)
-        .expect("the item rows are readable")
-        .into_iter()
-        .find(|row| row.item_id == granted_id)
-        .expect("the granted row is written");
+        let granted =
+            crate::characters::DatabaseCharacters::new(Arc::clone(&characters), log.clone())
+                .items_of(&character_text)
+                .expect("the item rows are readable")
+                .into_iter()
+                .find(|row| row.item_id == granted_id)
+                .expect("the granted row is written");
         assert_eq!(granted.definition_id, "birthday_cupcake");
         assert_eq!(granted.quantity, 2);
 
@@ -4331,8 +4581,7 @@ Logger.root = 6,Console
                 .find(|row| row.item_id == stacked.id)
                 .map(|row| row.quantity)
                 .expect("the stack is one of the character's");
-        let stacked_update =
-            2 + 31 + 2 + stacked.name.len() * 2 + 1 + stacked.modifiers.len() * 4;
+        let stacked_update = 2 + 31 + 2 + stacked.name.len() * 2 + 1 + stacked.modifiers.len() * 4;
         let stacked_core = 2 + 2 + (4 + stacked.name.len()).min(122) * 2;
         let mut ask = vec![0x2C, 0x80];
         ask.extend_from_slice(&stacked.id.to_le_bytes());
@@ -4422,7 +4671,11 @@ Logger.root = 6,Console
         let restored = read_frame(&mut client, &mut reading, 10);
         assert_eq!(&restored[..2], &[0x39, 0x01], "the stack restored");
         assert_eq!(&restored[2..6], &stacked.id.to_le_bytes(), "the stack");
-        assert_eq!(&restored[6..10], &before.to_le_bytes(), "back to its old count");
+        assert_eq!(
+            &restored[6..10],
+            &before.to_le_bytes(),
+            "back to its old count"
+        );
         let gone = read_frame(&mut client, &mut reading, 6);
         assert_eq!(&gone[..2], &[0x21, 0x00], "the ground agent removed");
         assert_eq!(&gone[2..6], &agent.to_le_bytes(), "the ground agent");
@@ -4691,7 +4944,11 @@ Logger.root = 6,Console
         let mut reading = common::cryptography::Arc4::new(&key);
         let mut sending = common::cryptography::Arc4::new(&key);
 
-        let grid = crate::maps::cartography::init_frames(crate::maps::cartography::grid_for(147));
+        let grid = crate::maps::cartography::Grid::empty(
+            crate::maps::cartography::TYRIA.0,
+            crate::maps::cartography::TYRIA.1,
+        )
+        .frames();
         // The instance table closes the block, and this test's world states one value (map 148's).
         let (table, _) = crate::maps::instance_table::table_for(world.maps());
         let block_size = instance_packets::instance_load_head().len()

@@ -1050,6 +1050,44 @@ pub enum ChunkId {
 /// The id of the stage-2 path chunk, which is what `GmImportMap` looks for.
 pub const PATH_CHUNK_ID: u32 = (STAGE_MAP << STAGE_SHIFT) | ChunkId::Path as u32;
 
+/// The id of the stage-2 Map Parameters chunk, which carries the map's own world rect.
+pub const MAP_PARAMETERS_CHUNK_ID: u32 =
+    (STAGE_MAP << STAGE_SHIFT) | ChunkId::MapParameters as u32;
+
+/// The Map Parameters signature (`mapbuild.MAP_PARAMS_SIG`).
+pub const MAP_PARAMETERS_SIGNATURE: u32 = 0x5943_EEEF;
+
+/// The Map Parameters version this reader accepts (`mapbuild.MAP_PARAMS_VERSION`).
+pub const MAP_PARAMETERS_VERSION: u8 = 2;
+
+/// The map's own world rect `(x0, y0, x1, y1)`, read from its Map Parameters chunk.
+///
+/// The rect is the map's terrain bounds, in game units: the span is `dims * 96`, so it is what
+/// places a player's position on the continent's 32-cell exploration grid (Preforged
+/// `docs/exploration.txt`, `gw_exploration.h::locate`). The client reads this same rect out of the
+/// map file; the path importer does not need it, so it is read separately here.
+pub fn map_rect(map: &[u8]) -> Option<[f32; 4]> {
+    let found = riff_type(map)?;
+    if found != RIFF_MAP1 && found != RIFF_MAP2 {
+        return None;
+    }
+    let chunks = Chunks::parse(map).ok()?;
+    let chunk = chunks.get(MAP_PARAMETERS_CHUNK_ID)?;
+    let data = chunk.data;
+    if data.len() < 41 {
+        return None;
+    }
+    if u32_at(data, 0) != MAP_PARAMETERS_SIGNATURE || data[4] != MAP_PARAMETERS_VERSION {
+        return None;
+    }
+    let mut rect = [0.0f32; 4];
+    for (index, slot) in rect.iter_mut().enumerate() {
+        let at = 5 + index * 4;
+        *slot = f32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]);
+    }
+    Some(rect)
+}
+
 /// `RIFF_MAP1` / `RIFF_MAP2` (`GmMapDataImport.h:24`): the two container types `GmImportMap` accepts.
 pub const RIFF_MAP1: u8 = 1;
 

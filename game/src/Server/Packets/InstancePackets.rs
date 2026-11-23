@@ -267,6 +267,23 @@ pub fn map_init_start(dims_x: u32, dims_y: u32, byte_count: u32) -> Vec<u8> {
     frame(MAP_INIT_START, &body)
 }
 
+/// `0x008C`: a block the character has explored. Eleven bytes on the wire: the header, `x`, `y` and
+/// the half-span byte the client marks around the block. The client recording
+/// (`recordings/client/feature/movement/alternating-live.jsonl` seq 258) is 16 bytes because the
+/// client sniffer widens its four-byte header and every field; it is a message struct, not the wire
+/// (`docs/port/02-wire.md`, "Three kinds of capture"). Rurik's live 11-byte probes and the packet
+/// table agree on the wire shape.
+pub const CARTOGRAPHY_MARK: u16 = 0x008C;
+
+/// `0x008C {x, y, span}`: the client marks `(x, y)` and its neighbours, `span` blocks to either side.
+pub fn cartography_mark(x: u32, y: u32, span: u8) -> Vec<u8> {
+    let mut body = Vec::with_capacity(9);
+    body.extend_from_slice(&x.to_le_bytes());
+    body.extend_from_slice(&y.to_le_bytes());
+    body.push(span);
+    frame(CARTOGRAPHY_MARK, &body)
+}
+
 /// `0x008A`: one slice of the compressed grid - a `u16` count of the dwords that arrived, then the
 /// fixed 64-dword array, zero past the slice.
 ///

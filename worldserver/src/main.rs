@@ -321,6 +321,12 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
         std::path::Path::new(&world_pack).join("party_sizes.json"),
         &log,
     )?;
+    // The exploration content: continent grids and each map's rect and world bounds
+    // (`game/Maps/Cartography.rs`, Preforged's tables with the modern 0x008B/0x008A/0x008C wire).
+    world.load_cartography(
+        std::path::Path::new(&world_pack).join("cartography.json"),
+        &log,
+    )?;
     // The maps this world can put a client in: a record the pack states no type or no blob for is a
     // destination the client can resolve and this world cannot load, so it is not asked for a graph
     // (`ASURA/crates/asura-world/src/catalogue.rs:54-63`).
@@ -487,6 +493,9 @@ fn run(args: &[String]) -> Result<game::world::ExitCode, String> {
     // refuses the start, naming the row, rather than a town with half its people
     // (`game/Agents/NpcFile.rs`; `ASURA/crates/asura-world/src/main.rs:403-412`).
     world.load_npcs(&world_pack, &log)?;
+    // Which placements' trees this world can build now. The Lua script entries wait for
+    // `game/Scripting/`; they are named here and stand until then (`docs/port/09-parity-audit.md` 7g).
+    world.report_npc_behaviors(&log);
     log.out(
         LogLevel::Info,
         "server.worldserver",
